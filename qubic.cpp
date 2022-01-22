@@ -167,7 +167,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 	bs->SetWatchdogTimer(0, 0, 0, NULL);
 
 	st->ConOut->ClearScreen(st->ConOut);
-	log(L"Qubic 0.0.2 is launched.");
+	log(L"Qubic 0.0.3 is launched.");
 
 	CHAR16 message[256];
 
@@ -235,193 +235,214 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 		else
 		{
 			EFI_TCP4_CONFIG_DATA configData;
-			EFI_IP4_MODE_DATA modeData;
-			tcp4Protocol->GetModeData(tcp4Protocol, NULL, &configData, &modeData, NULL, NULL);
+			bs->SetMem(&configData, sizeof(configData), 0);
+			configData.TimeToLive = 64;
+			configData.AccessPoint.UseDefaultAddress = TRUE;
+			if ((status = tcp4Protocol->Configure(tcp4Protocol, &configData)) != EFI_SUCCESS) {
 
-			setText(message, L"EFI_TCP4_CONFIG_DATA.TypeOfService = ");
-			appendNumber(message, configData.TypeOfService);
-			appendText(message, L".");
-			log(message);
+				setText(message, L"EFI_TCP4_PROTOCOL.Configure() fails (");
+				appendStatus(message, status);
+				appendText(message, L")!");
+				log(message);
+			}
+			else
+			{
+				EFI_IP4_MODE_DATA modeData;
+				if ((status = tcp4Protocol->GetModeData(tcp4Protocol, NULL, &configData, &modeData, NULL, NULL)) != EFI_SUCCESS) {
 
-			setText(message, L"EFI_TCP4_CONFIG_DATA.TimeToLive = ");
-			appendNumber(message, configData.TimeToLive);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_TCP4_PROTOCOL.GetModeData() fails (");
+					appendStatus(message, status);
+					appendText(message, L")!");
+					log(message);
+				}
+				else
+				{
+					setText(message, L"EFI_TCP4_CONFIG_DATA.TypeOfService = ");
+					appendNumber(message, configData.TypeOfService);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_TCP4_CONFIG_DATA.AccessPoint.UseDefaultAddress = ");
-			appendBoolean(message, configData.AccessPoint.UseDefaultAddress);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_TCP4_CONFIG_DATA.TimeToLive = ");
+					appendNumber(message, configData.TimeToLive);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_TCP4_CONFIG_DATA.AccessPoint.StationAddress = ");
-			appendIPv4Address(message, configData.AccessPoint.StationAddress);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_TCP4_CONFIG_DATA.AccessPoint.UseDefaultAddress = ");
+					appendBoolean(message, configData.AccessPoint.UseDefaultAddress);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_TCP4_CONFIG_DATA.AccessPoint.SubnetMask = ");
-			appendIPv4Address(message, configData.AccessPoint.SubnetMask);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_TCP4_CONFIG_DATA.AccessPoint.StationAddress = ");
+					appendIPv4Address(message, configData.AccessPoint.StationAddress);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_TCP4_CONFIG_DATA.ControlOption.ReceiveBufferSize = ");
-			appendNumber(message, configData.ControlOption->ReceiveBufferSize);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_TCP4_CONFIG_DATA.AccessPoint.SubnetMask = ");
+					appendIPv4Address(message, configData.AccessPoint.SubnetMask);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_TCP4_CONFIG_DATA.ControlOption.SendBufferSize = ");
-			appendNumber(message, configData.ControlOption->SendBufferSize);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_TCP4_CONFIG_DATA.ControlOption.ReceiveBufferSize = ");
+					appendNumber(message, configData.ControlOption->ReceiveBufferSize);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_TCP4_CONFIG_DATA.ControlOption.MaxSynBackLog = ");
-			appendNumber(message, configData.ControlOption->MaxSynBackLog);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_TCP4_CONFIG_DATA.ControlOption.SendBufferSize = ");
+					appendNumber(message, configData.ControlOption->SendBufferSize);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_TCP4_CONFIG_DATA.ControlOption.ConnectionTimeout = ");
-			appendNumber(message, configData.ControlOption->ConnectionTimeout);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_TCP4_CONFIG_DATA.ControlOption.MaxSynBackLog = ");
+					appendNumber(message, configData.ControlOption->MaxSynBackLog);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_TCP4_CONFIG_DATA.ControlOption.DataRetries = ");
-			appendNumber(message, configData.ControlOption->DataRetries);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_TCP4_CONFIG_DATA.ControlOption.ConnectionTimeout = ");
+					appendNumber(message, configData.ControlOption->ConnectionTimeout);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_TCP4_CONFIG_DATA.ControlOption.FinTimeout = ");
-			appendNumber(message, configData.ControlOption->FinTimeout);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_TCP4_CONFIG_DATA.ControlOption.DataRetries = ");
+					appendNumber(message, configData.ControlOption->DataRetries);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_TCP4_CONFIG_DATA.ControlOption.TimeWaitTimeout = ");
-			appendNumber(message, configData.ControlOption->TimeWaitTimeout);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_TCP4_CONFIG_DATA.ControlOption.FinTimeout = ");
+					appendNumber(message, configData.ControlOption->FinTimeout);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_TCP4_CONFIG_DATA.ControlOption.KeepAliveProbes = ");
-			appendNumber(message, configData.ControlOption->KeepAliveProbes);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_TCP4_CONFIG_DATA.ControlOption.TimeWaitTimeout = ");
+					appendNumber(message, configData.ControlOption->TimeWaitTimeout);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_TCP4_CONFIG_DATA.ControlOption.KeepAliveTime = ");
-			appendNumber(message, configData.ControlOption->KeepAliveTime);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_TCP4_CONFIG_DATA.ControlOption.KeepAliveProbes = ");
+					appendNumber(message, configData.ControlOption->KeepAliveProbes);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_TCP4_CONFIG_DATA.ControlOption.KeepAliveInterval = ");
-			appendNumber(message, configData.ControlOption->KeepAliveInterval);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_TCP4_CONFIG_DATA.ControlOption.KeepAliveTime = ");
+					appendNumber(message, configData.ControlOption->KeepAliveTime);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_TCP4_CONFIG_DATA.ControlOption.EnableNagle = ");
-			appendBoolean(message, configData.ControlOption->EnableNagle);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_TCP4_CONFIG_DATA.ControlOption.KeepAliveInterval = ");
+					appendNumber(message, configData.ControlOption->KeepAliveInterval);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_TCP4_CONFIG_DATA.ControlOption.EnableTimeStamp = ");
-			appendBoolean(message, configData.ControlOption->EnableTimeStamp);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_TCP4_CONFIG_DATA.ControlOption.EnableNagle = ");
+					appendBoolean(message, configData.ControlOption->EnableNagle);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_TCP4_CONFIG_DATA.ControlOption.EnableWindowScaling = ");
-			appendBoolean(message, configData.ControlOption->EnableWindowScaling);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_TCP4_CONFIG_DATA.ControlOption.EnableTimeStamp = ");
+					appendBoolean(message, configData.ControlOption->EnableTimeStamp);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_TCP4_CONFIG_DATA.ControlOption.EnableSelectiveAck = ");
-			appendBoolean(message, configData.ControlOption->EnableSelectiveAck);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_TCP4_CONFIG_DATA.ControlOption.EnableWindowScaling = ");
+					appendBoolean(message, configData.ControlOption->EnableWindowScaling);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_TCP4_CONFIG_DATA.ControlOption.EnablePathMtuDiscovery = ");
-			appendBoolean(message, configData.ControlOption->EnablePathMtuDiscovery);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_TCP4_CONFIG_DATA.ControlOption.EnableSelectiveAck = ");
+					appendBoolean(message, configData.ControlOption->EnableSelectiveAck);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_IP4_MODE_DATA.IsStarted = ");
-			appendBoolean(message, modeData.IsStarted);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_TCP4_CONFIG_DATA.ControlOption.EnablePathMtuDiscovery = ");
+					appendBoolean(message, configData.ControlOption->EnablePathMtuDiscovery);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_IP4_MODE_DATA.MaxPacketSize = ");
-			appendNumber(message, modeData.MaxPacketSize);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_IP4_MODE_DATA.IsStarted = ");
+					appendBoolean(message, modeData.IsStarted);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_IP4_MODE_DATA.ConfigData.DefaultProtocol = ");
-			appendNumber(message, modeData.ConfigData.DefaultProtocol);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_IP4_MODE_DATA.MaxPacketSize = ");
+					appendNumber(message, modeData.MaxPacketSize);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_IP4_MODE_DATA.ConfigData.AcceptAnyProtocol = ");
-			appendBoolean(message, modeData.ConfigData.AcceptAnyProtocol);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_IP4_MODE_DATA.ConfigData.DefaultProtocol = ");
+					appendNumber(message, modeData.ConfigData.DefaultProtocol);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_IP4_MODE_DATA.ConfigData.AcceptIcmpErrors = ");
-			appendBoolean(message, modeData.ConfigData.AcceptIcmpErrors);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_IP4_MODE_DATA.ConfigData.AcceptAnyProtocol = ");
+					appendBoolean(message, modeData.ConfigData.AcceptAnyProtocol);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_IP4_MODE_DATA.ConfigData.AcceptBroadcast = ");
-			appendBoolean(message, modeData.ConfigData.AcceptBroadcast);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_IP4_MODE_DATA.ConfigData.AcceptIcmpErrors = ");
+					appendBoolean(message, modeData.ConfigData.AcceptIcmpErrors);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_IP4_MODE_DATA.ConfigData.AcceptPromiscuous = ");
-			appendBoolean(message, modeData.ConfigData.AcceptPromiscuous);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_IP4_MODE_DATA.ConfigData.AcceptBroadcast = ");
+					appendBoolean(message, modeData.ConfigData.AcceptBroadcast);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_IP4_MODE_DATA.ConfigData.UseDefaultAddress = ");
-			appendBoolean(message, modeData.ConfigData.UseDefaultAddress);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_IP4_MODE_DATA.ConfigData.AcceptPromiscuous = ");
+					appendBoolean(message, modeData.ConfigData.AcceptPromiscuous);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_IP4_MODE_DATA.ConfigData.StationAddress = ");
-			appendIPv4Address(message, modeData.ConfigData.StationAddress);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_IP4_MODE_DATA.ConfigData.UseDefaultAddress = ");
+					appendBoolean(message, modeData.ConfigData.UseDefaultAddress);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_IP4_MODE_DATA.ConfigData.SubnetMask = ");
-			appendIPv4Address(message, modeData.ConfigData.SubnetMask);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_IP4_MODE_DATA.ConfigData.StationAddress = ");
+					appendIPv4Address(message, modeData.ConfigData.StationAddress);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_IP4_MODE_DATA.ConfigData.TypeOfService = ");
-			appendNumber(message, modeData.ConfigData.TypeOfService);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_IP4_MODE_DATA.ConfigData.SubnetMask = ");
+					appendIPv4Address(message, modeData.ConfigData.SubnetMask);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_IP4_MODE_DATA.ConfigData.TimeToLive = ");
-			appendNumber(message, modeData.ConfigData.TimeToLive);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_IP4_MODE_DATA.ConfigData.TypeOfService = ");
+					appendNumber(message, modeData.ConfigData.TypeOfService);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_IP4_MODE_DATA.ConfigData.DoNotFragment = ");
-			appendBoolean(message, modeData.ConfigData.DoNotFragment);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_IP4_MODE_DATA.ConfigData.TimeToLive = ");
+					appendNumber(message, modeData.ConfigData.TimeToLive);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_IP4_MODE_DATA.ConfigData.RawData = ");
-			appendBoolean(message, modeData.ConfigData.RawData);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_IP4_MODE_DATA.ConfigData.DoNotFragment = ");
+					appendBoolean(message, modeData.ConfigData.DoNotFragment);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_IP4_MODE_DATA.ConfigData.ReceiveTimeout = ");
-			appendNumber(message, modeData.ConfigData.ReceiveTimeout);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_IP4_MODE_DATA.ConfigData.RawData = ");
+					appendBoolean(message, modeData.ConfigData.RawData);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_IP4_MODE_DATA.ConfigData.TransmitTimeout = ");
-			appendNumber(message, modeData.ConfigData.TransmitTimeout);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_IP4_MODE_DATA.ConfigData.ReceiveTimeout = ");
+					appendNumber(message, modeData.ConfigData.ReceiveTimeout);
+					appendText(message, L".");
+					log(message);
 
-			setText(message, L"EFI_IP4_MODE_DATA.IsConfigured = ");
-			appendBoolean(message, modeData.IsConfigured);
-			appendText(message, L".");
-			log(message);
+					setText(message, L"EFI_IP4_MODE_DATA.ConfigData.TransmitTimeout = ");
+					appendNumber(message, modeData.ConfigData.TransmitTimeout);
+					appendText(message, L".");
+					log(message);
+
+					setText(message, L"EFI_IP4_MODE_DATA.IsConfigured = ");
+					appendBoolean(message, modeData.IsConfigured);
+					appendText(message, L".");
+					log(message);
+				}
+			}
 		}
 	}
 
