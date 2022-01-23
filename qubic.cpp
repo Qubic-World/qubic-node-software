@@ -226,7 +226,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
 	EFI_STATUS status;
 	EFI_GUID tcp4ProtocolGuid = EFI_TCP4_PROTOCOL_GUID;
-	if (!(status = bs->LocateProtocol(&tcp4ProtocolGuid, NULL, (VOID**)&tcp4Protocol)))
+	if ((status = bs->LocateProtocol(&tcp4ProtocolGuid, NULL, (VOID**)&tcp4Protocol)) != EFI_SUCCESS)
 	{
 		log(L"EFI_TCP4_PROTOCOL is not located", status);
 	}
@@ -238,14 +238,14 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 		bs->CopyMem(&configData.AccessPoint.StationAddress, (VOID*)&tcp4Address, sizeof(configData.AccessPoint.StationAddress));
 		bs->CopyMem(&configData.AccessPoint.SubnetMask, (VOID*)&tcp4Mask, sizeof(configData.AccessPoint.SubnetMask));
 		configData.AccessPoint.StationPort = tcp4Port;
-		if (!(status = tcp4Protocol->Configure(tcp4Protocol, &configData))) {
+		if ((status = tcp4Protocol->Configure(tcp4Protocol, &configData)) != EFI_SUCCESS) {
 
 			log(L"EFI_TCP4_PROTOCOL.Configure() fails", status);
 		}
 		else
 		{
 			EFI_IP4_MODE_DATA modeData;
-			if (!(status = tcp4Protocol->GetModeData(tcp4Protocol, NULL, &configData, &modeData, NULL, NULL))) {
+			if ((status = tcp4Protocol->GetModeData(tcp4Protocol, NULL, &configData, &modeData, NULL, NULL)) != EFI_SUCCESS) {
 
 				log(L"EFI_TCP4_PROTOCOL.GetModeData() fails", status);
 			}
@@ -258,7 +258,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 				else
 				{
 					bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, processAcceptEvent, NULL, &listenToken.CompletionToken.Event);
-					if (!(status = tcp4Protocol->Accept(tcp4Protocol, &listenToken)))
+					if ((status = tcp4Protocol->Accept(tcp4Protocol, &listenToken)) != EFI_SUCCESS)
 					{
 						log(L"EFI_TCP4_PROTOCOL.Accept() fails", status);
 					}
