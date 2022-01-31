@@ -3946,7 +3946,7 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
     else
     {
         /**/CHAR16 message[256]; setText(message, L" successfully: "); appendNumber(message, peer->receiveData.DataLength, TRUE); log(message);
-        *((unsigned long long*)peer->receiveData.FragmentTable[0].FragmentBuffer) += peer->receiveData.DataLength;
+        *((unsigned long long*)&peer->receiveData.FragmentTable[0].FragmentBuffer) += peer->receiveData.DataLength;
         
     theOnlyGotoLabel:
         unsigned int receivedDataSize = (unsigned int)((unsigned long long)peer->receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peer->receiveBuffer);
@@ -4128,7 +4128,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.0.15 is launched.");
+    log(L"Qubic 0.0.16 is launched.");
 
     if (initialize())
     {
