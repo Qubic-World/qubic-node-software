@@ -23,7 +23,7 @@ static const unsigned char defaultRouteGateway[4] = { 0, 0, 0, 0 };
 
 ////////// Public Settings \\\\\\\\\\
 
-static const unsigned char knownPublicPeers[][4] = { // Must have at least 4 entries!
+static const unsigned char knownPublicPeers[][4] = {
     { 2, 139, 196, 162 },
     { 5, 39, 223, 119 },
     { 46, 140, 52, 174 },
@@ -3504,7 +3504,7 @@ static Peer peers[MAX_NUMBER_OF_PEERS];
 static unsigned int latestPeerId; // Initial value doesn't matter
 
 static volatile char publicPeersLock = 0;
-static unsigned int numberOfPublicPeers;
+static unsigned int numberOfPublicPeers = 0;
 static PublicPeer publicPeers[MAX_NUMBER_OF_PUBLIC_PEERS];
 static unsigned long long totalRatingOfPublicPeers = 0;
 
@@ -3857,11 +3857,13 @@ static void transmit(Peer* peer)
 
 static void acceptCallback(EFI_EVENT Event, void* Context)
 {
+    /**/log(L"Accepted...");
     bs->CloseEvent(Event);
 
     Peer* peer = (Peer*)Context;
     if (!peer->acceptToken.CompletionToken.Status)
     {
+        /**/log(L" successfully.");
         EFI_STATUS status;
         if (status = bs->OpenProtocol(peer->acceptToken.NewChildHandle, &tcp4ProtocolGuid, (void**)&peer->tcp4Protocol, ih, NULL, EFI_OPEN_PROTOCOL_GET_PROTOCOL))
         {
@@ -3888,15 +3890,18 @@ static void acceptCallback(EFI_EVENT Event, void* Context)
 
 static void connectCallback(EFI_EVENT Event, void* Context)
 {
+    /**/log(L"Connected... ");
     bs->CloseEvent(Event);
 
     Peer* peer = (Peer*)Context;
     if (peer->transmitToken.CompletionToken.Status)
     {
+        /**/log(L" unsuccessfully!");
         close(peer);
     }
     else
     {
+        /**/log(L" successfully.");
         ExchangePublicPeers* request = (ExchangePublicPeers*)((char*)peer->transmitData.FragmentTable[0].FragmentBuffer + sizeof(PacketHeader));
         for (unsigned int i = 0; i < MIN_NUMBER_OF_PUBLIC_PEERS; i++)
         {
@@ -3913,6 +3918,7 @@ static void connectCallback(EFI_EVENT Event, void* Context)
 
 static void closeCallback(EFI_EVENT Event, void* Context)
 {
+    /**/log(L"Closed.");
     bs->CloseEvent(Event);
 
     Peer* peer = (Peer*)Context;
@@ -3928,15 +3934,18 @@ static void closeCallback(EFI_EVENT Event, void* Context)
 
 static void receiveCallback(EFI_EVENT Event, void* Context)
 {
+    /**/log(L"Received... ");
     bs->CloseEvent(Event);
 
     Peer* peer = (Peer*)Context;
     if (peer->receiveToken.CompletionToken.Status)
     {
+        /**/log(L" unsuccessfully!");
         close(peer);
     }
     else
     {
+        /**/log(L" successfully.");
         *((unsigned long long*)peer->receiveData.FragmentTable[0].FragmentBuffer) += peer->receiveData.DataLength;
         
     theOnlyGotoLabel:
@@ -3984,6 +3993,7 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                             {
                                 bs->CopyMem(processors[latestUsedProcessorIndex].requestBuffer, peer->receiveBuffer, packetHeader->size);
 
+                                /**/log(L"!!!!!!!!!!");
                                 bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, responseCallback, &processors[latestUsedProcessorIndex], &processors[latestUsedProcessorIndex].event);
                                 mpServicesProtocol->StartupThisAP(mpServicesProtocol, requestProcessor, processors[latestUsedProcessorIndex].number, processors[latestUsedProcessorIndex].event, 0, &processors[latestUsedProcessorIndex], NULL);
 
@@ -4005,15 +4015,18 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
 
 static void transmitCallback(EFI_EVENT Event, void* Context)
 {
+    /**/log(L"Transmitted...");
     bs->CloseEvent(Event);
 
     Peer* peer = (Peer*)Context;
     if (peer->transmitToken.CompletionToken.Status)
     {
+        /**/log(L" unsuccessfully!");
         close(peer);
     }
     else
     {
+        /**/log(L" successfully.");
         peer->isTransmitting = FALSE;
     }
 }
@@ -4054,16 +4067,10 @@ static BOOLEAN initialize()
         peers[peerIndex].closeToken.AbortOnClose = TRUE;
     }
 
-    if (sizeof(knownPublicPeers) / sizeof(knownPublicPeers[0]) < MIN_NUMBER_OF_PUBLIC_PEERS)
-    {
-        log(L"At least 4 public peers must be known!");
-
-        return FALSE;
-    }
     bs->SetMem(publicPeers, sizeof(publicPeers), 0);
-    for (unsigned int i = 0; i < sizeof(knownPublicPeers) / sizeof(knownPublicPeers[0]) && numberOfPublicPeers < MAX_NUMBER_OF_PUBLIC_PEERS; i++)
+    while (numberOfPublicPeers < (sizeof(knownPublicPeers) / sizeof(knownPublicPeers[0])) && numberOfPublicPeers < MAX_NUMBER_OF_PUBLIC_PEERS)
     {
-        addPublicPeer((unsigned char*)knownPublicPeers[i]);
+        addPublicPeer((unsigned char*)knownPublicPeers[numberOfPublicPeers]);
     }
 
     return TRUE;
@@ -4111,7 +4118,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.0.10 is launched.");
+    log(L"Qubic 0.0.11 is launched.");
 
     if (initialize())
     {
@@ -4163,7 +4170,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                 {
                     if (accept())
                     {
-                        for (unsigned int i = 0; i < MIN_NUMBER_OF_PUBLIC_PEERS && numberOfPeers <= MIN_NUMBER_OF_PUBLIC_PEERS; i++)
+                        for (unsigned int i = 0; i < numberOfPublicPeers; i++)
                         {
                             EFI_TCP4_PROTOCOL* tcp4Protocol;
                             EFI_HANDLE childHandle = getTcp4Protocol(publicPeers[i].address, &tcp4Protocol);
