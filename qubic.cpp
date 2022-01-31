@@ -3526,10 +3526,9 @@ static void addPublicPeer(unsigned char address[4])
     totalRatingOfPublicPeers++;
 }
 
-/**/unsigned long long min = 0, avg = 0, max = 0;
+/**/volatile unsigned long long min = 0, avg = 0, max = 0;
 static void requestProcessor(void* ProcedureArgument)
 {
-    /**/log(L"Request is received by a slave processor.");
     Processor* processor = (Processor*)ProcedureArgument;
     PacketHeader* requestPacketHeader = (PacketHeader*)processor->requestBuffer;
     PacketHeader* responsePacketHeader = (PacketHeader*)processor->responseBuffer;
@@ -4156,7 +4155,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.0.20 is launched.");
+    log(L"Qubic 0.0.21 is launched.");
 
     if (initialize())
     {
