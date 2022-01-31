@@ -3894,9 +3894,9 @@ static void connectCallback(EFI_EVENT Event, void* Context)
     bs->CloseEvent(Event);
 
     Peer* peer = (Peer*)Context;
-    if (peer->transmitToken.CompletionToken.Status)
+    if (peer->connectToken.CompletionToken.Status)
     {
-        /**/log(L" unsuccessfully!");
+        /**/logStatus(L" unsuccessfully", peer->connectToken.CompletionToken.Status);
         close(peer);
     }
     else
@@ -3913,6 +3913,8 @@ static void connectCallback(EFI_EVENT Event, void* Context)
         packetHeader->size = sizeof(PacketHeader) + sizeof(ExchangePublicPeers);
         packetHeader->requestResponseType = EXCHANGE_PUBLIC_PEERS;
         transmit(peer);
+
+        receive(peer);
     }
 }
 
@@ -3940,7 +3942,7 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
     Peer* peer = (Peer*)Context;
     if (peer->receiveToken.CompletionToken.Status)
     {
-        /**/log(L" unsuccessfully!");
+        /**/logStatus(L" unsuccessfully", peer->receiveToken.CompletionToken.Status);
         close(peer);
     }
     else
@@ -4021,7 +4023,7 @@ static void transmitCallback(EFI_EVENT Event, void* Context)
     Peer* peer = (Peer*)Context;
     if (peer->transmitToken.CompletionToken.Status)
     {
-        /**/log(L" unsuccessfully!");
+        /**/logStatus(L" unsuccessfully", peer->transmitToken.CompletionToken.Status);
         close(peer);
     }
     else
@@ -4118,7 +4120,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.0.11 is launched.");
+    log(L"Qubic 0.0.12 is launched.");
 
     if (initialize())
     {
