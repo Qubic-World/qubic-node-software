@@ -11,9 +11,10 @@
 #define ROLE CANDIDATE
 
 // Do NOT share the data of "Private Settings" section with anyone!!!
-static const unsigned char ownSeed[55 + 1] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-static const unsigned char tcp4Address[4] = { 0, 0, 0, 0 };
-static const unsigned char tcp4Mask[4] = { 255, 255, 255, 255 };
+static unsigned char ownSeed[55 + 1] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+static const unsigned char ownAddress[4] = { 0, 0, 0, 0 };
+static const unsigned char ownMask[4] = { 255, 255, 255, 255 };
 static const unsigned char defaultRouteAddress[4] = { 0, 0, 0, 0 };
 static const unsigned char defaultRouteMask[4] = { 0, 0, 0, 0 };
 static const unsigned char defaultRouteGateway[4] = { 0, 0, 0, 0 };
@@ -22,18 +23,49 @@ static const unsigned char defaultRouteGateway[4] = { 0, 0, 0, 0 };
 
 ////////// Public Settings \\\\\\\\\\
 
-#define NUMBER_OF_COMPUTORS (26 * 26)
+static const unsigned char knownPublicPeers[][4] = { // Must have at least 4 entries!
+    { 2, 139, 196, 162 },
+    { 5, 39, 223, 119 },
+    { 46, 140, 52, 174 },
+    { 82, 114, 88, 225 },
+    { 84, 147, 171, 248 },
+    { 92, 53, 74, 130 },
+    { 93, 84, 197, 233 },
+    { 93, 125, 10, 240 },
+    { 107, 155, 83, 58 },
+    { 141, 95, 126, 127 },
+    { 142, 132, 139, 75 },
+    { 142, 132, 140, 6 },
+    { 142, 132, 158, 142 },
+    { 142, 132, 159, 213 },
+    { 142, 132, 192, 58 },
+    { 142, 132, 197, 184 },
+    { 165,  22, 221, 108 },
+    { 176, 98, 26, 24 },
+    { 178, 168, 200, 247 },
+    { 185, 130, 226, 119 },
+    { 185, 182, 193, 227 },
+    { 185, 184, 195, 19 },
+    { 185, 184, 195, 18 },
+    { 185, 184, 195, 43 },
+    { 185, 184, 195, 44 },
+    { 185, 184, 195, 64 },
+    { 190, 2, 147, 131 },
+    { 190, 2, 147, 188 },
+    { 190, 2, 149, 182 },
+    { 190, 2, 152, 169 },
+    { 209, 159, 156, 58 },
+    { 212, 40, 234, 76 },
+    { 213, 127, 147, 70 },
+    { 213, 184, 249, 83 }
+};
 
 
 
 ////////// UEFI \\\\\\\\\\
 
-#define CONST const
-#define EFIAPI __cdecl
-#define EFI_UNSPECIFIED_TIMEZONE 0x07FF
 #define FALSE ((BOOLEAN)0)
 #define IN
-#define NULL 0
 #define OPTIONAL
 #define OUT
 #define TRUE ((BOOLEAN)1)
@@ -85,6 +117,7 @@ static const unsigned char defaultRouteGateway[4] = { 0, 0, 0, 0 };
 #define EFI_OPEN_PROTOCOL_EXCLUSIVE 0x00000020
 #define EFI_OPEN_PROTOCOL_GET_PROTOCOL 0x00000002
 #define EFI_OPEN_PROTOCOL_TEST_PROTOCOL 0x00000004
+#define EFI_UNSPECIFIED_TIMEZONE 0x07FF
 #define END_OF_CPU_LIST 0xFFFFFFFF
 #define EVT_NOTIFY_SIGNAL 0x00000200
 #define EVT_NOTIFY_WAIT 0x00000100
@@ -103,24 +136,12 @@ static const unsigned char defaultRouteGateway[4] = { 0, 0, 0, 0 };
 
 typedef unsigned char BOOLEAN;
 typedef unsigned short CHAR16;
-typedef signed short INT16;
-typedef signed int INT32;
-typedef signed long long INT64;
-typedef signed char INT8;
-typedef INT64 INTN;
-typedef unsigned short UINT16;
-typedef unsigned int UINT32;
-typedef unsigned long long UINT64;
-typedef unsigned char UINT8;
-typedef UINT64 UINTN;
-typedef void VOID;
-
-typedef VOID* EFI_EVENT;
-typedef VOID* EFI_HANDLE;
-typedef UINT64 EFI_PHYSICAL_ADDRESS;
-typedef UINTN EFI_STATUS;
-typedef UINTN EFI_TPL;
-typedef UINT64 EFI_VIRTUAL_ADDRESS;
+typedef void* EFI_EVENT;
+typedef void* EFI_HANDLE;
+typedef unsigned long long EFI_PHYSICAL_ADDRESS;
+typedef unsigned long long EFI_STATUS;
+typedef unsigned long long EFI_TPL;
+typedef unsigned long long EFI_VIRTUAL_ADDRESS;
 
 typedef enum
 {
@@ -195,48 +216,48 @@ typedef enum
 
 typedef struct
 {
-	UINT32 Data1;
-	UINT16 Data2;
-	UINT16 Data3;
-	UINT8 Data4[8];
+	unsigned int Data1;
+	unsigned short Data2;
+	unsigned short Data3;
+	unsigned char Data4[8];
 } EFI_GUID;
 
 typedef struct
 {
 	EFI_GUID CapsuleGuid;
-	UINT32 HeaderSize;
-	UINT32 Flags;
-	UINT32 CapsuleImageSize;
+	unsigned int HeaderSize;
+	unsigned int Flags;
+	unsigned int CapsuleImageSize;
 } EFI_CAPSULE_HEADER;
 
 typedef struct
 {
-	UINT32 Package;
-	UINT32 Core;
-	UINT32 Thread;
+	unsigned int Package;
+	unsigned int Core;
+	unsigned int Thread;
 } EFI_CPU_PHYSICAL_LOCATION;
 
 typedef struct
 {
-	UINT8 Type;
-	UINT8 SubType;
-	UINT8 Length[2];
+	unsigned char Type;
+	unsigned char SubType;
+	unsigned char Length[2];
 } EFI_DEVICE_PATH_PROTOCOL;
 
 typedef struct
 {
-	UINT16 ScanCode;
+	unsigned short ScanCode;
 	CHAR16 UnicodeChar;
 } EFI_INPUT_KEY;
 
 typedef struct
 {
-	UINT8 Addr[4];
+	unsigned char Addr[4];
 } EFI_IPv4_ADDRESS;
 
 typedef struct
 {
-	UINT8 DefaultProtocol;
+	unsigned char DefaultProtocol;
 	BOOLEAN AcceptAnyProtocol;
 	BOOLEAN AcceptIcmpErrors;
 	BOOLEAN AcceptBroadcast;
@@ -244,18 +265,18 @@ typedef struct
 	BOOLEAN UseDefaultAddress;
 	EFI_IPv4_ADDRESS StationAddress;
 	EFI_IPv4_ADDRESS SubnetMask;
-	UINT8 TypeOfService;
-	UINT8 TimeToLive;
+	unsigned char TypeOfService;
+	unsigned char TimeToLive;
 	BOOLEAN DoNotFragment;
 	BOOLEAN RawData;
-	UINT32 ReceiveTimeout;
-	UINT32 TransmitTimeout;
+	unsigned int ReceiveTimeout;
+	unsigned int TransmitTimeout;
 } EFI_IP4_CONFIG_DATA;
 
 typedef struct
 {
-	UINT8 Type;
-	UINT8 Code;
+	unsigned char Type;
+	unsigned char Code;
 } EFI_IP4_ICMP_TYPE;
 
 typedef struct
@@ -268,27 +289,27 @@ typedef struct
 typedef struct
 {
 	BOOLEAN IsStarted;
-	UINT32 MaxPacketSize;
+	unsigned int MaxPacketSize;
 	EFI_IP4_CONFIG_DATA ConfigData;
 	BOOLEAN IsConfigured;
-	UINT32 GroupCount;
+	unsigned int GroupCount;
 	EFI_IPv4_ADDRESS* GroupTable;
-	UINT32 RouteCount;
+	unsigned int RouteCount;
 	EFI_IP4_ROUTE_TABLE* RouteTable;
-	UINT32 IcmpTypeCount;
+	unsigned int IcmpTypeCount;
 	EFI_IP4_ICMP_TYPE* IcmpTypeList;
 } EFI_IP4_MODE_DATA;
 
 typedef struct
 {
-	UINT8 Addr[32];
+	unsigned char Addr[32];
 } EFI_MAC_ADDRESS;
 
 typedef struct
 {
-	UINT32 ReceivedQueueTimeoutValue;
-	UINT32 TransmitQueueTimeoutValue;
-	UINT16 ProtocolTypeFilter;
+	unsigned int ReceivedQueueTimeoutValue;
+	unsigned int TransmitQueueTimeoutValue;
+	unsigned short ProtocolTypeFilter;
 	BOOLEAN EnableUnicastReceive;
 	BOOLEAN EnableMulticastReceive;
 	BOOLEAN EnableBroadcastReceive;
@@ -300,45 +321,45 @@ typedef struct
 
 typedef struct
 {
-	UINT32 Type;
+	unsigned int Type;
 	EFI_PHYSICAL_ADDRESS PhysicalStart;
 	EFI_VIRTUAL_ADDRESS VirtualStart;
-	UINT64 NumberOfPages;
-	UINT64 Attribute;
+	unsigned long long NumberOfPages;
+	unsigned long long Attribute;
 } EFI_MEMORY_DESCRIPTOR;
 
 typedef struct
 {
 	EFI_HANDLE AgentHandle;
 	EFI_HANDLE ControllerHandle;
-	UINT32 Attributes;
-	UINT32 OpenCount;
+	unsigned int Attributes;
+	unsigned int OpenCount;
 } EFI_OPEN_PROTOCOL_INFORMATION_ENTRY;
 
 typedef struct
 {
-	UINT64 ProcessorId;
-	UINT32 StatusFlag;
+	unsigned long long ProcessorId;
+	unsigned int StatusFlag;
 	EFI_CPU_PHYSICAL_LOCATION Location;
 } EFI_PROCESSOR_INFORMATION;
 
 typedef struct
 {
-	UINT32 State;
-	UINT32 HwAddressSize;
-	UINT32 MediaHeaderSize;
-	UINT32 MaxPacketSize;
-	UINT32 NvRamSize;
-	UINT32 NvRamAccessSize;
-	UINT32 ReceiveFilterMask;
-	UINT32 ReceiveFilterSetting;
-	UINT32 MaxMCastFilterCount;
-	UINT32 MCastFilterCount;
+	unsigned int State;
+	unsigned int HwAddressSize;
+	unsigned int MediaHeaderSize;
+	unsigned int MaxPacketSize;
+	unsigned int NvRamSize;
+	unsigned int NvRamAccessSize;
+	unsigned int ReceiveFilterMask;
+	unsigned int ReceiveFilterSetting;
+	unsigned int MaxMCastFilterCount;
+	unsigned int MCastFilterCount;
 	EFI_MAC_ADDRESS MCastFilter[MAX_MCAST_FILTER_CNT];
 	EFI_MAC_ADDRESS CurrentAddress;
 	EFI_MAC_ADDRESS BroadcastAddress;
 	EFI_MAC_ADDRESS PermanentAddress;
-	UINT8 IfType;
+	unsigned char IfType;
 	BOOLEAN MacAddressChangeable;
 	BOOLEAN MultipleTxSupported;
 	BOOLEAN MediaPresentSupported;
@@ -347,11 +368,11 @@ typedef struct
 
 typedef struct
 {
-	UINT64 Signature;
-	UINT32 Revision;
-	UINT32 HeaderSize;
-	UINT32 CRC32;
-	UINT32 Reserved;
+	unsigned long long Signature;
+	unsigned int Revision;
+	unsigned int HeaderSize;
+	unsigned int CRC32;
+	unsigned int Reserved;
 } EFI_TABLE_HEADER;
 
 typedef struct
@@ -359,9 +380,9 @@ typedef struct
 	BOOLEAN UseDefaultAddress;
 	EFI_IPv4_ADDRESS StationAddress;
 	EFI_IPv4_ADDRESS SubnetMask;
-	UINT16 StationPort;
+	unsigned short StationPort;
 	EFI_IPv4_ADDRESS RemoteAddress;
-	UINT16 RemotePort;
+	unsigned short RemotePort;
 	BOOLEAN ActiveFlag;
 } EFI_TCP4_ACCESS_POINT;
 
@@ -379,16 +400,16 @@ typedef struct
 
 typedef struct
 {
-	UINT32 ReceiveBufferSize;
-	UINT32 SendBufferSize;
-	UINT32 MaxSynBackLog;
-	UINT32 ConnectionTimeout;
-	UINT32 DataRetries;
-	UINT32 FinTimeout;
-	UINT32 TimeWaitTimeout;
-	UINT32 KeepAliveProbes;
-	UINT32 KeepAliveTime;
-	UINT32 KeepAliveInterval;
+	unsigned int ReceiveBufferSize;
+	unsigned int SendBufferSize;
+	unsigned int MaxSynBackLog;
+	unsigned int ConnectionTimeout;
+	unsigned int DataRetries;
+	unsigned int FinTimeout;
+	unsigned int TimeWaitTimeout;
+	unsigned int KeepAliveProbes;
+	unsigned int KeepAliveTime;
+	unsigned int KeepAliveInterval;
 	BOOLEAN EnableNagle;
 	BOOLEAN EnableTimeStamp;
 	BOOLEAN EnableWindowScaling;
@@ -398,8 +419,8 @@ typedef struct
 
 typedef struct
 {
-	UINT8 TypeOfService;
-	UINT8 TimeToLive;
+	unsigned char TypeOfService;
+	unsigned char TimeToLive;
 	EFI_TCP4_ACCESS_POINT AccessPoint;
 	EFI_TCP4_OPTION* ControlOption;
 } EFI_TCP4_CONFIG_DATA;
@@ -411,15 +432,15 @@ typedef struct
 
 typedef struct
 {
-	UINT32 FragmentLength;
-	VOID* FragmentBuffer;
+	unsigned int FragmentLength;
+	void* FragmentBuffer;
 } EFI_TCP4_FRAGMENT_DATA;
 
 typedef struct
 {
 	BOOLEAN UrgentFlag;
-	UINT32 DataLength;
-	UINT32 FragmentCount;
+	unsigned int DataLength;
+	unsigned int FragmentCount;
 	EFI_TCP4_FRAGMENT_DATA FragmentTable[1];
 } EFI_TCP4_RECEIVE_DATA;
 
@@ -427,8 +448,8 @@ typedef struct
 {
 	BOOLEAN Push;
 	BOOLEAN Urgent;
-	UINT32 DataLength;
-	UINT32 FragmentCount;
+	unsigned int DataLength;
+	unsigned int FragmentCount;
 	EFI_TCP4_FRAGMENT_DATA FragmentTable[1];
 } EFI_TCP4_TRANSMIT_DATA;
 
@@ -450,38 +471,38 @@ typedef struct
 
 typedef struct
 {
-	UINT16 Year;
-	UINT8 Month;
-	UINT8 Day;
-	UINT8 Hour;
-	UINT8 Minute;
-	UINT8 Second;
-	UINT8 Pad1;
-	UINT32 Nanosecond;
-	INT16 TimeZone;
-	UINT8 Daylight;
-	UINT8 Pad2;
+	unsigned short Year;
+	unsigned char Month;
+	unsigned char Day;
+	unsigned char Hour;
+	unsigned char Minute;
+	unsigned char Second;
+	unsigned char Pad1;
+	unsigned int Nanosecond;
+	short TimeZone;
+	unsigned char Daylight;
+	unsigned char Pad2;
 } EFI_TIME;
 
 typedef struct
 {
-	UINT32 Resolution;
-	UINT32 Accuracy;
+	unsigned int Resolution;
+	unsigned int Accuracy;
 	BOOLEAN SetsToZero;
 } EFI_TIME_CAPABILITIES;
 
 typedef struct
 {
     EFI_IPv4_ADDRESS SourceAddress;
-    UINT16 SourcePort;
+    unsigned short SourcePort;
     EFI_IPv4_ADDRESS DestinationAddress;
-    UINT16 DestinationPort;
+    unsigned short DestinationPort;
 } EFI_UDP4_SESSION_DATA;
 
 typedef struct
 {
-    UINT32 FragmentLength;
-    VOID* FragmentBuffer;
+    unsigned int FragmentLength;
+    void* FragmentBuffer;
 } EFI_UDP4_FRAGMENT_DATA;
 
 typedef struct
@@ -489,8 +510,8 @@ typedef struct
     EFI_TIME TimeStamp;
     EFI_EVENT RecycleSignal;
     EFI_UDP4_SESSION_DATA UdpSession;
-    UINT32 DataLength;
-    UINT32 FragmentCount;
+    unsigned int DataLength;
+    unsigned int FragmentCount;
     EFI_UDP4_FRAGMENT_DATA FragmentTable[1];
 } EFI_UDP4_RECEIVE_DATA;
 
@@ -498,8 +519,8 @@ typedef struct
 {
     EFI_UDP4_SESSION_DATA* UdpSessionData;
     EFI_IPv4_ADDRESS* GatewayAddress;
-    UINT32 DataLength;
-    UINT32 FragmentCount;
+    unsigned int DataLength;
+    unsigned int FragmentCount;
     EFI_UDP4_FRAGMENT_DATA FragmentTable[1];
 } EFI_UDP4_TRANSMIT_DATA;
 
@@ -520,126 +541,126 @@ typedef struct
     BOOLEAN AcceptPromiscuous;
     BOOLEAN AcceptAnyPort;
     BOOLEAN AllowDuplicatePort;
-    UINT8 TypeOfService;
-    UINT8 TimeToLive;
+    unsigned char TypeOfService;
+    unsigned char TimeToLive;
     BOOLEAN DoNotFragment;
-    UINT32 ReceiveTimeout;
-    UINT32 TransmitTimeout;
+    unsigned int ReceiveTimeout;
+    unsigned int TransmitTimeout;
     BOOLEAN UseDefaultAddress;
     EFI_IPv4_ADDRESS StationAddress;
     EFI_IPv4_ADDRESS SubnetMask;
-    UINT16 StationPort;
+    unsigned short StationPort;
     EFI_IPv4_ADDRESS RemoteAddress;
-    UINT16 RemotePort;
+    unsigned short RemotePort;
 } EFI_UDP4_CONFIG_DATA;
 
 typedef struct
 {
-	INT32 MaxMode;
-	INT32 Mode;
-	INT32 Attribute;
-	INT32 CursorColumn;
-	INT32 CursorRow;
+	int MaxMode;
+	int Mode;
+	int Attribute;
+	int CursorColumn;
+	int CursorRow;
 	BOOLEAN CursorVisible;
 } SIMPLE_TEXT_OUTPUT_MODE;
 
-typedef EFI_STATUS(EFIAPI* EFI_ALLOCATE_PAGES) (IN EFI_ALLOCATE_TYPE Type, IN EFI_MEMORY_TYPE MemoryType, IN UINTN Pages, IN OUT EFI_PHYSICAL_ADDRESS* Memory);
-typedef EFI_STATUS(EFIAPI* EFI_ALLOCATE_POOL) (IN EFI_MEMORY_TYPE PoolType, IN UINTN Size, OUT VOID** Buffer);
-typedef VOID(EFIAPI* EFI_AP_PROCEDURE) (IN VOID* ProcedureArgument);
-typedef EFI_STATUS(EFIAPI* EFI_CALCULATE_CRC32) (IN VOID* Data, IN UINTN DataSize, OUT UINT32* Crc32);
-typedef EFI_STATUS(EFIAPI* EFI_CHECK_EVENT) (IN EFI_EVENT Event);
-typedef EFI_STATUS(EFIAPI* EFI_CLOSE_EVENT) (IN EFI_EVENT Event);
-typedef EFI_STATUS(EFIAPI* EFI_CLOSE_PROTOCOL) (IN EFI_HANDLE Handle, IN EFI_GUID* Protocol, IN EFI_HANDLE AgentHandle, IN EFI_HANDLE ControllerHandle);
-typedef EFI_STATUS(EFIAPI* EFI_CONNECT_CONTROLLER) (IN EFI_HANDLE ControllerHandle, IN EFI_HANDLE* DriverImageHandle OPTIONAL, IN EFI_DEVICE_PATH_PROTOCOL* RemainingDevicePath OPTIONAL, IN BOOLEAN Recursive);
-typedef EFI_STATUS(EFIAPI* EFI_CONVERT_POINTER) (IN UINTN DebugDisposition, IN OUT VOID** Address);
-typedef VOID(EFIAPI* EFI_COPY_MEM) (IN VOID* Destination, IN VOID* Source, IN UINTN Length);
-typedef EFI_STATUS(EFIAPI* EFI_CREATE_EVENT) (IN UINT32 Type, IN EFI_TPL NotifyTpl, IN VOID* NotifyFunction, OPTIONAL IN VOID* NotifyContext, OPTIONAL OUT EFI_EVENT* Event);
-typedef EFI_STATUS(EFIAPI* EFI_CREATE_EVENT_EX) (IN UINT32 Type, IN EFI_TPL NotifyTpl, IN VOID* NotifyFunction OPTIONAL, IN CONST VOID* NotifyContext OPTIONAL, IN CONST EFI_GUID* EventGroup OPTIONAL, OUT EFI_EVENT* Event);
-typedef EFI_STATUS(EFIAPI* EFI_DISCONNECT_CONTROLLER) (IN EFI_HANDLE ControllerHandle, IN EFI_HANDLE DriverImageHandle OPTIONAL, IN EFI_HANDLE ChildHandle OPTIONAL);
-typedef VOID(EFIAPI* EFI_EVENT_NOTIFY) (IN EFI_EVENT Event, IN VOID* Context);
-typedef EFI_STATUS(EFIAPI* EFI_EXIT) (IN EFI_HANDLE ImageHandle, IN EFI_STATUS ExitStatus, IN UINTN ExitDataSize, IN CHAR16* ExitData OPTIONAL);
-typedef EFI_STATUS(EFIAPI* EFI_EXIT_BOOT_SERVICES) (IN EFI_HANDLE ImageHandle, IN UINTN MapKey);
-typedef EFI_STATUS(EFIAPI* EFI_FREE_PAGES) (IN EFI_PHYSICAL_ADDRESS Memory, IN UINTN Pages);
-typedef EFI_STATUS(EFIAPI* EFI_FREE_POOL) (IN VOID* Buffer);
-typedef EFI_STATUS(EFIAPI* EFI_GET_MEMORY_MAP) (IN OUT UINTN* MemoryMapSize, OUT EFI_MEMORY_DESCRIPTOR* MemoryMap, OUT UINTN* MapKey, OUT UINTN* DescriptorSize, OUT UINT32* DescriptorVersion);
-typedef EFI_STATUS(EFIAPI* EFI_GET_NEXT_HIGH_MONO_COUNT) (OUT UINT32* HighCount);
-typedef EFI_STATUS(EFIAPI* EFI_GET_NEXT_MONOTONIC_COUNT) (OUT UINT64* Count);
-typedef EFI_STATUS(EFIAPI* EFI_GET_NEXT_VARIABLE_NAME) (IN OUT UINTN* VariableNameSize, IN OUT CHAR16* VariableName, IN OUT EFI_GUID* VendorGuid);
-typedef EFI_STATUS(EFIAPI* EFI_GET_TIME) (OUT EFI_TIME* Time, OUT EFI_TIME_CAPABILITIES* Capabilities OPTIONAL);
-typedef EFI_STATUS(EFIAPI* EFI_GET_VARIABLE) (IN CHAR16* VariableName, IN EFI_GUID* VendorGuid, OUT UINT32* Attributes OPTIONAL, IN OUT UINTN* DataSize, OUT VOID* Data);
-typedef EFI_STATUS(EFIAPI* EFI_GET_WAKEUP_TIME) (OUT BOOLEAN* Enabled, OUT BOOLEAN* Pending, OUT EFI_TIME* Time);
-typedef EFI_STATUS(EFIAPI* EFI_HANDLE_PROTOCOL) (IN EFI_HANDLE Handle, IN EFI_GUID* Protocol, OUT VOID** Interface);
-typedef EFI_STATUS(EFIAPI* EFI_IMAGE_LOAD) (IN BOOLEAN BootPolicy, IN EFI_HANDLE ParentImageHandle, IN EFI_DEVICE_PATH_PROTOCOL* DevicePath, IN VOID* SourceBuffer OPTIONAL, IN UINTN SourceSize, OUT EFI_HANDLE* ImageHandle);
-typedef EFI_STATUS(EFIAPI* EFI_IMAGE_START) (IN EFI_HANDLE ImageHandle, OUT UINTN* ExitDataSize, OUT CHAR16** ExitData OPTIONAL);
-typedef EFI_STATUS(EFIAPI* EFI_IMAGE_UNLOAD) (IN EFI_HANDLE ImageHandle);
-typedef EFI_STATUS(EFIAPI* EFI_INPUT_READ_KEY) (IN VOID* This, OUT EFI_INPUT_KEY* Key);
-typedef EFI_STATUS(EFIAPI* EFI_INPUT_RESET) (IN VOID* This, IN BOOLEAN ExtendedVerification);
-typedef EFI_STATUS(EFIAPI* EFI_INSTALL_CONFIGURATION_TABLE) (IN EFI_GUID* Guid, IN VOID* Table);
-typedef EFI_STATUS(EFIAPI* EFI_INSTALL_MULTIPLE_PROTOCOL_INTERFACES) (IN OUT EFI_HANDLE* Handle, ...);
-typedef EFI_STATUS(EFIAPI* EFI_INSTALL_PROTOCOL_INTERFACE) (IN OUT EFI_HANDLE* Handle, IN EFI_GUID* Protocol, IN EFI_INTERFACE_TYPE InterfaceType, IN VOID* Interface);
-typedef EFI_STATUS(EFIAPI* EFI_LOCATE_DEVICE_PATH) (IN EFI_GUID* Protocol, IN OUT EFI_DEVICE_PATH_PROTOCOL** DevicePath, OUT EFI_HANDLE* Device);
-typedef EFI_STATUS(EFIAPI* EFI_LOCATE_HANDLE) (IN EFI_LOCATE_SEARCH_TYPE SearchType, IN EFI_GUID* Protocol OPTIONAL, IN VOID* SearchKey OPTIONAL, IN OUT UINTN* BufferSize, OUT EFI_HANDLE* Buffer);
-typedef EFI_STATUS(EFIAPI* EFI_LOCATE_HANDLE_BUFFER) (IN EFI_LOCATE_SEARCH_TYPE SearchType, IN EFI_GUID* Protocol OPTIONAL, IN VOID* SearchKey OPTIONAL, OUT UINTN* NoHandles, OUT EFI_HANDLE** Buffer);
-typedef EFI_STATUS(EFIAPI* EFI_LOCATE_PROTOCOL) (IN EFI_GUID* Protocol, IN VOID* Registration OPTIONAL, OUT VOID** Interface);
-typedef EFI_STATUS(EFIAPI* EFI_MP_SERVICES_ENABLEDISABLEAP) (IN VOID* This, IN UINTN ProcessorNumber, IN BOOLEAN EnableAP, IN UINT32* HealthFlag OPTIONAL);
-typedef EFI_STATUS(EFIAPI* EFI_MP_SERVICES_GET_NUMBER_OF_PROCESSORS) (IN VOID* This, OUT UINTN* NumberOfProcessors, OUT UINTN* NumberOfEnabledProcessors);
-typedef EFI_STATUS(EFIAPI* EFI_MP_SERVICES_GET_PROCESSOR_INFO) (IN VOID* This, IN UINTN ProcessorNumber, OUT EFI_PROCESSOR_INFORMATION* ProcessorInfoBuffer);
-typedef EFI_STATUS(EFIAPI* EFI_MP_SERVICES_STARTUP_ALL_APS) (IN VOID* This, IN EFI_AP_PROCEDURE Procedure, IN BOOLEAN SingleThread, IN EFI_EVENT WaitEvent OPTIONAL, IN UINTN TimeoutInMicroSeconds, IN VOID* ProcedureArgument OPTIONAL, OUT UINTN** FailedCpuList OPTIONAL);
-typedef EFI_STATUS(EFIAPI* EFI_MP_SERVICES_STARTUP_THIS_AP) (IN VOID* This, IN EFI_AP_PROCEDURE Procedure, IN UINTN ProcessorNumber, IN EFI_EVENT WaitEvent OPTIONAL, IN UINTN TimeoutInMicroseconds, IN VOID* ProcedureArgument OPTIONAL, OUT BOOLEAN* Finished OPTIONAL);
-typedef EFI_STATUS(EFIAPI* EFI_MP_SERVICES_SWITCH_BSP) (IN VOID* This, IN UINTN ProcessorNumber, IN BOOLEAN EnableOldBSP);
-typedef EFI_STATUS(EFIAPI* EFI_MP_SERVICES_WHOAMI) (IN VOID* This, OUT UINTN* ProcessorNumber);
-typedef EFI_STATUS(EFIAPI* EFI_OPEN_PROTOCOL) (IN EFI_HANDLE Handle, IN EFI_GUID* Protocol, OUT VOID** Interface OPTIONAL, IN EFI_HANDLE AgentHandle, IN EFI_HANDLE ControllerHandle, IN UINT32 Attributes);
-typedef EFI_STATUS(EFIAPI* EFI_OPEN_PROTOCOL_INFORMATION) (IN EFI_HANDLE Handle, IN EFI_GUID* Protocol, OUT EFI_OPEN_PROTOCOL_INFORMATION_ENTRY** EntryBuffer, OUT UINTN* EntryCount);
-typedef EFI_STATUS(EFIAPI* EFI_PROTOCOLS_PER_HANDLE) (IN EFI_HANDLE Handle, OUT EFI_GUID*** ProtocolBuffer, OUT UINTN* ProtocolBufferCount);
-typedef EFI_STATUS(EFIAPI* EFI_QUERY_CAPSULE_CAPABILITIES) (IN EFI_CAPSULE_HEADER** CapsuleHeaderArray, IN UINTN CapsuleCount, OUT UINT64* MaximumCapsuleSize, OUT EFI_RESET_TYPE* ResetType);
-typedef EFI_STATUS(EFIAPI* EFI_QUERY_VARIABLE_INFO) (IN UINT32 Attributes, OUT UINT64* MaximumVariableStorageSize, OUT UINT64* RemainingVariableStorageSize, OUT UINT64* MaximumVariableSize);
-typedef EFI_TPL(EFIAPI* EFI_RAISE_TPL) (IN EFI_TPL NewTpl);
-typedef EFI_STATUS(EFIAPI* EFI_REGISTER_PROTOCOL_NOTIFY) (IN EFI_GUID* Protocol, IN EFI_EVENT Event, OUT VOID** Registration);
-typedef EFI_STATUS(EFIAPI* EFI_REINSTALL_PROTOCOL_INTERFACE) (IN EFI_HANDLE Handle, IN EFI_GUID* Protocol, IN VOID* OldInterface, IN VOID* NewInterface);
-typedef EFI_STATUS(EFIAPI* EFI_RESET_SYSTEM) (IN EFI_RESET_TYPE ResetType, IN EFI_STATUS ResetStatus, IN UINTN DataSize, IN CHAR16* ResetData OPTIONAL);
-typedef VOID(EFIAPI* EFI_RESTORE_TPL) (IN EFI_TPL OldTpl);
-typedef EFI_STATUS(EFIAPI* EFI_SERVICE_BINDING_CREATE_CHILD) (IN VOID* This, IN OUT EFI_HANDLE* ChildHandle);
-typedef EFI_STATUS(EFIAPI* EFI_SERVICE_BINDING_DESTROY_CHILD) (IN VOID* This, IN EFI_HANDLE ChildHandle);
-typedef VOID(EFIAPI* EFI_SET_MEM) (IN VOID* Buffer, IN UINTN Size, IN UINT8 Value);
-typedef EFI_STATUS(EFIAPI* EFI_SET_TIME) (IN EFI_TIME* Time);
-typedef EFI_STATUS(EFIAPI* EFI_SET_TIMER) (IN EFI_EVENT Event, IN EFI_TIMER_DELAY Type, IN UINT64 TriggerTime);
-typedef EFI_STATUS(EFIAPI* EFI_SET_VARIABLE) (IN CHAR16* VariableName, IN EFI_GUID* VendorGuid, IN UINT32 Attributes, IN UINTN DataSize, IN VOID* Data);
-typedef EFI_STATUS(EFIAPI* EFI_SET_VIRTUAL_ADDRESS_MAP) (IN UINTN MemoryMapSize, IN UINTN DescriptorSize, IN UINT32 DescriptorVersion, IN EFI_MEMORY_DESCRIPTOR* VirtualMap);
-typedef EFI_STATUS(EFIAPI* EFI_SET_WAKEUP_TIME) (IN BOOLEAN Enable, IN EFI_TIME* Time OPTIONAL);
-typedef EFI_STATUS(EFIAPI* EFI_SET_WATCHDOG_TIMER) (IN UINTN Timeout, IN UINT64 WatchdogCode, IN UINTN DataSize, IN CHAR16* WatchdogData OPTIONAL);
-typedef EFI_STATUS(EFIAPI* EFI_SIGNAL_EVENT) (IN EFI_EVENT Event);
-typedef EFI_STATUS(EFIAPI* EFI_STALL) (IN UINTN Microseconds);
-typedef EFI_STATUS(EFIAPI* EFI_TCP4_ACCEPT) (IN VOID* This, IN EFI_TCP4_LISTEN_TOKEN* ListenToken);
-typedef EFI_STATUS(EFIAPI* EFI_TCP4_CANCEL)(IN VOID* This, IN EFI_TCP4_COMPLETION_TOKEN* Token OPTIONAL);
-typedef EFI_STATUS(EFIAPI* EFI_TCP4_CLOSE)(IN VOID* This, IN EFI_TCP4_CLOSE_TOKEN* CloseToken);
-typedef EFI_STATUS(EFIAPI* EFI_TCP4_CONFIGURE) (IN VOID* This, IN EFI_TCP4_CONFIG_DATA* TcpConfigData OPTIONAL);
-typedef EFI_STATUS(EFIAPI* EFI_TCP4_CONNECT) (IN VOID* This, IN EFI_TCP4_CONNECTION_TOKEN* ConnectionToken);
-typedef EFI_STATUS(EFIAPI* EFI_TCP4_GET_MODE_DATA) (IN VOID* This, OUT EFI_TCP4_CONNECTION_STATE* Tcp4State OPTIONAL, OUT EFI_TCP4_CONFIG_DATA* Tcp4ConfigData OPTIONAL, OUT EFI_IP4_MODE_DATA* Ip4ModeData OPTIONAL, OUT EFI_MANAGED_NETWORK_CONFIG_DATA* MnpConfigData OPTIONAL, OUT EFI_SIMPLE_NETWORK_MODE* SnpModeData OPTIONAL);
-typedef EFI_STATUS(EFIAPI* EFI_TCP4_POLL) (IN VOID* This);
-typedef EFI_STATUS(EFIAPI* EFI_TCP4_RECEIVE) (IN VOID* This, IN EFI_TCP4_IO_TOKEN* Token);
-typedef EFI_STATUS(EFIAPI* EFI_TCP4_ROUTES) (IN VOID* This, IN BOOLEAN DeleteRoute, IN EFI_IPv4_ADDRESS* SubnetAddress, IN EFI_IPv4_ADDRESS* SubnetMask, IN EFI_IPv4_ADDRESS* GatewayAddress);
-typedef EFI_STATUS(EFIAPI* EFI_TCP4_TRANSMIT) (IN VOID* This, IN EFI_TCP4_IO_TOKEN* Token);
-typedef EFI_STATUS(EFIAPI* EFI_TEXT_CLEAR_SCREEN) (IN VOID* This);
-typedef EFI_STATUS(EFIAPI* EFI_TEXT_ENABLE_CURSOR) (IN VOID* This, IN BOOLEAN Visible);
-typedef EFI_STATUS(EFIAPI* EFI_TEXT_QUERY_MODE) (IN VOID* This, IN UINTN ModeNumber, OUT UINTN* Columns, OUT UINTN* Rows);
-typedef EFI_STATUS(EFIAPI* EFI_TEXT_RESET) (IN VOID* This, IN BOOLEAN ExtendedVerification);
-typedef EFI_STATUS(EFIAPI* EFI_TEXT_SET_ATTRIBUTE) (IN VOID* This, IN UINTN Attribute);
-typedef EFI_STATUS(EFIAPI* EFI_TEXT_SET_CURSOR_POSITION) (IN VOID* This, IN UINTN Column, IN UINTN Row);
-typedef EFI_STATUS(EFIAPI* EFI_TEXT_SET_MODE) (IN VOID* This, IN UINTN ModeNumber);
-typedef EFI_STATUS(EFIAPI* EFI_TEXT_STRING) (IN VOID* This, IN CHAR16* String);
-typedef EFI_STATUS(EFIAPI* EFI_TEXT_TEST_STRING) (IN VOID* This, IN CHAR16* String);
-typedef EFI_STATUS(EFIAPI* EFI_UDP4_CANCEL)(IN VOID* This, IN EFI_UDP4_COMPLETION_TOKEN* Token OPTIONAL);
-typedef EFI_STATUS(EFIAPI* EFI_UDP4_CONFIGURE) (IN VOID* This, IN EFI_UDP4_CONFIG_DATA* UdpConfigData OPTIONAL);
-typedef EFI_STATUS(EFIAPI* EFI_UDP4_GET_MODE_DATA) (IN VOID* This, OUT EFI_UDP4_CONFIG_DATA* Udp4ConfigData OPTIONAL, OUT EFI_IP4_MODE_DATA* Ip4ModeData OPTIONAL, OUT EFI_MANAGED_NETWORK_CONFIG_DATA* MnpConfigData OPTIONAL, OUT EFI_SIMPLE_NETWORK_MODE* SnpModeData OPTIONAL);
-typedef EFI_STATUS(EFIAPI* EFI_UDP4_GROUPS) (IN VOID* This, IN BOOLEAN JoinFlag, IN EFI_IPv4_ADDRESS* MulticastAddress OPTIONAL);
-typedef EFI_STATUS(EFIAPI* EFI_UDP4_POLL) (IN VOID* This);
-typedef EFI_STATUS(EFIAPI* EFI_UDP4_RECEIVE) (IN VOID* This, IN EFI_UDP4_COMPLETION_TOKEN* Token);
-typedef EFI_STATUS(EFIAPI* EFI_UDP4_ROUTES) (IN VOID* This, IN BOOLEAN DeleteRoute, IN EFI_IPv4_ADDRESS* SubnetAddress, IN EFI_IPv4_ADDRESS* SubnetMask, IN EFI_IPv4_ADDRESS* GatewayAddress);
-typedef EFI_STATUS(EFIAPI* EFI_UDP4_TRANSMIT) (IN VOID* This, IN EFI_UDP4_COMPLETION_TOKEN* Token);
-typedef EFI_STATUS(EFIAPI* EFI_UNINSTALL_MULTIPLE_PROTOCOL_INTERFACES) (IN EFI_HANDLE Handle, ...);
-typedef EFI_STATUS(EFIAPI* EFI_UNINSTALL_PROTOCOL_INTERFACE) (IN EFI_HANDLE Handle, IN EFI_GUID* Protocol, IN VOID* Interface);
-typedef EFI_STATUS(EFIAPI* EFI_UPDATE_CAPSULE) (IN EFI_CAPSULE_HEADER** CapsuleHeaderArray, IN UINTN CapsuleCount, IN EFI_PHYSICAL_ADDRESS ScatterGatherList OPTIONAL);
-typedef EFI_STATUS(EFIAPI* EFI_WAIT_FOR_EVENT) (IN UINTN NumberOfEvents, IN EFI_EVENT* Event, OUT UINTN* Index);
+typedef EFI_STATUS(__cdecl *EFI_ALLOCATE_PAGES) (IN EFI_ALLOCATE_TYPE Type, IN EFI_MEMORY_TYPE MemoryType, IN unsigned long long Pages, IN OUT EFI_PHYSICAL_ADDRESS* Memory);
+typedef EFI_STATUS(__cdecl *EFI_ALLOCATE_POOL) (IN EFI_MEMORY_TYPE PoolType, IN unsigned long long Size, OUT void** Buffer);
+typedef void(__cdecl *EFI_AP_PROCEDURE) (IN void* ProcedureArgument);
+typedef EFI_STATUS(__cdecl *EFI_CALCULATE_CRC32) (IN void* Data, IN unsigned long long DataSize, OUT unsigned int* Crc32);
+typedef EFI_STATUS(__cdecl *EFI_CHECK_EVENT) (IN EFI_EVENT Event);
+typedef EFI_STATUS(__cdecl *EFI_CLOSE_EVENT) (IN EFI_EVENT Event);
+typedef EFI_STATUS(__cdecl *EFI_CLOSE_PROTOCOL) (IN EFI_HANDLE Handle, IN EFI_GUID* Protocol, IN EFI_HANDLE AgentHandle, IN EFI_HANDLE ControllerHandle);
+typedef EFI_STATUS(__cdecl *EFI_CONNECT_CONTROLLER) (IN EFI_HANDLE ControllerHandle, IN EFI_HANDLE* DriverImageHandle OPTIONAL, IN EFI_DEVICE_PATH_PROTOCOL* RemainingDevicePath OPTIONAL, IN BOOLEAN Recursive);
+typedef EFI_STATUS(__cdecl *EFI_CONVERT_POINTER) (IN unsigned long long DebugDisposition, IN OUT void** Address);
+typedef void(__cdecl *EFI_COPY_MEM) (IN void* Destination, IN void* Source, IN unsigned long long Length);
+typedef EFI_STATUS(__cdecl *EFI_CREATE_EVENT) (IN unsigned int Type, IN EFI_TPL NotifyTpl, IN void* NotifyFunction, OPTIONAL IN void* NotifyContext, OPTIONAL OUT EFI_EVENT* Event);
+typedef EFI_STATUS(__cdecl *EFI_CREATE_EVENT_EX) (IN unsigned int Type, IN EFI_TPL NotifyTpl, IN void* NotifyFunction OPTIONAL, IN const void* NotifyContext OPTIONAL, IN const EFI_GUID* EventGroup OPTIONAL, OUT EFI_EVENT* Event);
+typedef EFI_STATUS(__cdecl *EFI_DISCONNECT_CONTROLLER) (IN EFI_HANDLE ControllerHandle, IN EFI_HANDLE DriverImageHandle OPTIONAL, IN EFI_HANDLE ChildHandle OPTIONAL);
+typedef void(__cdecl *EFI_EVENT_NOTIFY) (IN EFI_EVENT Event, IN void* Context);
+typedef EFI_STATUS(__cdecl *EFI_EXIT) (IN EFI_HANDLE ImageHandle, IN EFI_STATUS ExitStatus, IN unsigned long long ExitDataSize, IN CHAR16* ExitData OPTIONAL);
+typedef EFI_STATUS(__cdecl *EFI_EXIT_BOOT_SERVICES) (IN EFI_HANDLE ImageHandle, IN unsigned long long MapKey);
+typedef EFI_STATUS(__cdecl *EFI_FREE_PAGES) (IN EFI_PHYSICAL_ADDRESS Memory, IN unsigned long long Pages);
+typedef EFI_STATUS(__cdecl *EFI_FREE_POOL) (IN void* Buffer);
+typedef EFI_STATUS(__cdecl *EFI_GET_MEMORY_MAP) (IN OUT unsigned long long* MemoryMapSize, OUT EFI_MEMORY_DESCRIPTOR* MemoryMap, OUT unsigned long long* MapKey, OUT unsigned long long* DescriptorSize, OUT unsigned int* DescriptorVersion);
+typedef EFI_STATUS(__cdecl *EFI_GET_NEXT_HIGH_MONO_COUNT) (OUT unsigned int* HighCount);
+typedef EFI_STATUS(__cdecl *EFI_GET_NEXT_MONOTONIC_COUNT) (OUT unsigned long long* Count);
+typedef EFI_STATUS(__cdecl *EFI_GET_NEXT_VARIABLE_NAME) (IN OUT unsigned long long* VariableNameSize, IN OUT CHAR16* VariableName, IN OUT EFI_GUID* VendorGuid);
+typedef EFI_STATUS(__cdecl *EFI_GET_TIME) (OUT EFI_TIME* Time, OUT EFI_TIME_CAPABILITIES* Capabilities OPTIONAL);
+typedef EFI_STATUS(__cdecl *EFI_GET_VARIABLE) (IN CHAR16* VariableName, IN EFI_GUID* VendorGuid, OUT unsigned int* Attributes OPTIONAL, IN OUT unsigned long long* DataSize, OUT void* Data);
+typedef EFI_STATUS(__cdecl *EFI_GET_WAKEUP_TIME) (OUT BOOLEAN* Enabled, OUT BOOLEAN* Pending, OUT EFI_TIME* Time);
+typedef EFI_STATUS(__cdecl *EFI_HANDLE_PROTOCOL) (IN EFI_HANDLE Handle, IN EFI_GUID* Protocol, OUT void** Interface);
+typedef EFI_STATUS(__cdecl *EFI_IMAGE_LOAD) (IN BOOLEAN BootPolicy, IN EFI_HANDLE ParentImageHandle, IN EFI_DEVICE_PATH_PROTOCOL* DevicePath, IN void* SourceBuffer OPTIONAL, IN unsigned long long SourceSize, OUT EFI_HANDLE* ImageHandle);
+typedef EFI_STATUS(__cdecl *EFI_IMAGE_START) (IN EFI_HANDLE ImageHandle, OUT unsigned long long* ExitDataSize, OUT CHAR16** ExitData OPTIONAL);
+typedef EFI_STATUS(__cdecl *EFI_IMAGE_UNLOAD) (IN EFI_HANDLE ImageHandle);
+typedef EFI_STATUS(__cdecl *EFI_INPUT_READ_KEY) (IN void* This, OUT EFI_INPUT_KEY* Key);
+typedef EFI_STATUS(__cdecl *EFI_INPUT_RESET) (IN void* This, IN BOOLEAN ExtendedVerification);
+typedef EFI_STATUS(__cdecl *EFI_INSTALL_CONFIGURATION_TABLE) (IN EFI_GUID* Guid, IN void* Table);
+typedef EFI_STATUS(__cdecl *EFI_INSTALL_MULTIPLE_PROTOCOL_INTERFACES) (IN OUT EFI_HANDLE* Handle, ...);
+typedef EFI_STATUS(__cdecl *EFI_INSTALL_PROTOCOL_INTERFACE) (IN OUT EFI_HANDLE* Handle, IN EFI_GUID* Protocol, IN EFI_INTERFACE_TYPE InterfaceType, IN void* Interface);
+typedef EFI_STATUS(__cdecl *EFI_LOCATE_DEVICE_PATH) (IN EFI_GUID* Protocol, IN OUT EFI_DEVICE_PATH_PROTOCOL** DevicePath, OUT EFI_HANDLE* Device);
+typedef EFI_STATUS(__cdecl *EFI_LOCATE_HANDLE) (IN EFI_LOCATE_SEARCH_TYPE SearchType, IN EFI_GUID* Protocol OPTIONAL, IN void* SearchKey OPTIONAL, IN OUT unsigned long long* BufferSize, OUT EFI_HANDLE* Buffer);
+typedef EFI_STATUS(__cdecl *EFI_LOCATE_HANDLE_BUFFER) (IN EFI_LOCATE_SEARCH_TYPE SearchType, IN EFI_GUID* Protocol OPTIONAL, IN void* SearchKey OPTIONAL, OUT unsigned long long* NoHandles, OUT EFI_HANDLE** Buffer);
+typedef EFI_STATUS(__cdecl *EFI_LOCATE_PROTOCOL) (IN EFI_GUID* Protocol, IN void* Registration OPTIONAL, OUT void** Interface);
+typedef EFI_STATUS(__cdecl *EFI_MP_SERVICES_ENABLEDISABLEAP) (IN void* This, IN unsigned long long ProcessorNumber, IN BOOLEAN EnableAP, IN unsigned int* HealthFlag OPTIONAL);
+typedef EFI_STATUS(__cdecl *EFI_MP_SERVICES_GET_NUMBER_OF_PROCESSORS) (IN void* This, OUT unsigned long long* NumberOfProcessors, OUT unsigned long long* NumberOfEnabledProcessors);
+typedef EFI_STATUS(__cdecl *EFI_MP_SERVICES_GET_PROCESSOR_INFO) (IN void* This, IN unsigned long long ProcessorNumber, OUT EFI_PROCESSOR_INFORMATION* ProcessorInfoBuffer);
+typedef EFI_STATUS(__cdecl *EFI_MP_SERVICES_STARTUP_ALL_APS) (IN void* This, IN EFI_AP_PROCEDURE Procedure, IN BOOLEAN SingleThread, IN EFI_EVENT WaitEvent OPTIONAL, IN unsigned long long TimeoutInMicroSeconds, IN void* ProcedureArgument OPTIONAL, OUT unsigned long long** FailedCpuList OPTIONAL);
+typedef EFI_STATUS(__cdecl *EFI_MP_SERVICES_STARTUP_THIS_AP) (IN void* This, IN EFI_AP_PROCEDURE Procedure, IN unsigned long long ProcessorNumber, IN EFI_EVENT WaitEvent OPTIONAL, IN unsigned long long TimeoutInMicroseconds, IN void* ProcedureArgument OPTIONAL, OUT BOOLEAN* Finished OPTIONAL);
+typedef EFI_STATUS(__cdecl *EFI_MP_SERVICES_SWITCH_BSP) (IN void* This, IN unsigned long long ProcessorNumber, IN BOOLEAN EnableOldBSP);
+typedef EFI_STATUS(__cdecl *EFI_MP_SERVICES_WHOAMI) (IN void* This, OUT unsigned long long* ProcessorNumber);
+typedef EFI_STATUS(__cdecl *EFI_OPEN_PROTOCOL) (IN EFI_HANDLE Handle, IN EFI_GUID* Protocol, OUT void** Interface OPTIONAL, IN EFI_HANDLE AgentHandle, IN EFI_HANDLE ControllerHandle, IN unsigned int Attributes);
+typedef EFI_STATUS(__cdecl *EFI_OPEN_PROTOCOL_INFORMATION) (IN EFI_HANDLE Handle, IN EFI_GUID* Protocol, OUT EFI_OPEN_PROTOCOL_INFORMATION_ENTRY** EntryBuffer, OUT unsigned long long* EntryCount);
+typedef EFI_STATUS(__cdecl *EFI_PROTOCOLS_PER_HANDLE) (IN EFI_HANDLE Handle, OUT EFI_GUID*** ProtocolBuffer, OUT unsigned long long* ProtocolBufferCount);
+typedef EFI_STATUS(__cdecl *EFI_QUERY_CAPSULE_CAPABILITIES) (IN EFI_CAPSULE_HEADER** CapsuleHeaderArray, IN unsigned long long CapsuleCount, OUT unsigned long long* MaximumCapsuleSize, OUT EFI_RESET_TYPE* ResetType);
+typedef EFI_STATUS(__cdecl *EFI_QUERY_VARIABLE_INFO) (IN unsigned int Attributes, OUT unsigned long long* MaximumVariableStorageSize, OUT unsigned long long* RemainingVariableStorageSize, OUT unsigned long long* MaximumVariableSize);
+typedef EFI_TPL(__cdecl *EFI_RAISE_TPL) (IN EFI_TPL NewTpl);
+typedef EFI_STATUS(__cdecl *EFI_REGISTER_PROTOCOL_NOTIFY) (IN EFI_GUID* Protocol, IN EFI_EVENT Event, OUT void** Registration);
+typedef EFI_STATUS(__cdecl *EFI_REINSTALL_PROTOCOL_INTERFACE) (IN EFI_HANDLE Handle, IN EFI_GUID* Protocol, IN void* OldInterface, IN void* NewInterface);
+typedef EFI_STATUS(__cdecl *EFI_RESET_SYSTEM) (IN EFI_RESET_TYPE ResetType, IN EFI_STATUS ResetStatus, IN unsigned long long DataSize, IN CHAR16* ResetData OPTIONAL);
+typedef void(__cdecl *EFI_RESTORE_TPL) (IN EFI_TPL OldTpl);
+typedef EFI_STATUS(__cdecl *EFI_SERVICE_BINDING_CREATE_CHILD) (IN void* This, IN OUT EFI_HANDLE* ChildHandle);
+typedef EFI_STATUS(__cdecl *EFI_SERVICE_BINDING_DESTROY_CHILD) (IN void* This, IN EFI_HANDLE ChildHandle);
+typedef void(__cdecl *EFI_SET_MEM) (IN void* Buffer, IN unsigned long long Size, IN unsigned char Value);
+typedef EFI_STATUS(__cdecl *EFI_SET_TIME) (IN EFI_TIME* Time);
+typedef EFI_STATUS(__cdecl *EFI_SET_TIMER) (IN EFI_EVENT Event, IN EFI_TIMER_DELAY Type, IN unsigned long long TriggerTime);
+typedef EFI_STATUS(__cdecl *EFI_SET_VARIABLE) (IN CHAR16* VariableName, IN EFI_GUID* VendorGuid, IN unsigned int Attributes, IN unsigned long long DataSize, IN void* Data);
+typedef EFI_STATUS(__cdecl *EFI_SET_VIRTUAL_ADDRESS_MAP) (IN unsigned long long MemoryMapSize, IN unsigned long long DescriptorSize, IN unsigned int DescriptorVersion, IN EFI_MEMORY_DESCRIPTOR* VirtualMap);
+typedef EFI_STATUS(__cdecl *EFI_SET_WAKEUP_TIME) (IN BOOLEAN Enable, IN EFI_TIME* Time OPTIONAL);
+typedef EFI_STATUS(__cdecl *EFI_SET_WATCHDOG_TIMER) (IN unsigned long long Timeout, IN unsigned long long WatchdogCode, IN unsigned long long DataSize, IN CHAR16* WatchdogData OPTIONAL);
+typedef EFI_STATUS(__cdecl *EFI_SIGNAL_EVENT) (IN EFI_EVENT Event);
+typedef EFI_STATUS(__cdecl *EFI_STALL) (IN unsigned long long Microseconds);
+typedef EFI_STATUS(__cdecl *EFI_TCP4_ACCEPT) (IN void* This, IN EFI_TCP4_LISTEN_TOKEN* ListenToken);
+typedef EFI_STATUS(__cdecl *EFI_TCP4_CANCEL)(IN void* This, IN EFI_TCP4_COMPLETION_TOKEN* Token OPTIONAL);
+typedef EFI_STATUS(__cdecl *EFI_TCP4_CLOSE)(IN void* This, IN EFI_TCP4_CLOSE_TOKEN* CloseToken);
+typedef EFI_STATUS(__cdecl *EFI_TCP4_CONFIGURE) (IN void* This, IN EFI_TCP4_CONFIG_DATA* TcpConfigData OPTIONAL);
+typedef EFI_STATUS(__cdecl *EFI_TCP4_CONNECT) (IN void* This, IN EFI_TCP4_CONNECTION_TOKEN* ConnectionToken);
+typedef EFI_STATUS(__cdecl *EFI_TCP4_GET_MODE_DATA) (IN void* This, OUT EFI_TCP4_CONNECTION_STATE* Tcp4State OPTIONAL, OUT EFI_TCP4_CONFIG_DATA* Tcp4ConfigData OPTIONAL, OUT EFI_IP4_MODE_DATA* Ip4ModeData OPTIONAL, OUT EFI_MANAGED_NETWORK_CONFIG_DATA* MnpConfigData OPTIONAL, OUT EFI_SIMPLE_NETWORK_MODE* SnpModeData OPTIONAL);
+typedef EFI_STATUS(__cdecl *EFI_TCP4_POLL) (IN void* This);
+typedef EFI_STATUS(__cdecl *EFI_TCP4_RECEIVE) (IN void* This, IN EFI_TCP4_IO_TOKEN* Token);
+typedef EFI_STATUS(__cdecl *EFI_TCP4_ROUTES) (IN void* This, IN BOOLEAN DeleteRoute, IN EFI_IPv4_ADDRESS* SubnetAddress, IN EFI_IPv4_ADDRESS* SubnetMask, IN EFI_IPv4_ADDRESS* GatewayAddress);
+typedef EFI_STATUS(__cdecl *EFI_TCP4_TRANSMIT) (IN void* This, IN EFI_TCP4_IO_TOKEN* Token);
+typedef EFI_STATUS(__cdecl *EFI_TEXT_CLEAR_SCREEN) (IN void* This);
+typedef EFI_STATUS(__cdecl *EFI_TEXT_ENABLE_CURSOR) (IN void* This, IN BOOLEAN Visible);
+typedef EFI_STATUS(__cdecl *EFI_TEXT_QUERY_MODE) (IN void* This, IN unsigned long long ModeNumber, OUT unsigned long long* Columns, OUT unsigned long long* Rows);
+typedef EFI_STATUS(__cdecl *EFI_TEXT_RESET) (IN void* This, IN BOOLEAN ExtendedVerification);
+typedef EFI_STATUS(__cdecl *EFI_TEXT_SET_ATTRIBUTE) (IN void* This, IN unsigned long long Attribute);
+typedef EFI_STATUS(__cdecl *EFI_TEXT_SET_CURSOR_POSITION) (IN void* This, IN unsigned long long Column, IN unsigned long long Row);
+typedef EFI_STATUS(__cdecl *EFI_TEXT_SET_MODE) (IN void* This, IN unsigned long long ModeNumber);
+typedef EFI_STATUS(__cdecl *EFI_TEXT_STRING) (IN void* This, IN CHAR16* String);
+typedef EFI_STATUS(__cdecl *EFI_TEXT_TEST_STRING) (IN void* This, IN CHAR16* String);
+typedef EFI_STATUS(__cdecl *EFI_UDP4_CANCEL)(IN void* This, IN EFI_UDP4_COMPLETION_TOKEN* Token OPTIONAL);
+typedef EFI_STATUS(__cdecl *EFI_UDP4_CONFIGURE) (IN void* This, IN EFI_UDP4_CONFIG_DATA* UdpConfigData OPTIONAL);
+typedef EFI_STATUS(__cdecl *EFI_UDP4_GET_MODE_DATA) (IN void* This, OUT EFI_UDP4_CONFIG_DATA* Udp4ConfigData OPTIONAL, OUT EFI_IP4_MODE_DATA* Ip4ModeData OPTIONAL, OUT EFI_MANAGED_NETWORK_CONFIG_DATA* MnpConfigData OPTIONAL, OUT EFI_SIMPLE_NETWORK_MODE* SnpModeData OPTIONAL);
+typedef EFI_STATUS(__cdecl *EFI_UDP4_GROUPS) (IN void* This, IN BOOLEAN JoinFlag, IN EFI_IPv4_ADDRESS* MulticastAddress OPTIONAL);
+typedef EFI_STATUS(__cdecl *EFI_UDP4_POLL) (IN void* This);
+typedef EFI_STATUS(__cdecl *EFI_UDP4_RECEIVE) (IN void* This, IN EFI_UDP4_COMPLETION_TOKEN* Token);
+typedef EFI_STATUS(__cdecl *EFI_UDP4_ROUTES) (IN void* This, IN BOOLEAN DeleteRoute, IN EFI_IPv4_ADDRESS* SubnetAddress, IN EFI_IPv4_ADDRESS* SubnetMask, IN EFI_IPv4_ADDRESS* GatewayAddress);
+typedef EFI_STATUS(__cdecl *EFI_UDP4_TRANSMIT) (IN void* This, IN EFI_UDP4_COMPLETION_TOKEN* Token);
+typedef EFI_STATUS(__cdecl *EFI_UNINSTALL_MULTIPLE_PROTOCOL_INTERFACES) (IN EFI_HANDLE Handle, ...);
+typedef EFI_STATUS(__cdecl *EFI_UNINSTALL_PROTOCOL_INTERFACE) (IN EFI_HANDLE Handle, IN EFI_GUID* Protocol, IN void* Interface);
+typedef EFI_STATUS(__cdecl *EFI_UPDATE_CAPSULE) (IN EFI_CAPSULE_HEADER** CapsuleHeaderArray, IN unsigned long long CapsuleCount, IN EFI_PHYSICAL_ADDRESS ScatterGatherList OPTIONAL);
+typedef EFI_STATUS(__cdecl *EFI_WAIT_FOR_EVENT) (IN unsigned long long NumberOfEvents, IN EFI_EVENT* Event, OUT unsigned long long* Index);
 
 typedef struct
 {
@@ -661,7 +682,7 @@ typedef struct
 	EFI_REINSTALL_PROTOCOL_INTERFACE ReinstallProtocolInterface;
 	EFI_UNINSTALL_PROTOCOL_INTERFACE UninstallProtocolInterface;
 	EFI_HANDLE_PROTOCOL HandleProtocol;
-	VOID* Reserved;
+	void* Reserved;
 	EFI_REGISTER_PROTOCOL_NOTIFY RegisterProtocolNotify;
 	EFI_LOCATE_HANDLE LocateHandle;
 	EFI_LOCATE_DEVICE_PATH LocateDevicePath;
@@ -693,7 +714,7 @@ typedef struct
 typedef struct
 {
 	EFI_GUID VendorGuid;
-	VOID* VendorTable;
+	void* VendorTable;
 } EFI_CONFIGURATION_TABLE;
 
 typedef struct
@@ -757,7 +778,7 @@ typedef struct
 {
 	EFI_TABLE_HEADER Hdr;
 	CHAR16* FirmwareVendor;
-	UINT32 FirmwareRevision;
+	unsigned int FirmwareRevision;
 	EFI_HANDLE ConsoleInHandle;
 	EFI_SIMPLE_TEXT_INPUT_PROTOCOL* ConIn;
 	EFI_HANDLE ConsoleOutHandle;
@@ -766,7 +787,7 @@ typedef struct
 	EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL* StdErr;
 	EFI_RUNTIME_SERVICES* RuntimeServices;
 	EFI_BOOT_SERVICES* BootServices;
-	UINTN NumberOfTableEntries;
+	unsigned long long NumberOfTableEntries;
 	EFI_CONFIGURATION_TABLE* ConfigurationTable;
 } EFI_SYSTEM_TABLE;
 
@@ -801,34 +822,34 @@ static EFI_SYSTEM_TABLE* st;
 static EFI_RUNTIME_SERVICES* rs;
 static EFI_BOOT_SERVICES* bs;
 
-static VOID appendText(CHAR16* dst, CONST CHAR16* src)
+static void appendText(CHAR16* dst, const CHAR16* src)
 {
-    UINT16 dstIndex = 0;
+    unsigned short dstIndex = 0;
     while (dst[dstIndex] != 0)
     {
         dstIndex++;
     }
-    UINT16 srcIndex = 0;
+    unsigned short srcIndex = 0;
     while ((dst[dstIndex++] = src[srcIndex++]) != 0)
     {
     }
 }
 
-static VOID setText(CHAR16* dst, CONST CHAR16* src)
+static void setText(CHAR16* dst, const CHAR16* src)
 {
     dst[0] = 0;
     appendText(dst, src);
 }
 
-static VOID appendNumber(CHAR16* dst, UINT64 number, BOOLEAN separate)
+static void appendNumber(CHAR16* dst, unsigned long long number, BOOLEAN separate)
 {
     CHAR16 text[27];
-    INT8 textLength = 0;
+    char textLength = 0;
     do
     {
         text[textLength++] = number % 10 + '0';
     } while ((number /= 10) > 0);
-    UINT16 dstIndex = 0;
+    unsigned short dstIndex = 0;
     while (dst[dstIndex] != 0)
     {
         dstIndex++;
@@ -844,18 +865,18 @@ static VOID appendNumber(CHAR16* dst, UINT64 number, BOOLEAN separate)
     dst[dstIndex] = 0;
 }
 
-static VOID setNumber(CHAR16* dst, CONST UINT64 number, BOOLEAN separate)
+static void setNumber(CHAR16* dst, const unsigned long long number, BOOLEAN separate)
 {
     dst[0] = 0;
     appendNumber(dst, number, separate);
 }
 
-static VOID appendBoolean(CHAR16* dst, CONST BOOLEAN value)
+static void appendBoolean(CHAR16* dst, const BOOLEAN value)
 {
     appendText(dst, value ? L"TRUE" : L"FALSE");
 }
 
-static VOID appendIPv4Address(CHAR16* dst, EFI_IPv4_ADDRESS address)
+static void appendIPv4Address(CHAR16* dst, EFI_IPv4_ADDRESS address)
 {
     appendNumber(dst, address.Addr[0], FALSE);
     appendText(dst, L".");
@@ -865,7 +886,7 @@ static VOID appendIPv4Address(CHAR16* dst, EFI_IPv4_ADDRESS address)
     appendText(dst, L".");
     appendNumber(dst, address.Addr[3], FALSE);
 }
-static VOID appendErrorStatus(CHAR16* dst, CONST EFI_STATUS status)
+static void appendErrorStatus(CHAR16* dst, const EFI_STATUS status)
 {
     switch (status)
     {
@@ -906,31 +927,31 @@ static VOID appendErrorStatus(CHAR16* dst, CONST EFI_STATUS status)
     }
 }
 
-static VOID log(CONST CHAR16* message)
+static void log(const CHAR16* message)
 {
     CHAR16 timestampedMessage[256];
 
     EFI_TIME time;
     rs->GetTime(&time, NULL);
-    timestampedMessage[0] = time.Year / 1000 + '0';
-    timestampedMessage[1] = (time.Year %= 1000) / 100 + '0';
-    timestampedMessage[2] = (time.Year %= 100) / 10 + '0';
-    timestampedMessage[3] = time.Year % 10 + '0';
+    timestampedMessage[0] = time.Year / 1000 + L'0';
+    timestampedMessage[1] = (time.Year %= 1000) / 100 + L'0';
+    timestampedMessage[2] = (time.Year %= 100) / 10 + L'0';
+    timestampedMessage[3] = time.Year % 10 + L'0';
     timestampedMessage[4] = '-';
-    timestampedMessage[5] = time.Month / 10 + '0';
-    timestampedMessage[6] = time.Month % 10 + '0';
+    timestampedMessage[5] = time.Month / 10 + L'0';
+    timestampedMessage[6] = time.Month % 10 + L'0';
     timestampedMessage[7] = '-';
-    timestampedMessage[8] = time.Day / 10 + '0';
-    timestampedMessage[9] = time.Day % 10 + '0';
+    timestampedMessage[8] = time.Day / 10 + L'0';
+    timestampedMessage[9] = time.Day % 10 + L'0';
     timestampedMessage[10] = ' ';
-    timestampedMessage[11] = time.Hour / 10 + '0';
-    timestampedMessage[12] = time.Hour % 10 + '0';
+    timestampedMessage[11] = time.Hour / 10 + L'0';
+    timestampedMessage[12] = time.Hour % 10 + L'0';
     timestampedMessage[13] = ':';
-    timestampedMessage[14] = time.Minute / 10 + '0';
-    timestampedMessage[15] = time.Minute % 10 + '0';
+    timestampedMessage[14] = time.Minute / 10 + L'0';
+    timestampedMessage[15] = time.Minute % 10 + L'0';
     timestampedMessage[16] = ':';
-    timestampedMessage[17] = time.Second / 10 + '0';
-    timestampedMessage[18] = time.Second % 10 + '0';
+    timestampedMessage[17] = time.Second / 10 + L'0';
+    timestampedMessage[18] = time.Second % 10 + L'0';
     timestampedMessage[19] = ' ';
     timestampedMessage[20] = '|';
     timestampedMessage[21] = ' ';
@@ -942,7 +963,7 @@ static VOID log(CONST CHAR16* message)
     st->ConOut->OutputString(st->ConOut, timestampedMessage);
 }
 
-static VOID logStatus(CONST CHAR16* message, CONST EFI_STATUS status)
+static void logStatus(const CHAR16* message, const EFI_STATUS status)
 {
     CHAR16 extendedMessage[256];
     setText(extendedMessage, message);
@@ -1291,7 +1312,7 @@ static void KeccakP1600_ExtractBytes(const void* state, unsigned char* data, uns
 {
     if (!offset)
     {
-        bs->CopyMem(data, (VOID*)state, length & 0xFFFFFFF8);
+        bs->CopyMem(data, (void*)state, length & 0xFFFFFFF8);
         bs->CopyMem(data + (length & 0xFFFFFFF8), &((unsigned long long*)state)[length >> 3], length & 7);
     }
     else
@@ -1436,7 +1457,7 @@ static void KangarooTwelve_F_Absorb(KangarooTwelve_F* instance, unsigned char* d
                         else
                         {
                             unsigned long long lane = 0;
-                            bs->CopyMem(&lane, (VOID*)_curData, _bytesInLane);
+                            bs->CopyMem(&lane, (void*)_curData, _bytesInLane);
                             ((unsigned long long*)instance->state)[_lanePosition] ^= (lane << (_offsetInLane << 3));
                         }
                     }
@@ -3326,8 +3347,8 @@ static void getIdentity(unsigned char* publicKey, CHAR16* identity)
     KangarooTwelve(publicKey, 32, identityBytesChecksum, sizeof(identityBytesChecksum));
     for (int i = 0; i < sizeof(identityBytesChecksum); i++)
     {
-        identity[64 + (i << 1)] = (identityBytesChecksum[i] >> 4) + 'A';
-        identity[65 + (i << 1)] = (identityBytesChecksum[i] & 0xF) + 'A';
+        identity[64 + (i << 1)] = (identityBytesChecksum[i] >> 4) + L'A';
+        identity[65 + (i << 1)] = (identityBytesChecksum[i] & 0xF) + L'A';
     }
     identity[70] = 0;
 }
@@ -3400,122 +3421,250 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 
 ////////// Qubic \\\\\\\\\\
 
+#define MAX_NUMBER_OF_PEERS 1000
+#define MAX_NUMBER_OF_PUBLIC_PEERS 100
+#define MAX_NUMBER_OF_PROCESSORS 1024
+#define MIN_NUMBER_OF_PUBLIC_PEERS 4
+#define NUMBER_OF_COMPUTORS (26 * 26)
 #define PORT 21841
+#define PROTOCOL_VERSION 0
+#define BUFFER_SIZE 65536
 
-volatile static INTN state = 0;
+typedef struct
+{
+    EFI_TCP4_PROTOCOL* tcp4Protocol;
+    EFI_TCP4_LISTEN_TOKEN acceptToken;
+    EFI_TCP4_CONNECTION_TOKEN connectToken;
+    void* receiveBuffer;
+    EFI_TCP4_RECEIVE_DATA receiveData;
+    EFI_TCP4_IO_TOKEN receiveToken;
+    EFI_TCP4_TRANSMIT_DATA transmitData;
+    EFI_TCP4_IO_TOKEN transmitToken;
+    EFI_TCP4_CLOSE_TOKEN closeToken;
+    unsigned int id;
+    BOOLEAN isTransmitting;
+} Peer;
 
-static unsigned char ownSubseed[32], ownPublicKey[32];
+typedef struct
+{
+    unsigned long long rating;
+    unsigned char address[4];
+} PublicPeer;
 
-static UINTN numberOfProcessors;
+typedef struct
+{
+    unsigned int number;
+    unsigned int peerId;
+    EFI_EVENT event;
+    Peer* peer;
+    void* requestBuffer;
+    void* responseBuffer;
+} Processor;
 
+typedef struct
+{
+    unsigned short size;
+    unsigned char protocolVersion;
+    unsigned char requestResponseType;
+} PacketHeader;
+
+#define PROCESS_OPERATOR_COMMAND 0
+typedef struct
+{
+    unsigned int nonce;
+} ProcessOperatorCommand;
+
+#define EXCHANGE_PUBLIC_PEERS 1
+typedef struct
+{
+    unsigned char peers[MIN_NUMBER_OF_PUBLIC_PEERS][4];
+} ExchangePublicPeers;
+
+const unsigned short requestResponseMinSizes[] = {
+    sizeof(PacketHeader) + sizeof(ProcessOperatorCommand),
+    sizeof(PacketHeader) + sizeof(ExchangePublicPeers)
+};
+
+volatile static int state = 0;
+
+static unsigned char ownSubseed[32], ownPrivateKey[32], ownPublicKey[32];
+static unsigned int latestOperatorNonce;
+
+static EFI_MP_SERVICES_PROTOCOL* mpServicesProtocol;
+static unsigned int numberOfProcessors = 0;
+static Processor processors[MAX_NUMBER_OF_PROCESSORS];
+static unsigned int latestUsedProcessorIndex = (unsigned int)(-1);
+
+static EFI_GUID tcp4ServiceBindingProtocolGuid = EFI_TCP4_SERVICE_BINDING_PROTOCOL_GUID;
+static EFI_SERVICE_BINDING_PROTOCOL* tcp4ServiceBindingProtocol;
 static EFI_GUID tcp4ProtocolGuid = EFI_TCP4_PROTOCOL_GUID;
 static EFI_TCP4_PROTOCOL* tcp4Protocol;
-static EFI_TCP4_LISTEN_TOKEN acceptListenToken;
+static unsigned int numberOfPeers = 0;
+static Peer peers[MAX_NUMBER_OF_PEERS];
+static unsigned int latestPeerId; // Initial value doesn't matter
 
-/**/int connectionCounter = 0;
-static VOID acceptCallback(EFI_EVENT Event, VOID* Context)
+static volatile char publicPeersLock = 0;
+static unsigned int numberOfPublicPeers;
+static PublicPeer publicPeers[MAX_NUMBER_OF_PUBLIC_PEERS];
+static unsigned long long totalRatingOfPublicPeers = 0;
+
+static BOOLEAN accept();
+static void connect(Peer* peer);
+static void close(Peer* peer);
+static void receive(Peer* peer);
+static void transmit(Peer* peer);
+static void acceptCallback(EFI_EVENT Event, void* Context);
+static void connectCallback(EFI_EVENT Event, void* Context);
+static void closeCallback(EFI_EVENT Event, void* Context);
+static void receiveCallback(EFI_EVENT Event, void* Context);
+static void transmitCallback(EFI_EVENT Event, void* Context);
+
+static void addPublicPeer(unsigned char address[4])
 {
-    if (!acceptListenToken.CompletionToken.Status)
-    {
-        EFI_TCP4_PROTOCOL* newTcp4Protocol;
-        if (!bs->OpenProtocol(acceptListenToken.NewChildHandle, &tcp4ProtocolGuid, (VOID**)&newTcp4Protocol, ih, NULL, EFI_OPEN_PROTOCOL_GET_PROTOCOL))
-        {
-            EFI_TCP4_CONFIG_DATA configData;
-            if (!newTcp4Protocol->GetModeData(newTcp4Protocol, NULL, &configData, NULL, NULL, NULL))
-            {
-                CHAR16 message[256];
+    publicPeers[numberOfPublicPeers].rating = 1;
+    *((int*)publicPeers[numberOfPublicPeers++].address) = *((int*)address);
+    totalRatingOfPublicPeers++;
+}
 
-                setText(message, L"Remote address = ");
-                appendIPv4Address(message, configData.AccessPoint.RemoteAddress);
-                appendText(message, L":");
-                appendNumber(message, configData.AccessPoint.RemotePort, FALSE);
-                appendText(message, L".");
-                log(message);
+static void requestProcessor(void* ProcedureArgument)
+{
+    Processor* processor = (Processor*)ProcedureArgument;
+    PacketHeader* requestPacketHeader = (PacketHeader*)processor->requestBuffer;
+    PacketHeader* responsePacketHeader = (PacketHeader*)processor->responseBuffer;
+    switch (requestPacketHeader->requestResponseType)
+    {
+    case PROCESS_OPERATOR_COMMAND:
+    {
+        responsePacketHeader->size = 0;
+    }
+    break;
+
+    case EXCHANGE_PUBLIC_PEERS:
+    {
+        ExchangePublicPeers* request = (ExchangePublicPeers*)((char*)processor->requestBuffer + sizeof(PacketHeader));
+        ExchangePublicPeers* response = (ExchangePublicPeers*)((char*)processor->responseBuffer + sizeof(PacketHeader));
+
+        unsigned int randoms[MIN_NUMBER_OF_PUBLIC_PEERS];
+        for (unsigned int i = 0; i < MIN_NUMBER_OF_PUBLIC_PEERS; i++)
+        {
+            _rdrand32_step(&randoms[i]);
+        }
+
+        while (_InterlockedCompareExchange8(&publicPeersLock, 1, 0))
+        {
+        }
+
+        if (randoms[0] & 1)
+        {
+            for (unsigned int i = 0; i < MIN_NUMBER_OF_PUBLIC_PEERS; i++)
+            {
+                *((int*)response->peers[i]) = *((int*)publicPeers[randoms[i] % numberOfPublicPeers].address);
             }
+
+            responsePacketHeader->size = sizeof(PacketHeader) + sizeof(ExchangePublicPeers);
+            responsePacketHeader->requestResponseType = EXCHANGE_PUBLIC_PEERS;
+        }
+        else
+        {
+            responsePacketHeader->size = 0;
+        }
+
+        for (unsigned int i = 0; i < MIN_NUMBER_OF_PUBLIC_PEERS && numberOfPublicPeers < MAX_NUMBER_OF_PUBLIC_PEERS; i++)
+        {
+            unsigned int j;
+            for (j = 0; j < numberOfPublicPeers; j++)
+            {
+                if (*((int*)request->peers[i]) == *((int*)publicPeers[j].address))
+                {
+                    break;
+                }
+            }
+            if (j == numberOfPublicPeers)
+            {
+                addPublicPeer(request->peers[i]);
+            }
+        }
+
+        publicPeersLock = 0;
+
+        /**/CHAR16 message[256]; setNumber(message, numberOfPeers, TRUE); appendText(message, L" peers are connected."); log(message);
+    }
+    break;
+
+    default:
+        responsePacketHeader->size = 0;
+    }
+}
+
+static void responseCallback(EFI_EVENT Event, void* Context)
+{
+    bs->CloseEvent(Event);
+
+    Processor* processor = (Processor*)Context;
+    if (processor->peer->tcp4Protocol && processor->peerId == processor->peer->id && !processor->peer->isTransmitting)
+    {
+        PacketHeader* packetHeader = (PacketHeader*)processor->responseBuffer;
+        if (packetHeader->size)
+        {
+            void* tmp = processor->responseBuffer;
+            processor->responseBuffer = processor->peer->transmitData.FragmentTable[0].FragmentBuffer;
+            processor->peer->transmitData.FragmentTable[0].FragmentBuffer = tmp;
+            transmit(processor->peer);
         }
     }
 
-    /**/if (++connectionCounter == 5) state = 1;
+    processor->peer = NULL;
+}
 
-    bs->CloseEvent(Event);
-    bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, acceptCallback, NULL, &acceptListenToken.CompletionToken.Event);
+static EFI_HANDLE getTcp4Protocol(const unsigned char* remoteAddress, EFI_TCP4_PROTOCOL** tcp4Protocol)
+{
     EFI_STATUS status;
-    if (status = tcp4Protocol->Accept(tcp4Protocol, &acceptListenToken))
+    EFI_HANDLE childHandle = NULL;
+    if (status = tcp4ServiceBindingProtocol->CreateChild(tcp4ServiceBindingProtocol, &childHandle))
     {
-        logStatus(L"EFI_TCP4_PROTOCOL.Accept() fails", status);
+        logStatus(L"EFI_TCP4_SERVICE_BINDING_PROTOCOL.CreateChild() fails", status);
+
+        return NULL;
     }
-}
-
-static BOOLEAN initialize()
-{
-    __writecr4(__readcr4() | 0x40000);
-    _xsetbv(_XCR_XFEATURE_ENABLED_MASK, _xgetbv(_XCR_XFEATURE_ENABLED_MASK) | 6);
-
-    if (!getSubseed(ownSeed, ownSubseed))
+    else
     {
-        return FALSE;
-    }
-    unsigned char ownPrivateKey[32];
-    getPrivateKey(ownSubseed, ownPrivateKey);
-    getPublicKey(ownPrivateKey, ownPublicKey);
-
-    return TRUE;
-}
-
-EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
-{
-    ih = imageHandle;
-    st = systemTable;
-    rs = st->RuntimeServices;
-    bs = st->BootServices;
-
-    bs->SetWatchdogTimer(0, 0, 0, NULL);
-
-    st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.0.9 is launched.");
-
-    if (initialize())
-    {
-        CHAR16 message[256];
-
-        getIdentity(ownPublicKey, message);
-        log(message);
-
-        EFI_GUID mpServiceProtocolGuid = EFI_MP_SERVICES_PROTOCOL_GUID;
-        EFI_MP_SERVICES_PROTOCOL* mpServicesProtocol;
-        bs->LocateProtocol(&mpServiceProtocolGuid, NULL, (VOID**)&mpServicesProtocol);
-        UINTN numberOfEnabledProcessors;
-        mpServicesProtocol->GetNumberOfProcessors(mpServicesProtocol, &numberOfProcessors, &numberOfEnabledProcessors);
-        setNumber(message, numberOfEnabledProcessors, TRUE);
-        appendText(message, L"/");
-        appendNumber(message, numberOfProcessors, TRUE);
-        appendText(message, L" processors are enabled.");
-        log(message);
-
-        EFI_STATUS status;
-        if (status = bs->LocateProtocol(&tcp4ProtocolGuid, NULL, (VOID**)&tcp4Protocol))
+        if (status = bs->OpenProtocol(childHandle, &tcp4ProtocolGuid, (void**)tcp4Protocol, ih, NULL, EFI_OPEN_PROTOCOL_GET_PROTOCOL))
         {
-            logStatus(L"EFI_TCP4_PROTOCOL is not located", status);
+            logStatus(L"EFI_BOOT_SERVICES.OpenProtocol() fails", status);
+
+            return NULL;
         }
         else
         {
             EFI_TCP4_CONFIG_DATA configData;
             bs->SetMem(&configData, sizeof(configData), 0);
             configData.TimeToLive = 64;
-            if (!*((int*)&tcp4Address))
+            if (!*((int*)ownAddress))
             {
                 configData.AccessPoint.UseDefaultAddress = TRUE;
             }
             else
             {
-                bs->CopyMem(&configData.AccessPoint.StationAddress, (VOID*)&tcp4Address, sizeof(configData.AccessPoint.StationAddress));
-                bs->CopyMem(&configData.AccessPoint.SubnetMask, (VOID*)&tcp4Mask, sizeof(configData.AccessPoint.SubnetMask));
+                *((int*)configData.AccessPoint.StationAddress.Addr) = *((int*)ownAddress);
+                *((int*)configData.AccessPoint.SubnetMask.Addr) = *((int*)ownMask);
             }
-            configData.AccessPoint.StationPort = 21841;
-            if ((status = tcp4Protocol->Configure(tcp4Protocol, &configData))
+            if (!remoteAddress)
+            {
+                configData.AccessPoint.StationPort = PORT;
+            }
+            else
+            {
+                *((int*)configData.AccessPoint.RemoteAddress.Addr) = *((int*)remoteAddress);
+                configData.AccessPoint.RemotePort = PORT;
+                configData.AccessPoint.ActiveFlag = TRUE;
+            }
+            EFI_STATUS status;
+            if ((status = (*tcp4Protocol)->Configure(*tcp4Protocol, &configData))
                 && status != EFI_NO_MAPPING)
             {
                 logStatus(L"EFI_TCP4_PROTOCOL.Configure() fails", status);
+
+                return NULL;
             }
             else
             {
@@ -3523,52 +3672,58 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                 if (status == EFI_NO_MAPPING)
                 {
-                    while (!(status = tcp4Protocol->GetModeData(tcp4Protocol, NULL, NULL, &modeData, NULL, NULL))
+                    while (!(status = (*tcp4Protocol)->GetModeData(*tcp4Protocol, NULL, NULL, &modeData, NULL, NULL))
                         && !modeData.IsConfigured)
                     {
                     }
                     if (!status)
                     {
-                        if (status = tcp4Protocol->Configure(tcp4Protocol, &configData))
+                        if (status = (*tcp4Protocol)->Configure(*tcp4Protocol, &configData))
                         {
                             logStatus(L"EFI_TCP4_PROTOCOL.Configure() fails", status);
+
+                            return NULL;
                         }
                     }
                 }
 
-                if (*((int*)&defaultRouteGateway))
+                if (*((int*)defaultRouteGateway))
                 {
-                    if (status = tcp4Protocol->Routes(tcp4Protocol, FALSE, (EFI_IPv4_ADDRESS*)&defaultRouteAddress, (EFI_IPv4_ADDRESS*)&defaultRouteMask, (EFI_IPv4_ADDRESS*)&defaultRouteGateway))
+                    if (status = (*tcp4Protocol)->Routes(*tcp4Protocol, FALSE, (EFI_IPv4_ADDRESS*)&defaultRouteAddress, (EFI_IPv4_ADDRESS*)&defaultRouteMask, (EFI_IPv4_ADDRESS*)&defaultRouteGateway))
                     {
                         logStatus(L"EFI_TCP4_PROTOCOL.Routes() fails", status);
+
+                        return NULL;
                     }
                 }
 
-                if (status = tcp4Protocol->GetModeData(tcp4Protocol, NULL, &configData, &modeData, NULL, NULL))
+                if (status = (*tcp4Protocol)->GetModeData(*tcp4Protocol, NULL, &configData, &modeData, NULL, NULL))
                 {
                     logStatus(L"EFI_TCP4_PROTOCOL.GetModeData() fails", status);
+
+                    return NULL;
                 }
                 else
                 {
                     if (!modeData.IsStarted || !modeData.IsConfigured)
                     {
                         log(L"EFI_TCP4_PROTOCOL is not configured!");
+
+                        return NULL;
                     }
                     else
                     {
-                        setText(message, L"Local address = ");
-                        appendIPv4Address(message, configData.AccessPoint.StationAddress);
-                        appendText(message, L":");
-                        appendNumber(message, configData.AccessPoint.StationPort, FALSE);
-                        appendText(message, L".");
-                        log(message);
+                        if (!remoteAddress)
+                        {
+                            CHAR16 message[256];
 
-                        if (!modeData.RouteCount)
-                        {
-                            log(L"No routes found.");
-                        }
-                        else
-                        {
+                            setText(message, L"Local address = ");
+                            appendIPv4Address(message, configData.AccessPoint.StationAddress);
+                            appendText(message, L":");
+                            appendNumber(message, configData.AccessPoint.StationPort, FALSE);
+                            appendText(message, L".");
+                            log(message);
+
                             log(L"Routes:");
                             for (unsigned int i = 0; i < modeData.RouteCount; i++)
                             {
@@ -3583,60 +3738,511 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             }
                         }
 
-                        bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, acceptCallback, NULL, &acceptListenToken.CompletionToken.Event);
-                        if (status = tcp4Protocol->Accept(tcp4Protocol, &acceptListenToken))
-                        {
-                            logStatus(L"EFI_TCP4_PROTOCOL.Accept() fails", status);
-                        }
-                        else
-                        {
-                            unsigned char subseed[32] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32 };
-                            unsigned char privateKey[32];
-                            getPrivateKey(subseed, privateKey);
-                            unsigned char publicKey[32];
-                            getPublicKey(privateKey, publicKey);
-                            unsigned char signature[64];
-
-                            while (!state)
-                            {
-                                unsigned long long min = 0xFFFFFFFFFFFFFFFF, max = 0;
-
-                                unsigned long long start = __rdtsc();
-
-                                unsigned int i;
-                                for (i = 0; i < 100000; i++)
-                                {
-                                    unsigned long long miniStart = __rdtsc();
-                                    sign(subseed, publicKey, subseed, signature);
-                                    verify(publicKey, subseed, signature);
-                                    unsigned long long miniDelta = __rdtsc() - miniStart;
-                                    if (miniDelta < min) min = miniDelta;
-                                    if (miniDelta > max) max = miniDelta;
-                                }
-
-                                unsigned long long delta = __rdtsc() - start;
-
-                                setText(message, L"MIN = ");
-                                appendNumber(message, min, TRUE);
-                                appendText(message, L" ticks | AVG = ");
-                                appendNumber(message, delta / i, TRUE);
-                                appendText(message, L" ticks | MAX = ");
-                                appendNumber(message, max, TRUE);
-                                appendText(message, L" ticks.");
-                                log(message);
-                            }
-                        }
+                        return childHandle;
                     }
                 }
             }
         }
     }
+}
+
+static int getFreePeerSlot()
+{
+    if (numberOfPeers < MAX_NUMBER_OF_PEERS)
+    {
+        for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
+        {
+            if (!peers[i].tcp4Protocol)
+            {
+                numberOfPeers++;
+
+                return i;
+            }
+        }
+    }
+
+    return -1;
+}
+
+static BOOLEAN accept()
+{
+    const int freePeerSlot = getFreePeerSlot();
+    if (freePeerSlot >= 0)
+    {
+        peers[freePeerSlot].tcp4Protocol = (EFI_TCP4_PROTOCOL*)(-1);
+        bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, acceptCallback, &peers[freePeerSlot], &peers[freePeerSlot].acceptToken.CompletionToken.Event);
+        EFI_STATUS status;
+        if (status = tcp4Protocol->Accept(tcp4Protocol, &peers[freePeerSlot].acceptToken))
+        {
+            logStatus(L"EFI_TCP4_PROTOCOL.Accept() fails", status);
+
+            bs->CloseEvent(peers[freePeerSlot].acceptToken.CompletionToken.Event);
+            peers[freePeerSlot].tcp4Protocol = NULL;
+            numberOfPeers--;
+        }
+        else
+        {
+            return TRUE;
+        }
+    }
+
+    return FALSE;
+}
+
+static void connect(Peer* peer)
+{
+    bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, connectCallback, peer, &peer->connectToken.CompletionToken.Event);
+    EFI_STATUS status;
+    if (status = peer->tcp4Protocol->Connect(peer->tcp4Protocol, &peer->connectToken))
+    {
+        logStatus(L"EFI_TCP4_PROTOCOL.Connect() fails", status);
+
+        bs->CloseEvent(peer->connectToken.CompletionToken.Event);
+        peer->tcp4Protocol = NULL;
+        if (numberOfPeers-- == MAX_NUMBER_OF_PEERS)
+        {
+            accept();
+        }
+    }
+}
+
+static void close(Peer* peer)
+{
+    bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, closeCallback, peer, &peer->closeToken.CompletionToken.Event);
+    EFI_STATUS status;
+    if (status = peer->tcp4Protocol->Close(peer->tcp4Protocol, &peer->closeToken))
+    {
+        logStatus(L"EFI_TCP4_PROTOCOL.Close() fails", status);
+
+        bs->CloseEvent(peer->closeToken.CompletionToken.Event);
+        bs->CloseProtocol(peer->acceptToken.NewChildHandle, &tcp4ProtocolGuid, ih, NULL);
+        tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peer->acceptToken.NewChildHandle);
+        peer->tcp4Protocol = NULL;
+        if (numberOfPeers-- == MAX_NUMBER_OF_PEERS)
+        {
+            accept();
+        }
+    }
+}
+
+static void receive(Peer* peer)
+{
+    EFI_STATUS status;
+    bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, receiveCallback, peer, &peer->receiveToken.CompletionToken.Event);
+    peer->receiveData.DataLength = peer->receiveData.FragmentTable[0].FragmentLength = BUFFER_SIZE - (unsigned int)((unsigned long long)peer->receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peer->receiveBuffer);
+    if (status = peer->tcp4Protocol->Receive(peer->tcp4Protocol, &peer->receiveToken))
+    {
+        logStatus(L"EFI_TCP4_PROTOCOL.Receive() fails", status);
+
+        bs->CloseEvent(peer->receiveToken.CompletionToken.Event);
+        close(peer);
+    }
+}
+
+static void transmit(Peer* peer)
+{
+    peer->isTransmitting = TRUE;
+
+    EFI_STATUS status;
+    bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, transmitCallback, peer, &peer->transmitToken.CompletionToken.Event);
+    peer->transmitData.DataLength = peer->transmitData.FragmentTable[0].FragmentLength = ((PacketHeader*)peer->transmitData.FragmentTable[0].FragmentBuffer)->size;
+    if (status = peer->tcp4Protocol->Transmit(peer->tcp4Protocol, &peer->transmitToken))
+    {
+        logStatus(L"EFI_TCP4_PROTOCOL.Transmit() fails", status);
+
+        bs->CloseEvent(peer->transmitToken.CompletionToken.Event);
+        close(peer);
+    }
+}
+
+static void acceptCallback(EFI_EVENT Event, void* Context)
+{
+    bs->CloseEvent(Event);
+
+    Peer* peer = (Peer*)Context;
+    if (!peer->acceptToken.CompletionToken.Status)
+    {
+        EFI_STATUS status;
+        if (status = bs->OpenProtocol(peer->acceptToken.NewChildHandle, &tcp4ProtocolGuid, (void**)&peer->tcp4Protocol, ih, NULL, EFI_OPEN_PROTOCOL_GET_PROTOCOL))
+        {
+            logStatus(L"EFI_BOOT_SERVICES.OpenProtocol() fails", status);
+
+            peer->tcp4Protocol = NULL;
+            if (numberOfPeers-- == MAX_NUMBER_OF_PEERS)
+            {
+                accept();
+            }
+        }
+        else
+        {
+            peer->id = ++latestPeerId;
+            peer->receiveData.FragmentTable[0].FragmentBuffer = peer->receiveBuffer;
+            peer->isTransmitting = FALSE;
+
+            receive(peer);
+        }
+    }
+
+    accept();
+}
+
+static void connectCallback(EFI_EVENT Event, void* Context)
+{
+    bs->CloseEvent(Event);
+
+    Peer* peer = (Peer*)Context;
+    if (peer->transmitToken.CompletionToken.Status)
+    {
+        close(peer);
+    }
+    else
+    {
+        ExchangePublicPeers* request = (ExchangePublicPeers*)((char*)peer->transmitData.FragmentTable[0].FragmentBuffer + sizeof(PacketHeader));
+        for (unsigned int i = 0; i < MIN_NUMBER_OF_PUBLIC_PEERS; i++)
+        {
+            unsigned int random;
+            _rdrand32_step(&random);
+            *((int*)request->peers[i]) = *((int*)publicPeers[random % numberOfPublicPeers].address);
+        }
+        PacketHeader* packetHeader = (PacketHeader*)peer->transmitData.FragmentTable[0].FragmentBuffer;
+        packetHeader->size = sizeof(PacketHeader) + sizeof(ExchangePublicPeers);
+        packetHeader->requestResponseType = EXCHANGE_PUBLIC_PEERS;
+        transmit(peer);
+    }
+}
+
+static void closeCallback(EFI_EVENT Event, void* Context)
+{
+    bs->CloseEvent(Event);
+
+    Peer* peer = (Peer*)Context;
+
+    bs->CloseProtocol(peer->acceptToken.NewChildHandle, &tcp4ProtocolGuid, ih, NULL);
+    tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peer->acceptToken.NewChildHandle);
+    peer->tcp4Protocol = NULL;
+    if (numberOfPeers-- == MAX_NUMBER_OF_PEERS)
+    {
+        accept();
+    }
+}
+
+static void receiveCallback(EFI_EVENT Event, void* Context)
+{
+    bs->CloseEvent(Event);
+
+    Peer* peer = (Peer*)Context;
+    if (peer->receiveToken.CompletionToken.Status)
+    {
+        close(peer);
+    }
+    else
+    {
+        *((unsigned long long*)peer->receiveData.FragmentTable[0].FragmentBuffer) += peer->receiveData.DataLength;
+        
+    theOnlyGotoLabel:
+        unsigned int receivedDataSize = (unsigned int)((unsigned long long)peer->receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peer->receiveBuffer);
+        if (receivedDataSize < sizeof(PacketHeader))
+        {
+            receive(peer);
+        }
+        else
+        {
+            PacketHeader* packetHeader = (PacketHeader*)peer->receiveBuffer;
+            if (packetHeader->protocolVersion != PROTOCOL_VERSION
+                || packetHeader->requestResponseType >= sizeof(requestResponseMinSizes) / sizeof(requestResponseMinSizes[0])
+                || packetHeader->size < requestResponseMinSizes[packetHeader->requestResponseType])
+            {
+                close(peer);
+            }
+            else
+            {
+                if (receivedDataSize >= packetHeader->size)
+                {
+                    int counter = numberOfProcessors;
+                    while (counter-- > 0)
+                    {
+                        if (++latestUsedProcessorIndex == numberOfProcessors)
+                        {
+                            latestUsedProcessorIndex = 0;
+                        }
+
+                        if (!processors[latestUsedProcessorIndex].peer)
+                        {
+                            processors[latestUsedProcessorIndex].peer = peer;
+                            processors[latestUsedProcessorIndex].peerId = peer->id;
+                            if (receivedDataSize == packetHeader->size)
+                            {
+                                void* tmp = processors[latestUsedProcessorIndex].requestBuffer;
+                                processors[latestUsedProcessorIndex].requestBuffer = peer->receiveBuffer;
+
+                                bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, responseCallback, &processors[latestUsedProcessorIndex], &processors[latestUsedProcessorIndex].event);
+                                mpServicesProtocol->StartupThisAP(mpServicesProtocol, requestProcessor, processors[latestUsedProcessorIndex].number, processors[latestUsedProcessorIndex].event, 0, &processors[latestUsedProcessorIndex], NULL);
+
+                                peer->receiveData.FragmentTable[0].FragmentBuffer = peer->receiveBuffer = tmp;
+                            }
+                            else
+                            {
+                                bs->CopyMem(processors[latestUsedProcessorIndex].requestBuffer, peer->receiveBuffer, packetHeader->size);
+
+                                bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, responseCallback, &processors[latestUsedProcessorIndex], &processors[latestUsedProcessorIndex].event);
+                                mpServicesProtocol->StartupThisAP(mpServicesProtocol, requestProcessor, processors[latestUsedProcessorIndex].number, processors[latestUsedProcessorIndex].event, 0, &processors[latestUsedProcessorIndex], NULL);
+
+                                bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + packetHeader->size, receivedDataSize -= packetHeader->size);
+                                peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + receivedDataSize;
+                            }
+                            receive(peer);
+
+                            goto theOnlyGotoLabel;
+                        }
+                    }
+                }
+
+                receive(peer);
+            }
+        }
+    }
+}
+
+static void transmitCallback(EFI_EVENT Event, void* Context)
+{
+    bs->CloseEvent(Event);
+
+    Peer* peer = (Peer*)Context;
+    if (peer->transmitToken.CompletionToken.Status)
+    {
+        close(peer);
+    }
+    else
+    {
+        peer->isTransmitting = FALSE;
+    }
+}
+
+static BOOLEAN initialize()
+{
+    __writecr4(__readcr4() | 0x40000);                                            // Enable AVX2
+    _xsetbv(_XCR_XFEATURE_ENABLED_MASK, _xgetbv(_XCR_XFEATURE_ENABLED_MASK) | 6);
+
+    if (!getSubseed(ownSeed, ownSubseed))
+    {
+        return FALSE;
+    }
+    getPrivateKey(ownSubseed, ownPrivateKey);
+    getPublicKey(ownPrivateKey, ownPublicKey);
+    EFI_TIME time;
+    rs->GetTime(&time, NULL);
+    latestOperatorNonce = (((((time.Year - 2001) * 12 + (time.Month - 1)) * 31 + (time.Day - 1)) * 24 + time.Hour) * 60 + time.Minute) * 60 + time.Second;
+
+    bs->SetMem(processors, sizeof(processors), 0);
+
+    bs->SetMem(peers, sizeof(peers), 0);
+    for (unsigned int peerIndex = 0; peerIndex < MAX_NUMBER_OF_PEERS; peerIndex++)
+    {
+        peers[peerIndex].receiveData.FragmentCount = 1;
+        peers[peerIndex].transmitData.FragmentCount = 1;
+        EFI_STATUS status;
+        if ((status = bs->AllocatePool(EfiRuntimeServicesData, BUFFER_SIZE, &peers[peerIndex].receiveBuffer))
+            || (status = bs->AllocatePool(EfiRuntimeServicesData, BUFFER_SIZE, &peers[peerIndex].transmitData.FragmentTable[0].FragmentBuffer)))
+        {
+            logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status);
+
+            return FALSE;
+        }
+        ((PacketHeader*)peers[peerIndex].transmitData.FragmentTable[0].FragmentBuffer)->protocolVersion = PROTOCOL_VERSION;
+        peers[peerIndex].receiveToken.Packet.RxData = &peers[peerIndex].receiveData;
+        peers[peerIndex].transmitToken.Packet.TxData = &peers[peerIndex].transmitData;
+        peers[peerIndex].closeToken.AbortOnClose = TRUE;
+    }
+
+    if (sizeof(knownPublicPeers) / sizeof(knownPublicPeers[0]) < MIN_NUMBER_OF_PUBLIC_PEERS)
+    {
+        log(L"At least 4 public peers must be known!");
+
+        return FALSE;
+    }
+    bs->SetMem(publicPeers, sizeof(publicPeers), 0);
+    for (unsigned int i = 0; i < sizeof(knownPublicPeers) / sizeof(knownPublicPeers[0]) && numberOfPublicPeers < MAX_NUMBER_OF_PUBLIC_PEERS; i++)
+    {
+        addPublicPeer((unsigned char*)knownPublicPeers[i]);
+    }
+
+    return TRUE;
+}
+
+static void deinitialize()
+{
+    bs->SetMem(ownSeed, sizeof(ownSeed), 0);
+    bs->SetMem(ownSubseed, sizeof(ownSubseed), 0);
+    bs->SetMem(ownPrivateKey, sizeof(ownPrivateKey), 0);
+    bs->SetMem(ownPublicKey, sizeof(ownPublicKey), 0);
+
+    for (unsigned int processorIndex = 0; processorIndex < MAX_NUMBER_OF_PROCESSORS; processorIndex++)
+    {
+        if (processors[processorIndex].requestBuffer)
+        {
+            bs->FreePool(processors[processorIndex].requestBuffer);
+        }
+        if (processors[processorIndex].responseBuffer)
+        {
+            bs->FreePool(processors[processorIndex].responseBuffer);
+        }
+    }
+
+    for (unsigned int peerIndex = 0; peerIndex < MAX_NUMBER_OF_PEERS; peerIndex++)
+    {
+        if (peers[peerIndex].receiveBuffer)
+        {
+            bs->FreePool(peers[peerIndex].receiveBuffer);
+        }
+        if (peers[peerIndex].transmitData.FragmentTable[0].FragmentBuffer)
+        {
+            bs->FreePool(peers[peerIndex].transmitData.FragmentTable[0].FragmentBuffer);
+        }
+    }
+}
+
+EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
+{
+    ih = imageHandle;
+    st = systemTable;
+    rs = st->RuntimeServices;
+    bs = st->BootServices;
+
+    bs->SetWatchdogTimer(0, 0, 0, NULL);
+
+    st->ConOut->ClearScreen(st->ConOut);
+    log(L"Qubic 0.0.10 is launched.");
+
+    if (initialize())
+    {
+        CHAR16 message[256];
+
+        getIdentity(ownPublicKey, message);
+        log(message);
+
+        EFI_GUID mpServiceProtocolGuid = EFI_MP_SERVICES_PROTOCOL_GUID;
+        bs->LocateProtocol(&mpServiceProtocolGuid, NULL, (void**)&mpServicesProtocol);
+        unsigned long long numberOfAllProcessors, numberOfEnabledProcessors;
+        mpServicesProtocol->GetNumberOfProcessors(mpServicesProtocol, &numberOfAllProcessors, &numberOfEnabledProcessors);
+        for (unsigned int i = 0; i < numberOfAllProcessors && numberOfProcessors < MAX_NUMBER_OF_PROCESSORS; i++)
+        {
+            EFI_PROCESSOR_INFORMATION processorInformation;
+            mpServicesProtocol->GetProcessorInfo(mpServicesProtocol, i, &processorInformation);
+            if (processorInformation.StatusFlag == (PROCESSOR_ENABLED_BIT | PROCESSOR_HEALTH_STATUS_BIT))
+            {
+                EFI_STATUS status;
+                if ((status = bs->AllocatePool(EfiRuntimeServicesData, BUFFER_SIZE, &processors[numberOfProcessors].requestBuffer))
+                    || (status = bs->AllocatePool(EfiRuntimeServicesData, BUFFER_SIZE, &processors[numberOfProcessors].responseBuffer)))
+                {
+                    logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status);
+
+                    numberOfProcessors = 0;
+
+                    break;
+                }
+                ((PacketHeader*)processors[numberOfProcessors].responseBuffer)->protocolVersion = PROTOCOL_VERSION;
+                processors[numberOfProcessors++].number = i;
+            }
+        }
+        if (numberOfProcessors)
+        {
+            setNumber(message, 1 + numberOfProcessors, TRUE);
+            appendText(message, L"/");
+            appendNumber(message, numberOfAllProcessors, TRUE);
+            appendText(message, L" processors are being used.");
+            log(message);
+
+            EFI_STATUS status;
+            if (status = bs->LocateProtocol(&tcp4ServiceBindingProtocolGuid, NULL, (void**)&tcp4ServiceBindingProtocol))
+            {
+                logStatus(L"EFI_TCP4_SERVICE_BINDING_PROTOCOL is not located", status);
+            }
+            else
+            {
+                if (getTcp4Protocol(NULL, &tcp4Protocol))
+                {
+                    if (accept())
+                    {
+                        for (unsigned int i = 0; i < MIN_NUMBER_OF_PUBLIC_PEERS && numberOfPeers <= MIN_NUMBER_OF_PUBLIC_PEERS; i++)
+                        {
+                            EFI_TCP4_PROTOCOL* tcp4Protocol;
+                            EFI_HANDLE childHandle = getTcp4Protocol(publicPeers[i].address, &tcp4Protocol);
+                            if (childHandle)
+                            {
+                                bs->RaiseTPL(TPL_NOTIFY);
+
+                                const int freePeerSlot = getFreePeerSlot();
+                                if (freePeerSlot >= 0)
+                                {
+                                    peers[freePeerSlot].tcp4Protocol = tcp4Protocol;
+                                    peers[freePeerSlot].acceptToken.NewChildHandle = childHandle;
+                                    connect(&peers[freePeerSlot]);
+                                }
+
+                                bs->RestoreTPL(TPL_APPLICATION);
+                            }
+                        }
+
+                        ///////////
+
+                        unsigned char subseed[32] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32};
+                        unsigned char privateKey[32];
+                        getPrivateKey(subseed, privateKey);
+                        unsigned char publicKey[32];
+                        getPublicKey(privateKey, publicKey);
+                        unsigned char signature[64];
+
+                        while (!state)
+                        {
+                            tcp4Protocol->Poll(tcp4Protocol);
+
+                            unsigned long long min = 0xFFFFFFFFFFFFFFFF, max = 0;
+
+                            unsigned long long start = __rdtsc();
+
+                            unsigned int i;
+                            for (i = 0; i < 100000; i++)
+                            {
+                                unsigned long long miniStart = __rdtsc();
+                                sign(subseed, publicKey, subseed, signature);
+                                verify(publicKey, subseed, signature);
+                                unsigned long long miniDelta = __rdtsc() - miniStart;
+                                if (miniDelta < min) min = miniDelta;
+                                if (miniDelta > max) max = miniDelta;
+                            }
+
+                            unsigned long long delta = __rdtsc() - start;
+
+                            setText(message, L"MIN = ");
+                            appendNumber(message, min, TRUE);
+                            appendText(message, L" ticks | AVG = ");
+                            appendNumber(message, delta / i, TRUE);
+                            appendText(message, L" ticks | MAX = ");
+                            appendNumber(message, max, TRUE);
+                            appendText(message, L" ticks.");
+                            log(message);
+                        }
+                    }
+                }
+            }
+        }
+        else
+        {
+            log(L"Cannot continue without at least 2 healthy enabled processors!");
+        }
+    }
+    else
+    {
+        log(L"Initialization fails!");
+    }
+
+    deinitialize();
 
     if (!state)
     {
         bs->Stall(1000000);
         st->ConIn->Reset(st->ConIn, FALSE);
-        UINTN eventIndex;
+        unsigned long long eventIndex;
         bs->WaitForEvent(1, &st->ConIn->WaitForKey, &eventIndex);
     }
 
