@@ -3458,6 +3458,7 @@ typedef struct
 {
     unsigned int number;
     unsigned int peerId;
+    unsigned long long busyness;
     EFI_EVENT event;
     Peer* peer;
     void* requestBuffer;
@@ -3532,6 +3533,8 @@ static void addPublicPeer(unsigned char address[4])
 /**/volatile unsigned long long received = 0, transmitted = 0;
 static void requestProcessor(void* ProcedureArgument)
 {
+    unsigned long long busynessBeginningTick = __rdtsc();
+
     Processor* processor = (Processor*)ProcedureArgument;
     PacketHeader* requestPacketHeader = (PacketHeader*)processor->requestBuffer;
     PacketHeader* responsePacketHeader = (PacketHeader*)processor->responseBuffer;
@@ -3596,11 +3599,14 @@ static void requestProcessor(void* ProcedureArgument)
     default:
         responsePacketHeader->size = 0;
     }
+
+    processor->busyness = (__rdtsc() - busynessBeginningTick);
 }
 
 static void responseCallback(EFI_EVENT Event, void* Context)
 {
     /**/CHAR16 message[256]; setNumber(message, numberOfPeers, TRUE); appendText(message, L" peers are connected ("); appendNumber(message, received, TRUE); appendText(message, L" received / "); appendNumber(message, transmitted, TRUE); appendText(message, L" transmitted)."); log(message);
+    /**/setText(message, L"The task has been processed within "); appendNumber(message, ((Processor*)Context)->busyness, TRUE); appendText(message, L" ticks."); log(message);
 
     bs->CloseEvent(Event);
 
@@ -3925,9 +3931,7 @@ static void closeCallback(EFI_EVENT Event, void* Context)
 {
     bs->CloseEvent(Event);
 
-
     Peer* peer = (Peer*)Context;
-
     bs->CloseProtocol(peer->acceptToken.NewChildHandle, &tcp4ProtocolGuid, ih, NULL);
     tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peer->acceptToken.NewChildHandle);
     peer->tcp4Protocol = NULL;
@@ -4072,9 +4076,11 @@ static BOOLEAN initialize()
     }
 
     bs->SetMem(publicPeers, sizeof(publicPeers), 0);
-    while (numberOfPublicPeers < (sizeof(knownPublicPeers) / sizeof(knownPublicPeers[0])) && numberOfPublicPeers < MAX_NUMBER_OF_PUBLIC_PEERS)
+    while (numberOfPublicPeers < MIN_NUMBER_OF_PUBLIC_PEERS)
     {
-        addPublicPeer((unsigned char*)knownPublicPeers[numberOfPublicPeers]);
+        unsigned int random;
+        _rdrand32_step(&random);
+        addPublicPeer((unsigned char*)knownPublicPeers[random % (sizeof(knownPublicPeers) / sizeof(knownPublicPeers[0]))]);
     }
 
     return TRUE;
@@ -4122,7 +4128,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.0.23 is launched.");
+    log(L"Qubic 0.0.24 is launched.");
 
     if (initialize())
     {
