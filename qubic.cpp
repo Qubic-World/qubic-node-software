@@ -3528,6 +3528,7 @@ static void addPublicPeer(unsigned char address[4])
 
 static void requestProcessor(void* ProcedureArgument)
 {
+    /**/log(L"Request is received by a slave processor.");
     Processor* processor = (Processor*)ProcedureArgument;
     PacketHeader* requestPacketHeader = (PacketHeader*)processor->requestBuffer;
     PacketHeader* responsePacketHeader = (PacketHeader*)processor->responseBuffer;
@@ -3598,6 +3599,7 @@ static void requestProcessor(void* ProcedureArgument)
 
 static void responseCallback(EFI_EVENT Event, void* Context)
 {
+    /**/log(L"Response is received by the master processor.");
     bs->CloseEvent(Event);
 
     Processor* processor = (Processor*)Context;
@@ -3934,51 +3936,39 @@ static void closeCallback(EFI_EVENT Event, void* Context)
 
 static void receiveCallback(EFI_EVENT Event, void* Context)
 {
-    /**/log(L"Received... ");
     bs->CloseEvent(Event);
 
     Peer* peer = (Peer*)Context;
     if (peer->receiveToken.CompletionToken.Status)
     {
-        /**/logStatus(L" unsuccessfully", peer->receiveToken.CompletionToken.Status);
         close(peer);
     }
     else
     {
-        /**/CHAR16 message[256]; setText(message, L" successfully: "); appendNumber(message, peer->receiveData.DataLength, TRUE); log(message);
         *((unsigned long long*)&peer->receiveData.FragmentTable[0].FragmentBuffer) += peer->receiveData.DataLength;
         
     theOnlyGotoLabel:
         unsigned int receivedDataSize = (unsigned int)((unsigned long long)peer->receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peer->receiveBuffer);
         if (receivedDataSize < sizeof(PacketHeader))
         {
-            /**/log(L"~111");
             receive(peer);
         }
         else
         {
-            /**/log(L"~222");
             PacketHeader* packetHeader = (PacketHeader*)peer->receiveBuffer;
             if (packetHeader->protocolVersion != PROTOCOL_VERSION
                 || packetHeader->requestResponseType >= sizeof(requestResponseMinSizes) / sizeof(requestResponseMinSizes[0])
                 || packetHeader->size < requestResponseMinSizes[packetHeader->requestResponseType])
             {
-                /**/log(L"Report if you have seen this message!");
-                /**/setNumber(message, packetHeader->protocolVersion, FALSE); log(message);
-                /**/setNumber(message, packetHeader->requestResponseType, FALSE); log(message);
-                /**/setNumber(message, packetHeader->size, FALSE); log(message);
                 close(peer);
             }
             else
             {
-                /**/log(L"~333");
                 if (receivedDataSize >= packetHeader->size)
                 {
-                    /**/log(L"~444");
                     int counter = numberOfProcessors;
                     while (counter-- > 0)
                     {
-                        /**/log(L"~555");
                         if (++latestUsedProcessorIndex == numberOfProcessors)
                         {
                             latestUsedProcessorIndex = 0;
@@ -3986,12 +3976,10 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
 
                         if (!processors[latestUsedProcessorIndex].peer)
                         {
-                            /**/log(L"~666");
                             processors[latestUsedProcessorIndex].peer = peer;
                             processors[latestUsedProcessorIndex].peerId = peer->id;
                             if (receivedDataSize == packetHeader->size)
                             {
-                                /**/log(L"~777");
                                 void* tmp = processors[latestUsedProcessorIndex].requestBuffer;
                                 processors[latestUsedProcessorIndex].requestBuffer = peer->receiveBuffer;
 
@@ -4004,7 +3992,6 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                             {
                                 bs->CopyMem(processors[latestUsedProcessorIndex].requestBuffer, peer->receiveBuffer, packetHeader->size);
 
-                                /**/log(L"!!!!!!!!!!");
                                 bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, responseCallback, &processors[latestUsedProcessorIndex], &processors[latestUsedProcessorIndex].event);
                                 mpServicesProtocol->StartupThisAP(mpServicesProtocol, requestProcessor, processors[latestUsedProcessorIndex].number, processors[latestUsedProcessorIndex].event, 0, &processors[latestUsedProcessorIndex], NULL);
 
@@ -4013,13 +4000,11 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                             }
                             receive(peer);
 
-                            /**/log(L"~888");
                             goto theOnlyGotoLabel;
                         }
                     }
                 }
 
-                /**/log(L"~999");
                 receive(peer);
             }
         }
@@ -4128,7 +4113,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.0.16 is launched.");
+    log(L"Qubic 0.0.17 is launched.");
 
     if (initialize())
     {
