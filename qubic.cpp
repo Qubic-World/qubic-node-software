@@ -3952,24 +3952,33 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
         unsigned int receivedDataSize = (unsigned int)((unsigned long long)peer->receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peer->receiveBuffer);
         if (receivedDataSize < sizeof(PacketHeader))
         {
+            /**/log(L"~111");
             receive(peer);
         }
         else
         {
+            /**/log(L"~222");
             PacketHeader* packetHeader = (PacketHeader*)peer->receiveBuffer;
             if (packetHeader->protocolVersion != PROTOCOL_VERSION
                 || packetHeader->requestResponseType >= sizeof(requestResponseMinSizes) / sizeof(requestResponseMinSizes[0])
                 || packetHeader->size < requestResponseMinSizes[packetHeader->requestResponseType])
             {
+                /**/log(L"Report if you have seen this message!");
+                /**/setNumber(message, packetHeader->protocolVersion, FALSE); log(message);
+                /**/setNumber(message, packetHeader->requestResponseType, FALSE); log(message);
+                /**/setNumber(message, packetHeader->size, FALSE); log(message);
                 close(peer);
             }
             else
             {
+                /**/log(L"~333");
                 if (receivedDataSize >= packetHeader->size)
                 {
+                    /**/log(L"~444");
                     int counter = numberOfProcessors;
                     while (counter-- > 0)
                     {
+                        /**/log(L"~555");
                         if (++latestUsedProcessorIndex == numberOfProcessors)
                         {
                             latestUsedProcessorIndex = 0;
@@ -3977,10 +3986,12 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
 
                         if (!processors[latestUsedProcessorIndex].peer)
                         {
+                            /**/log(L"~666");
                             processors[latestUsedProcessorIndex].peer = peer;
                             processors[latestUsedProcessorIndex].peerId = peer->id;
                             if (receivedDataSize == packetHeader->size)
                             {
+                                /**/log(L"~777");
                                 void* tmp = processors[latestUsedProcessorIndex].requestBuffer;
                                 processors[latestUsedProcessorIndex].requestBuffer = peer->receiveBuffer;
 
@@ -4002,11 +4013,13 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                             }
                             receive(peer);
 
+                            /**/log(L"~888");
                             goto theOnlyGotoLabel;
                         }
                     }
                 }
 
+                /**/log(L"~999");
                 receive(peer);
             }
         }
@@ -4015,18 +4028,15 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
 
 static void transmitCallback(EFI_EVENT Event, void* Context)
 {
-    /**/log(L"Transmitted...");
     bs->CloseEvent(Event);
 
     Peer* peer = (Peer*)Context;
     if (peer->transmitToken.CompletionToken.Status)
     {
-        /**/logStatus(L" unsuccessfully", peer->transmitToken.CompletionToken.Status);
         close(peer);
     }
     else
     {
-        /**/CHAR16 message[256]; setText(message, L" successfully: "); appendNumber(message, peer->transmitData.DataLength, TRUE); log(message);
         peer->isTransmitting = FALSE;
     }
 }
@@ -4118,7 +4128,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.0.14 is launched.");
+    log(L"Qubic 0.0.15 is launched.");
 
     if (initialize())
     {
