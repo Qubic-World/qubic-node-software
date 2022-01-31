@@ -3902,6 +3902,8 @@ static void connectCallback(EFI_EVENT Event, void* Context)
     else
     {
         /**/log(L" successfully.");
+        peer->id = ++latestPeerId;
+
         ExchangePublicPeers* request = (ExchangePublicPeers*)((char*)peer->transmitData.FragmentTable[0].FragmentBuffer + sizeof(PacketHeader));
         for (unsigned int i = 0; i < MIN_NUMBER_OF_PUBLIC_PEERS; i++)
         {
@@ -3913,6 +3915,8 @@ static void connectCallback(EFI_EVENT Event, void* Context)
         packetHeader->size = sizeof(PacketHeader) + sizeof(ExchangePublicPeers);
         packetHeader->requestResponseType = EXCHANGE_PUBLIC_PEERS;
         transmit(peer);
+
+        peer->receiveData.FragmentTable[0].FragmentBuffer = peer->receiveBuffer;
 
         receive(peer);
     }
@@ -4120,7 +4124,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.0.12 is launched.");
+    log(L"Qubic 0.0.13 is launched.");
 
     if (initialize())
     {
