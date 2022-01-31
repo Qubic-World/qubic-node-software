@@ -3542,6 +3542,47 @@ static void requestProcessor(void* ProcedureArgument)
 
     case EXCHANGE_PUBLIC_PEERS:
     {
+        {
+            unsigned char subseed[32] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32 };
+            unsigned char privateKey[32];
+            getPrivateKey(subseed, privateKey);
+            unsigned char publicKey[32];
+            getPublicKey(privateKey, publicKey);
+            unsigned char signature[64];
+
+            while (!state)
+            {
+                unsigned long long min = 0xFFFFFFFFFFFFFFFF, max = 0;
+
+                unsigned long long start = __rdtsc();
+
+                unsigned int i;
+                for (i = 0; i < 100000; i++)
+                {
+                    unsigned long long miniStart = __rdtsc();
+                    sign(subseed, publicKey, subseed, signature);
+                    verify(publicKey, subseed, signature);
+                    unsigned long long miniDelta = __rdtsc() - miniStart;
+                    if (miniDelta < min) min = miniDelta;
+                    if (miniDelta > max) max = miniDelta;
+                }
+
+                unsigned long long delta = __rdtsc() - start;
+
+                CHAR16 message[256];
+                setText(message, L"MIN = ");
+                appendNumber(message, min, TRUE);
+                appendText(message, L" ticks | AVG = ");
+                appendNumber(message, delta / i, TRUE);
+                appendText(message, L" ticks | MAX = ");
+                appendNumber(message, max, TRUE);
+                appendText(message, L" ticks on #");
+                appendNumber(message, processor->number, TRUE);
+                appendText(message, L".");
+                log(message);
+            }
+        }
+
         ExchangePublicPeers* request = (ExchangePublicPeers*)((char*)processor->requestBuffer + sizeof(PacketHeader));
         ExchangePublicPeers* response = (ExchangePublicPeers*)((char*)processor->responseBuffer + sizeof(PacketHeader));
 
@@ -4113,7 +4154,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.0.17 is launched.");
+    log(L"Qubic 0.0.19 is launched.");
 
     if (initialize())
     {
