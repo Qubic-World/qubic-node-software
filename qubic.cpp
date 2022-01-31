@@ -3857,13 +3857,11 @@ static void transmit(Peer* peer)
 
 static void acceptCallback(EFI_EVENT Event, void* Context)
 {
-    /**/log(L"Accepted...");
     bs->CloseEvent(Event);
 
     Peer* peer = (Peer*)Context;
     if (!peer->acceptToken.CompletionToken.Status)
     {
-        /**/log(L" successfully.");
         EFI_STATUS status;
         if (status = bs->OpenProtocol(peer->acceptToken.NewChildHandle, &tcp4ProtocolGuid, (void**)&peer->tcp4Protocol, ih, NULL, EFI_OPEN_PROTOCOL_GET_PROTOCOL))
         {
@@ -3890,18 +3888,15 @@ static void acceptCallback(EFI_EVENT Event, void* Context)
 
 static void connectCallback(EFI_EVENT Event, void* Context)
 {
-    /**/log(L"Connected... ");
     bs->CloseEvent(Event);
 
     Peer* peer = (Peer*)Context;
     if (peer->connectToken.CompletionToken.Status)
     {
-        /**/logStatus(L" unsuccessfully", peer->connectToken.CompletionToken.Status);
         close(peer);
     }
     else
     {
-        /**/log(L" successfully.");
         peer->id = ++latestPeerId;
 
         ExchangePublicPeers* request = (ExchangePublicPeers*)((char*)peer->transmitData.FragmentTable[0].FragmentBuffer + sizeof(PacketHeader));
@@ -3924,7 +3919,6 @@ static void connectCallback(EFI_EVENT Event, void* Context)
 
 static void closeCallback(EFI_EVENT Event, void* Context)
 {
-    /**/log(L"Closed.");
     bs->CloseEvent(Event);
 
     Peer* peer = (Peer*)Context;
@@ -3951,7 +3945,7 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
     }
     else
     {
-        /**/log(L" successfully.");
+        /**/CHAR16 message[256]; setText(message, L" successfully: "); appendNumber(message, peer->receiveData.DataLength, TRUE); log(message);
         *((unsigned long long*)peer->receiveData.FragmentTable[0].FragmentBuffer) += peer->receiveData.DataLength;
         
     theOnlyGotoLabel:
@@ -4032,7 +4026,7 @@ static void transmitCallback(EFI_EVENT Event, void* Context)
     }
     else
     {
-        /**/log(L" successfully.");
+        /**/CHAR16 message[256]; setText(message, L" successfully: "); appendNumber(message, peer->transmitData.DataLength, TRUE); log(message);
         peer->isTransmitting = FALSE;
     }
 }
@@ -4124,7 +4118,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.0.13 is launched.");
+    log(L"Qubic 0.0.14 is launched.");
 
     if (initialize())
     {
@@ -4233,7 +4227,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             appendText(message, L" ticks | MAX = ");
                             appendNumber(message, max, TRUE);
                             appendText(message, L" ticks.");
-                            log(message);
+                            //log(message);
                         }
                     }
                 }
