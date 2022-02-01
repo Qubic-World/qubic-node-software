@@ -25,7 +25,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 ////////// Public Settings \\\\\\\\\\
 
 static const unsigned char knownPublicPeers[][4] = {
-    { 2, 139, 196, 162 },
+    /*{2, 139, 196, 162},
     { 5, 39, 223, 119 },
     { 46, 140, 52, 174 },
     { 65, 108, 111, 218 },
@@ -61,7 +61,8 @@ static const unsigned char knownPublicPeers[][4] = {
     { 209, 159, 156, 58 },
     { 212, 40, 234, 76 },
     { 213, 127, 147, 70 },
-    { 213, 184, 249, 83 }
+    { 213, 184, 249, 83 }*/
+    {178,168,200,247},{213,127,147,70 },{84,208,169,239},{213,184,249,83}
 };
 
 
@@ -3446,6 +3447,8 @@ typedef struct
     EFI_TCP4_TRANSMIT_DATA transmitData;
     EFI_TCP4_IO_TOKEN transmitToken;
     EFI_TCP4_CLOSE_TOKEN closeToken;
+    unsigned long long received;
+    unsigned long long transmitted;
     unsigned int id;
     BOOLEAN isTransmitting;
 } Peer;
@@ -3873,6 +3876,8 @@ static BOOLEAN accept()
     {
         peers[freePeerSlot].tcp4Protocol = (EFI_TCP4_PROTOCOL*)1;
         peers[freePeerSlot].acceptToken.NewChildHandle = NULL;
+        peers[freePeerSlot].received = 0;
+        peers[freePeerSlot].transmitted = 0;
         bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, acceptCallback, &peers[freePeerSlot], &peers[freePeerSlot].acceptToken.CompletionToken.Event);
         EFI_STATUS status;
         if (status = tcp4Protocol->Accept(tcp4Protocol, &peers[freePeerSlot].acceptToken))
@@ -3909,6 +3914,8 @@ static void connect(unsigned char* address)
             peers[freePeerSlot].tcp4Protocol = tcp4Protocol;
             peers[freePeerSlot].acceptToken.NewChildHandle = NULL;
             peers[freePeerSlot].connectChildHandle = childHandle;
+            peers[freePeerSlot].received = 0;
+            peers[freePeerSlot].transmitted = 0;
             bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, connectCallback, &peers[freePeerSlot], &peers[freePeerSlot].connectToken.CompletionToken.Event);
             EFI_STATUS status;
             if (status = peers[freePeerSlot].tcp4Protocol->Connect(peers[freePeerSlot].tcp4Protocol, &peers[freePeerSlot].connectToken))
@@ -4116,6 +4123,7 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
     else
     {
         /**/received += peer->receiveData.DataLength;
+        peer->received += peer->receiveData.DataLength;
         *((unsigned long long*)&peer->receiveData.FragmentTable[0].FragmentBuffer) += peer->receiveData.DataLength;
         
     theOnlyGotoLabel:
@@ -4193,6 +4201,7 @@ static void transmitCallback(EFI_EVENT Event, void* Context)
     else
     {
         /**/transmitted += peer->transmitData.DataLength;
+        peer->transmitted += peer->transmitData.DataLength;
         peer->isTransmitting = FALSE;
     }
 }
@@ -4291,7 +4300,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.0.34 is launched.");
+    log(L"Qubic 0.0.35 is launched.");
 
     if (initialize())
     {
@@ -4388,7 +4397,45 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 accept();
                             }
 
+                            /**/log(L"---");
                             /**/CHAR16 message[256]; setNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" public peers are known, "); appendNumber(message, MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots, TRUE); appendText(message, L" peers are connected ("); appendNumber(message, received, TRUE); appendText(message, L" rx / "); appendNumber(message, transmitted, TRUE); appendText(message, L" tx)."); log(message);
+
+                            unsigned int numberOfBusyProcessors = 0;
+                            for (unsigned int i = 0; i < numberOfProcessors; i++)
+                            {
+                                if (processors[i].peer)
+                                {
+                                    numberOfBusyProcessors++;
+                                }
+                            }
+                            setNumber(message, numberOfBusyProcessors, TRUE);
+                            appendText(message, L"/");
+                            appendNumber(message, numberOfProcessors, TRUE);
+                            appendText(message, L" are busy.");
+                            log(message);
+
+                            unsigned long long minReceived = 0xFFFFFFFFFFFFFFFF, maxReceived = 0;
+                            unsigned long long minTransmitted = 0xFFFFFFFFFFFFFFFF, maxTransmitted = 0;
+                            for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
+                            {
+                                if (peers[i].tcp4Protocol)
+                                {
+                                    if (peers[i].received < minReceived) minReceived = peers[i].received;
+                                    if (peers[i].received > maxReceived) maxReceived = peers[i].received;
+                                    if (peers[i].transmitted < minTransmitted) minTransmitted = peers[i].transmitted;
+                                    if (peers[i].transmitted > maxTransmitted) maxTransmitted = peers[i].transmitted;
+                                }
+                            }
+                            setText(message, L"RX.min = ");
+                            appendNumber(message, minReceived, TRUE);
+                            appendText(message, L" / RX.max = ");
+                            appendNumber(message, maxReceived, TRUE);
+                            appendText(message, L" / TX.min = ");
+                            appendNumber(message, minTransmitted, TRUE);
+                            appendText(message, L" / TX.max = ");
+                            appendNumber(message, maxTransmitted, TRUE);
+                            appendText(message, L".");
+                            log(message);
                         }
                     }
                 }
