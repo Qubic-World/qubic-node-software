@@ -3658,8 +3658,6 @@ static void requestProcessor(void* ProcedureArgument)
 
 static void responseCallback(EFI_EVENT Event, void* Context)
 {
-    /**/CHAR16 message[256]; setNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" public peers are known, "); appendNumber(message, numberOfPeers, TRUE); appendText(message, L" peers are connected ("); appendNumber(message, received, TRUE); appendText(message, L" rx / "); appendNumber(message, transmitted, TRUE); appendText(message, L" tx)."); log(message);
-
     bs->CloseEvent(Event);
 
     bs->RaiseTPL(TPL_NOTIFY);
@@ -3672,7 +3670,7 @@ static void responseCallback(EFI_EVENT Event, void* Context)
         {
             if (processor->responseTransmittingType)
             {
-                /**/CHAR16 message[256]; setText(message, L"Receive a message for "); unsigned char* ptr = (unsigned char*)processor->responseBuffer; CHAR16 id[71]; getIdentity(ptr + sizeof(PacketHeader) + 32, id); appendText(message, id); log(message);
+                /**///CHAR16 message[256]; setText(message, L"Receive a message for "); unsigned char* ptr = (unsigned char*)processor->responseBuffer; CHAR16 id[71]; getIdentity(ptr + sizeof(PacketHeader) + 32, id); appendText(message, id); log(message);
                 for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
                 {
                     if (((unsigned long long)peers[i].tcp4Protocol) > 1 && !peers[i].isTransmitting)
@@ -4277,7 +4275,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.0.31 is launched.");
+    log(L"Qubic 0.0.32 is launched.");
 
     if (initialize())
     {
@@ -4343,6 +4341,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                         while (!state)
                         {
+                            bs->Stall(5000000);
+                            /**/CHAR16 message[256]; setNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" public peers are known, "); appendNumber(message, numberOfPeers, TRUE); appendText(message, L" peers are connected ("); appendNumber(message, received, TRUE); appendText(message, L" rx / "); appendNumber(message, transmitted, TRUE); appendText(message, L" tx)."); log(message);
+
                             tcp4Protocol->Poll(tcp4Protocol);
 
                             if (numberOfPeers <= MIN_NUMBER_OF_PEERS)
