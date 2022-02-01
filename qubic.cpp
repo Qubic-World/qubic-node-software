@@ -3679,7 +3679,7 @@ static void responseCallback(EFI_EVENT Event, void* Context)
                     {
                         unsigned int random;
                         _rdrand32_step(&random);
-                        if ((random & 1)
+                        if ((/*random &*/ 1)
                             && (processor->responseTransmittingType > 0 || &peers[i] != processor->peer))
                         {
                             bs->CopyMem(peers[i].transmitData.FragmentTable[0].FragmentBuffer, processor->responseBuffer, packetHeader->size);
@@ -3887,10 +3887,7 @@ static BOOLEAN accept()
 
             bs->CloseEvent(peers[freePeerSlot].acceptToken.CompletionToken.Event);
             peers[freePeerSlot].tcp4Protocol = NULL;
-            if (--numberOfPeers <= MIN_NUMBER_OF_PEERS)
-            {
-                connectToAnyPublicPeer();
-            }
+            numberOfPeers--;
         }
         else
         {
@@ -3927,19 +3924,12 @@ static void connect(unsigned char* address)
                 {
                     accept();
                 }
-                else
-                {
-                    if (numberOfPeers <= MIN_NUMBER_OF_PEERS)
-                    {
-                        connectToAnyPublicPeer();
-                    }
-                }
             }
         }
         else
         {
             bs->CloseProtocol(childHandle, &tcp4ProtocolGuid, ih, NULL);
-            //tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, childHandle);
+            tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, childHandle);
         }
 
         bs->RestoreTPL(TPL_APPLICATION);
@@ -3954,34 +3944,20 @@ static void close(Peer* peer)
     {
         logStatus(L"EFI_TCP4_PROTOCOL.Close() fails", status);
 
-        /**/log(L"#1");
         bs->CloseEvent(peer->closeToken.CompletionToken.Event);
-        /**/log(L"#2");
         if (peer->acceptToken.NewChildHandle)
         {
-            /**/log(L"#3");
             bs->CloseProtocol(peer->acceptToken.NewChildHandle, &tcp4ProtocolGuid, ih, NULL);
-            /**/log(L"#4");
         }
         else
         {
-            /**/log(L"#5");
             bs->CloseProtocol(peer->connectChildHandle, &tcp4ProtocolGuid, ih, NULL);
-            //tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peer->connectChildHandle);
-            /**/log(L"#6");
+            tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peer->connectChildHandle);
         }
-        /**/log(L"#7");
         peer->tcp4Protocol = NULL;
         if (numberOfPeers-- == MAX_NUMBER_OF_PEERS)
         {
             accept();
-        }
-        else
-        {
-            if (numberOfPeers <= MIN_NUMBER_OF_PEERS)
-            {
-                connectToAnyPublicPeer();
-            }
         }
     }
 }
@@ -4032,13 +4008,6 @@ static void acceptCallback(EFI_EVENT Event, void* Context)
             if (numberOfPeers-- == MAX_NUMBER_OF_PEERS)
             {
                 accept();
-            }
-            else
-            {
-                if (numberOfPeers <= MIN_NUMBER_OF_PEERS)
-                {
-                    connectToAnyPublicPeer();
-                }
             }
         }
         else
@@ -4112,19 +4081,12 @@ static void closeCallback(EFI_EVENT Event, void* Context)
     else
     {
         bs->CloseProtocol(peer->connectChildHandle, &tcp4ProtocolGuid, ih, NULL);
-        //tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peer->connectChildHandle);
+        tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peer->connectChildHandle);
     }
     peer->tcp4Protocol = NULL;
     if (numberOfPeers-- == MAX_NUMBER_OF_PEERS)
     {
         accept();
-    }
-    else
-    {
-        if (numberOfPeers <= MIN_NUMBER_OF_PEERS)
-        {
-            connectToAnyPublicPeer();
-        }
     }
 }
 
@@ -4315,7 +4277,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.0.30 is launched.");
+    log(L"Qubic 0.0.31 is launched.");
 
     if (initialize())
     {
@@ -4382,6 +4344,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                         while (!state)
                         {
                             tcp4Protocol->Poll(tcp4Protocol);
+
+                            if (numberOfPeers <= MIN_NUMBER_OF_PEERS)
+                            {
+                                connectToAnyPublicPeer();
+                            }
                         }
                     }
                 }
