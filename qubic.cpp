@@ -3954,16 +3954,23 @@ static void close(Peer* peer)
     {
         logStatus(L"EFI_TCP4_PROTOCOL.Close() fails", status);
 
+        /**/log(L"#1");
         bs->CloseEvent(peer->closeToken.CompletionToken.Event);
+        /**/log(L"#2");
         if (peer->acceptToken.NewChildHandle)
         {
+            /**/log(L"#3");
             bs->CloseProtocol(peer->acceptToken.NewChildHandle, &tcp4ProtocolGuid, ih, NULL);
+            /**/log(L"#4");
         }
         else
         {
+            /**/log(L"#5");
             bs->CloseProtocol(peer->connectChildHandle, &tcp4ProtocolGuid, ih, NULL);
             //tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peer->connectChildHandle);
+            /**/log(L"#6");
         }
+        /**/log(L"#7");
         peer->tcp4Protocol = NULL;
         if (numberOfPeers-- == MAX_NUMBER_OF_PEERS)
         {
@@ -4308,7 +4315,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.0.29 is launched.");
+    log(L"Qubic 0.0.30 is launched.");
 
     if (initialize())
     {
