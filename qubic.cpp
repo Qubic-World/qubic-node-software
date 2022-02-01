@@ -3676,14 +3676,20 @@ static void responseCallback(EFI_EVENT Event, void* Context)
                 {
                     if (((unsigned long long)peers[i].tcp4Protocol) > 1 && !peers[i].isTransmitting)
                     {
+                        /**/log(L"#1"); bs->Stall(1000000);
                         unsigned int random;
                         _rdrand32_step(&random);
+                        /**/log(L"#2"); bs->Stall(1000000);
                         if ((random & 1)
                             && (processor->responseTransmittingType > 0 || &peers[i] != processor->peer))
                         {
+                            /**/log(L"#3"); bs->Stall(1000000);
                             bs->CopyMem(peers[i].transmitData.FragmentTable[0].FragmentBuffer, processor->responseBuffer, packetHeader->size);
+                            /**/log(L"#4"); bs->Stall(1000000);
                             transmit(&peers[i]);
+                            /**/log(L"#5"); bs->Stall(1000000);
                         }
+                        /**/log(L"#6"); bs->Stall(1000000);
                     }
                 }
             }
@@ -4286,7 +4292,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.0.26 is launched.");
+    log(L"Qubic 0.0.27 is launched.");
 
     if (initialize())
     {
