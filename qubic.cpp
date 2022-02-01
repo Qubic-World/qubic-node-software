@@ -3527,7 +3527,6 @@ static EFI_GUID tcp4ServiceBindingProtocolGuid = EFI_TCP4_SERVICE_BINDING_PROTOC
 static EFI_SERVICE_BINDING_PROTOCOL* tcp4ServiceBindingProtocol;
 static EFI_GUID tcp4ProtocolGuid = EFI_TCP4_PROTOCOL_GUID;
 static EFI_TCP4_PROTOCOL* tcp4Protocol;
-static unsigned int numberOfPeers = 0;
 static Peer peers[MAX_NUMBER_OF_PEERS];
 static unsigned int latestPeerId; // Initial value doesn't matter
 
@@ -3836,16 +3835,11 @@ static EFI_HANDLE getTcp4Protocol(const unsigned char* remoteAddress, EFI_TCP4_P
 
 static int getFreePeerSlot()
 {
-    if (numberOfPeers < MAX_NUMBER_OF_PEERS)
+    for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
     {
-        for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
+        if (!peers[i].tcp4Protocol)
         {
-            if (!peers[i].tcp4Protocol)
-            {
-                numberOfPeers++;
-
-                return i;
-            }
+            return i;
         }
     }
 
@@ -3872,6 +3866,8 @@ static void connectToAnyPublicPeer()
 
 static BOOLEAN accept()
 {
+    bs->RaiseTPL(TPL_NOTIFY);
+
     const int freePeerSlot = getFreePeerSlot();
     if (freePeerSlot >= 0)
     {
@@ -3885,25 +3881,28 @@ static BOOLEAN accept()
 
             bs->CloseEvent(peers[freePeerSlot].acceptToken.CompletionToken.Event);
             peers[freePeerSlot].tcp4Protocol = NULL;
-            numberOfPeers--;
         }
         else
         {
+            bs->RestoreTPL(TPL_APPLICATION);
+
             return TRUE;
         }
     }
+
+    bs->RestoreTPL(TPL_APPLICATION);
 
     return FALSE;
 }
 
 static void connect(unsigned char* address)
 {
+    bs->RaiseTPL(TPL_NOTIFY);
+
     EFI_TCP4_PROTOCOL* tcp4Protocol;
     EFI_HANDLE childHandle = getTcp4Protocol(address, &tcp4Protocol);
     if (childHandle)
     {
-        bs->RaiseTPL(TPL_NOTIFY);
-
         const int freePeerSlot = getFreePeerSlot();
         if (freePeerSlot >= 0)
         {
@@ -3918,10 +3917,6 @@ static void connect(unsigned char* address)
 
                 bs->CloseEvent(peers[freePeerSlot].connectToken.CompletionToken.Event);
                 peers[freePeerSlot].tcp4Protocol = NULL;
-                if (numberOfPeers-- == MAX_NUMBER_OF_PEERS)
-                {
-                    accept();
-                }
             }
         }
         else
@@ -3929,13 +3924,15 @@ static void connect(unsigned char* address)
             bs->CloseProtocol(childHandle, &tcp4ProtocolGuid, ih, NULL);
             tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, childHandle);
         }
-
-        bs->RestoreTPL(TPL_APPLICATION);
     }
+
+    bs->RestoreTPL(TPL_APPLICATION);
 }
 
 static void close(Peer* peer)
 {
+    bs->RaiseTPL(TPL_NOTIFY);
+
     bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, closeCallback, peer, &peer->closeToken.CompletionToken.Event);
     EFI_STATUS status;
     if (status = peer->tcp4Protocol->Close(peer->tcp4Protocol, &peer->closeToken))
@@ -3953,15 +3950,15 @@ static void close(Peer* peer)
             tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peer->connectChildHandle);
         }
         peer->tcp4Protocol = NULL;
-        if (numberOfPeers-- == MAX_NUMBER_OF_PEERS)
-        {
-            accept();
-        }
     }
+
+    bs->RestoreTPL(TPL_APPLICATION);
 }
 
 static void receive(Peer* peer)
 {
+    bs->RaiseTPL(TPL_NOTIFY);
+
     EFI_STATUS status;
     bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, receiveCallback, peer, &peer->receiveToken.CompletionToken.Event);
     peer->receiveData.DataLength = peer->receiveData.FragmentTable[0].FragmentLength = BUFFER_SIZE - (unsigned int)((unsigned long long)peer->receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peer->receiveBuffer);
@@ -3970,12 +3967,19 @@ static void receive(Peer* peer)
         logStatus(L"EFI_TCP4_PROTOCOL.Receive() fails", status);
 
         bs->CloseEvent(peer->receiveToken.CompletionToken.Event);
+
+        bs->RestoreTPL(TPL_APPLICATION);
         close(peer);
+        bs->RaiseTPL(TPL_NOTIFY);
     }
+
+    bs->RestoreTPL(TPL_APPLICATION);
 }
 
 static void transmit(Peer* peer)
 {
+    bs->RaiseTPL(TPL_NOTIFY);
+
     peer->isTransmitting = TRUE;
 
     EFI_STATUS status;
@@ -3986,8 +3990,13 @@ static void transmit(Peer* peer)
         logStatus(L"EFI_TCP4_PROTOCOL.Transmit() fails", status);
 
         bs->CloseEvent(peer->transmitToken.CompletionToken.Event);
+
+        bs->RestoreTPL(TPL_APPLICATION);
         close(peer);
+        bs->RaiseTPL(TPL_NOTIFY);
     }
+
+    bs->RestoreTPL(TPL_APPLICATION);
 }
 
 static void acceptCallback(EFI_EVENT Event, void* Context)
@@ -4003,10 +4012,6 @@ static void acceptCallback(EFI_EVENT Event, void* Context)
             logStatus(L"EFI_BOOT_SERVICES.OpenProtocol() fails", status);
 
             peer->tcp4Protocol = NULL;
-            if (numberOfPeers-- == MAX_NUMBER_OF_PEERS)
-            {
-                accept();
-            }
         }
         else
         {
@@ -4082,10 +4087,6 @@ static void closeCallback(EFI_EVENT Event, void* Context)
         tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peer->connectChildHandle);
     }
     peer->tcp4Protocol = NULL;
-    if (numberOfPeers-- == MAX_NUMBER_OF_PEERS)
-    {
-        accept();
-    }
 }
 
 static void receiveCallback(EFI_EVENT Event, void* Context)
@@ -4275,7 +4276,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.0.32 is launched.");
+    log(L"Qubic 0.0.33 is launched.");
 
     if (initialize())
     {
@@ -4341,15 +4342,38 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                         while (!state)
                         {
-                            bs->Stall(5000000);
-                            /**/CHAR16 message[256]; setNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" public peers are known, "); appendNumber(message, numberOfPeers, TRUE); appendText(message, L" peers are connected ("); appendNumber(message, received, TRUE); appendText(message, L" rx / "); appendNumber(message, transmitted, TRUE); appendText(message, L" tx)."); log(message);
+                            bs->Stall(1000000);
 
-                            tcp4Protocol->Poll(tcp4Protocol);
+                            bs->RaiseTPL(TPL_NOTIFY);
 
-                            if (numberOfPeers <= MIN_NUMBER_OF_PEERS)
+                            unsigned int numberOfFreePeerSlots = 0, numberOfAcceptingPeerSlots = 0;
+                            for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
+                            {
+                                if (!peers[i].tcp4Protocol)
+                                {
+                                    numberOfFreePeerSlots++;
+                                }
+                                else
+                                {
+                                    if (((unsigned long long)peers[i].tcp4Protocol) == 1)
+                                    {
+                                        numberOfAcceptingPeerSlots++;
+                                    }
+                                }
+                            }
+
+                            bs->RestoreTPL(TPL_APPLICATION);
+
+                            if (MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots < MIN_NUMBER_OF_PEERS)
                             {
                                 connectToAnyPublicPeer();
                             }
+                            if (numberOfAcceptingPeerSlots == 0 && numberOfFreePeerSlots > 0)
+                            {
+                                accept();
+                            }
+
+                            /**/CHAR16 message[256]; setNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" public peers are known, "); appendNumber(message, MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots, TRUE); appendText(message, L" peers are connected ("); appendNumber(message, received, TRUE); appendText(message, L" rx / "); appendNumber(message, transmitted, TRUE); appendText(message, L" tx)."); log(message);
                         }
                     }
                 }
