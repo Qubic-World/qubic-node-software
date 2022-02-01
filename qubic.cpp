@@ -3939,7 +3939,7 @@ static void connect(unsigned char* address)
         else
         {
             bs->CloseProtocol(childHandle, &tcp4ProtocolGuid, ih, NULL);
-            tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, childHandle);
+            //tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, childHandle);
         }
 
         bs->RestoreTPL(TPL_APPLICATION);
@@ -3962,7 +3962,7 @@ static void close(Peer* peer)
         else
         {
             bs->CloseProtocol(peer->connectChildHandle, &tcp4ProtocolGuid, ih, NULL);
-            tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peer->connectChildHandle);
+            //tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peer->connectChildHandle);
         }
         peer->tcp4Protocol = NULL;
         if (numberOfPeers-- == MAX_NUMBER_OF_PEERS)
@@ -4105,7 +4105,7 @@ static void closeCallback(EFI_EVENT Event, void* Context)
     else
     {
         bs->CloseProtocol(peer->connectChildHandle, &tcp4ProtocolGuid, ih, NULL);
-        tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peer->connectChildHandle);
+        //tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peer->connectChildHandle);
     }
     peer->tcp4Protocol = NULL;
     if (numberOfPeers-- == MAX_NUMBER_OF_PEERS)
@@ -4308,7 +4308,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.0.28 is launched.");
+    log(L"Qubic 0.0.29 is launched.");
 
     if (initialize())
     {
