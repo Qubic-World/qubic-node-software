@@ -3931,6 +3931,11 @@ static void connect(unsigned char* address)
 
 static void close(Peer* peer)
 {
+    if (!peer->tcp4Protocol)
+    {
+        return;
+    }
+
     bs->RaiseTPL(TPL_NOTIFY);
 
     bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, closeCallback, peer, &peer->closeToken.CompletionToken.Event);
@@ -3957,6 +3962,11 @@ static void close(Peer* peer)
 
 static void receive(Peer* peer)
 {
+    if (!peer->tcp4Protocol)
+    {
+        return;
+    }
+
     bs->RaiseTPL(TPL_NOTIFY);
 
     EFI_STATUS status;
@@ -3978,6 +3988,11 @@ static void receive(Peer* peer)
 
 static void transmit(Peer* peer)
 {
+    if (!peer->tcp4Protocol)
+    {
+        return;
+    }
+
     bs->RaiseTPL(TPL_NOTIFY);
 
     peer->isTransmitting = TRUE;
@@ -4276,7 +4291,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.0.33 is launched.");
+    log(L"Qubic 0.0.34 is launched.");
 
     if (initialize())
     {
