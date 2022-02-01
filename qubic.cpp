@@ -18,6 +18,7 @@ static const unsigned char ownMask[4] = { 255, 255, 255, 255 };
 static const unsigned char defaultRouteAddress[4] = { 0, 0, 0, 0 };
 static const unsigned char defaultRouteMask[4] = { 0, 0, 0, 0 };
 static const unsigned char defaultRouteGateway[4] = { 0, 0, 0, 0 };
+static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 
 
@@ -3427,7 +3428,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define MAX_NUMBER_OF_PEERS 1000
 #define MAX_NUMBER_OF_PUBLIC_PEERS 100
 #define MAX_NUMBER_OF_PROCESSORS 1024
-#define MIN_NUMBER_OF_PUBLIC_PEERS 4
+#define MIN_NUMBER_OF_PEERS 4
 #define NUMBER_OF_COMPUTORS (26 * 26)
 #define PORT 21841
 #define PROTOCOL_VERSION 0
@@ -3481,7 +3482,7 @@ typedef struct
 #define EXCHANGE_PUBLIC_PEERS 1
 typedef struct
 {
-    unsigned char peers[MIN_NUMBER_OF_PUBLIC_PEERS][4];
+    unsigned char peers[MIN_NUMBER_OF_PEERS][4];
 } ExchangePublicPeers;
 
 const unsigned short requestResponseMinSizes[] = {
@@ -3513,7 +3514,7 @@ static PublicPeer publicPeers[MAX_NUMBER_OF_PUBLIC_PEERS];
 static unsigned long long totalRatingOfPublicPeers = 0;
 
 static BOOLEAN accept();
-static void connect(Peer* peer);
+static void connect(unsigned char* address);
 static void close(Peer* peer);
 static void receive(Peer* peer);
 static void transmit(Peer* peer);
@@ -3525,9 +3526,23 @@ static void transmitCallback(EFI_EVENT Event, void* Context);
 
 static void addPublicPeer(unsigned char address[4])
 {
-    publicPeers[numberOfPublicPeers].rating = 1;
-    *((int*)publicPeers[numberOfPublicPeers++].address) = *((int*)address);
-    totalRatingOfPublicPeers++;
+    if (*((int*)address) != *((int*)ownPublicAddress))
+    {
+        unsigned int i;
+        for (i = 0; i < numberOfPublicPeers; i++)
+        {
+            if (*((int*)address) == *((int*)publicPeers[i].address))
+            {
+                break;
+            }
+        }
+        if (i == numberOfPublicPeers)
+        {
+            publicPeers[numberOfPublicPeers].rating = 1;
+            *((int*)publicPeers[numberOfPublicPeers++].address) = *((int*)address);
+            totalRatingOfPublicPeers++;
+        }
+    }
 }
 
 /**/volatile unsigned long long received = 0, transmitted = 0;
@@ -3551,8 +3566,8 @@ static void requestProcessor(void* ProcedureArgument)
         ExchangePublicPeers* request = (ExchangePublicPeers*)((char*)processor->requestBuffer + sizeof(PacketHeader));
         ExchangePublicPeers* response = (ExchangePublicPeers*)((char*)processor->responseBuffer + sizeof(PacketHeader));
 
-        unsigned int randoms[MIN_NUMBER_OF_PUBLIC_PEERS];
-        for (unsigned int i = 0; i < MIN_NUMBER_OF_PUBLIC_PEERS; i++)
+        unsigned int randoms[MIN_NUMBER_OF_PEERS];
+        for (unsigned int i = 0; i < MIN_NUMBER_OF_PEERS; i++)
         {
             _rdrand32_step(&randoms[i]);
         }
@@ -3563,7 +3578,7 @@ static void requestProcessor(void* ProcedureArgument)
 
         if (/*randoms[0] &*/ 1)
         {
-            for (unsigned int i = 0; i < MIN_NUMBER_OF_PUBLIC_PEERS; i++)
+            for (unsigned int i = 0; i < MIN_NUMBER_OF_PEERS; i++)
             {
                 *((int*)response->peers[i]) = *((int*)publicPeers[randoms[i] % numberOfPublicPeers].address);
             }
@@ -3576,20 +3591,9 @@ static void requestProcessor(void* ProcedureArgument)
             responsePacketHeader->size = 0;
         }
 
-        for (unsigned int i = 0; i < MIN_NUMBER_OF_PUBLIC_PEERS && numberOfPublicPeers < MAX_NUMBER_OF_PUBLIC_PEERS; i++)
+        for (unsigned int i = 0; i < MIN_NUMBER_OF_PEERS && numberOfPublicPeers < MAX_NUMBER_OF_PUBLIC_PEERS; i++)
         {
-            unsigned int j;
-            for (j = 0; j < numberOfPublicPeers; j++)
-            {
-                if (*((int*)request->peers[i]) == *((int*)publicPeers[j].address))
-                {
-                    break;
-                }
-            }
-            if (j == numberOfPublicPeers)
-            {
-                addPublicPeer(request->peers[i]);
-            }
+            addPublicPeer(request->peers[i]);
         }
 
         publicPeersLock = 0;
@@ -3600,13 +3604,12 @@ static void requestProcessor(void* ProcedureArgument)
         responsePacketHeader->size = 0;
     }
 
-    processor->busyness = (__rdtsc() - busynessBeginningTick);
+    processor->busyness += (__rdtsc() - busynessBeginningTick);
 }
 
 static void responseCallback(EFI_EVENT Event, void* Context)
 {
-    /**/CHAR16 message[256]; setNumber(message, numberOfPeers, TRUE); appendText(message, L" peers are connected ("); appendNumber(message, received, TRUE); appendText(message, L" received / "); appendNumber(message, transmitted, TRUE); appendText(message, L" transmitted)."); log(message);
-    /**/setText(message, L"The task has been processed within "); appendNumber(message, ((Processor*)Context)->busyness, TRUE); appendText(message, L" ticks."); log(message);
+    /**/CHAR16 message[256]; setNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" public peers are known, "); appendNumber(message, numberOfPeers, TRUE); appendText(message, L" peers are connected ("); appendNumber(message, received, TRUE); appendText(message, L" rx / "); appendNumber(message, transmitted, TRUE); appendText(message, L" tx)."); log(message);
 
     bs->CloseEvent(Event);
 
@@ -3774,6 +3777,24 @@ static int getFreePeerSlot()
     return -1;
 }
 
+static void connectToAnyPublicPeer()
+{
+    unsigned int random;
+    _rdrand32_step(&random);
+
+    unsigned char address[4];
+
+    while (_InterlockedCompareExchange8(&publicPeersLock, 1, 0))
+    {
+    }
+
+    *((int*)address) = *((int*)publicPeers[random & numberOfPublicPeers].address);
+
+    publicPeersLock = 0;
+
+    connect(address);
+}
+
 static BOOLEAN accept()
 {
     const int freePeerSlot = getFreePeerSlot();
@@ -3788,7 +3809,10 @@ static BOOLEAN accept()
 
             bs->CloseEvent(peers[freePeerSlot].acceptToken.CompletionToken.Event);
             peers[freePeerSlot].tcp4Protocol = NULL;
-            numberOfPeers--;
+            if (--numberOfPeers < MIN_NUMBER_OF_PEERS)
+            {
+                connectToAnyPublicPeer();
+            }
         }
         else
         {
@@ -3799,20 +3823,42 @@ static BOOLEAN accept()
     return FALSE;
 }
 
-static void connect(Peer* peer)
+static void connect(unsigned char* address)
 {
-    bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, connectCallback, peer, &peer->connectToken.CompletionToken.Event);
-    EFI_STATUS status;
-    if (status = peer->tcp4Protocol->Connect(peer->tcp4Protocol, &peer->connectToken))
+    EFI_TCP4_PROTOCOL* tcp4Protocol;
+    EFI_HANDLE childHandle = getTcp4Protocol(address, &tcp4Protocol);
+    if (childHandle)
     {
-        logStatus(L"EFI_TCP4_PROTOCOL.Connect() fails", status);
+        bs->RaiseTPL(TPL_NOTIFY);
 
-        bs->CloseEvent(peer->connectToken.CompletionToken.Event);
-        peer->tcp4Protocol = NULL;
-        if (numberOfPeers-- == MAX_NUMBER_OF_PEERS)
+        const int freePeerSlot = getFreePeerSlot();
+        if (freePeerSlot >= 0)
         {
-            accept();
+            peers[freePeerSlot].tcp4Protocol = tcp4Protocol;
+            peers[freePeerSlot].acceptToken.NewChildHandle = childHandle;
+            bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, connectCallback, &peers[freePeerSlot], &peers[freePeerSlot].connectToken.CompletionToken.Event);
+            EFI_STATUS status;
+            if (status = peers[freePeerSlot].tcp4Protocol->Connect(peers[freePeerSlot].tcp4Protocol, &peers[freePeerSlot].connectToken))
+            {
+                logStatus(L"EFI_TCP4_PROTOCOL.Connect() fails", status);
+
+                bs->CloseEvent(peers[freePeerSlot].connectToken.CompletionToken.Event);
+                peers[freePeerSlot].tcp4Protocol = NULL;
+                if (numberOfPeers-- == MAX_NUMBER_OF_PEERS)
+                {
+                    accept();
+                }
+                else
+                {
+                    if (numberOfPeers < MIN_NUMBER_OF_PEERS)
+                    {
+                        connectToAnyPublicPeer();
+                    }
+                }
+            }
         }
+
+        bs->RestoreTPL(TPL_APPLICATION);
     }
 }
 
@@ -3831,6 +3877,13 @@ static void close(Peer* peer)
         if (numberOfPeers-- == MAX_NUMBER_OF_PEERS)
         {
             accept();
+        }
+        else
+        {
+            if (numberOfPeers < MIN_NUMBER_OF_PEERS)
+            {
+                connectToAnyPublicPeer();
+            }
         }
     }
 }
@@ -3882,6 +3935,13 @@ static void acceptCallback(EFI_EVENT Event, void* Context)
             {
                 accept();
             }
+            else
+            {
+                if (numberOfPeers < MIN_NUMBER_OF_PEERS)
+                {
+                    connectToAnyPublicPeer();
+                }
+            }
         }
         else
         {
@@ -3910,12 +3970,27 @@ static void connectCallback(EFI_EVENT Event, void* Context)
         peer->id = ++latestPeerId;
 
         ExchangePublicPeers* request = (ExchangePublicPeers*)((char*)peer->transmitData.FragmentTable[0].FragmentBuffer + sizeof(PacketHeader));
-        for (unsigned int i = 0; i < MIN_NUMBER_OF_PUBLIC_PEERS; i++)
+        unsigned int i;
+        if (*((int*)ownPublicAddress))
+        {
+            *((int*)request->peers[0]) = *((int*)ownPublicAddress);
+            i = 1;
+        }
+        else
+        {
+            i = 0;
+        }
+        while (_InterlockedCompareExchange8(&publicPeersLock, 1, 0))
+        {
+        }
+        for (; i < MIN_NUMBER_OF_PEERS; i++)
         {
             unsigned int random;
             _rdrand32_step(&random);
             *((int*)request->peers[i]) = *((int*)publicPeers[random % numberOfPublicPeers].address);
         }
+        publicPeersLock = 0;
+
         PacketHeader* packetHeader = (PacketHeader*)peer->transmitData.FragmentTable[0].FragmentBuffer;
         packetHeader->size = sizeof(PacketHeader) + sizeof(ExchangePublicPeers);
         packetHeader->requestResponseType = EXCHANGE_PUBLIC_PEERS;
@@ -3938,6 +4013,13 @@ static void closeCallback(EFI_EVENT Event, void* Context)
     if (numberOfPeers-- == MAX_NUMBER_OF_PEERS)
     {
         accept();
+    }
+    else
+    {
+        if (numberOfPeers < MIN_NUMBER_OF_PEERS)
+        {
+            connectToAnyPublicPeer();
+        }
     }
 }
 
@@ -4076,7 +4158,7 @@ static BOOLEAN initialize()
     }
 
     bs->SetMem(publicPeers, sizeof(publicPeers), 0);
-    while (numberOfPublicPeers < MIN_NUMBER_OF_PUBLIC_PEERS)
+    while (numberOfPublicPeers < MIN_NUMBER_OF_PEERS)
     {
         unsigned int random;
         _rdrand32_step(&random);
@@ -4128,7 +4210,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.0.24 is launched.");
+    log(L"Qubic 0.0.25 is launched.");
 
     if (initialize())
     {
@@ -4171,6 +4253,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
             appendText(message, L" processors are being used.");
             log(message);
 
+            setText(message, L"Own public address = ");
+            appendIPv4Address(message, *((EFI_IPv4_ADDRESS*)ownPublicAddress));
+            appendText(message, L".");
+            log(message);
+
             EFI_STATUS status;
             if (status = bs->LocateProtocol(&tcp4ServiceBindingProtocolGuid, NULL, (void**)&tcp4ServiceBindingProtocol))
             {
@@ -4184,22 +4271,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                     {
                         for (unsigned int i = 0; i < numberOfPublicPeers; i++)
                         {
-                            EFI_TCP4_PROTOCOL* tcp4Protocol;
-                            EFI_HANDLE childHandle = getTcp4Protocol(publicPeers[i].address, &tcp4Protocol);
-                            if (childHandle)
-                            {
-                                bs->RaiseTPL(TPL_NOTIFY);
-
-                                const int freePeerSlot = getFreePeerSlot();
-                                if (freePeerSlot >= 0)
-                                {
-                                    peers[freePeerSlot].tcp4Protocol = tcp4Protocol;
-                                    peers[freePeerSlot].acceptToken.NewChildHandle = childHandle;
-                                    connect(&peers[freePeerSlot]);
-                                }
-
-                                bs->RestoreTPL(TPL_APPLICATION);
-                            }
+                            connect(publicPeers[i].address);
                         }
 
                         while (!state)
