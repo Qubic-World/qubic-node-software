@@ -24,6 +24,8 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 ////////// Public Settings \\\\\\\\\\
 
+#define ADMIN "MGEBBBMCLILFBGOBFJCLNBBADELCIBAMGPGMFIDLPIPGIOLOGJAJGNIEAAALEEKFAEDGOH"
+
 static const unsigned char knownPublicPeers[][4] = {{
 84, 208, 169, 239 }, {
 178, 168, 200, 247 }, {
@@ -3616,8 +3618,10 @@ static void requestProcessor(void* ProcedureArgument)
         case 1:
         {
             ProcessOperatorCommand* response = (ProcessOperatorCommand*)((char*)processor->responseBuffer + sizeof(PacketHeader));
+            response->nonce = 0;
             *((__m256i*)response->publicKey) = *((__m256i*)ownPublicKey);
 
+            processor->responseTransmittingType = 0;
             responsePacketHeader->size = sizeof(PacketHeader) + sizeof(ProcessOperatorCommand);
             responsePacketHeader->requestResponseType = PROCESS_OPERATOR_COMMAND;
         }
@@ -3650,7 +3654,6 @@ static void requestProcessor(void* ProcedureArgument)
             }
 
             processor->responseTransmittingType = 0;
-
             responsePacketHeader->size = sizeof(PacketHeader) + sizeof(ExchangePublicPeers);
             responsePacketHeader->requestResponseType = EXCHANGE_PUBLIC_PEERS;
         }
@@ -3683,7 +3686,6 @@ static void requestProcessor(void* ProcedureArgument)
             bs->CopyMem(response, request, sizeof(BroadcastMessage) + request->messageSize);
 
             processor->responseTransmittingType = -1;
-
             responsePacketHeader->size = requestPacketHeader->size;
             responsePacketHeader->requestResponseType = BROADCAST_MESSAGE;
         }
@@ -4343,7 +4345,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.0.38 is launched.");
+    log(L"Qubic 0.0.39 is launched.");
 
     if (initialize())
     {
