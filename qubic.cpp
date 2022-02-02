@@ -4300,7 +4300,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.0.35 is launched.");
+    log(L"Qubic 0.0.36 is launched.");
 
     if (initialize())
     {
@@ -4401,17 +4401,22 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             /**/CHAR16 message[256]; setNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" public peers are known, "); appendNumber(message, MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots, TRUE); appendText(message, L" peers are connected ("); appendNumber(message, received, TRUE); appendText(message, L" rx / "); appendNumber(message, transmitted, TRUE); appendText(message, L" tx)."); log(message);
 
                             unsigned int numberOfBusyProcessors = 0;
+                            unsigned long long minBusyness = 0xFFFFFFFFFFFFFFFF, maxBusyness = 0;
                             for (unsigned int i = 0; i < numberOfProcessors; i++)
                             {
                                 if (processors[i].peer)
                                 {
                                     numberOfBusyProcessors++;
                                 }
+                                if (processors[i].busyness < minBusyness) minBusyness = processors[i].busyness;
+                                if (processors[i].busyness > maxBusyness) maxBusyness = processors[i].busyness;
                             }
                             setNumber(message, numberOfBusyProcessors, TRUE);
                             appendText(message, L"/");
                             appendNumber(message, numberOfProcessors, TRUE);
-                            appendText(message, L" are busy.");
+                            appendText(message, L" processors are busy; busyness spread = ");
+                            appendNumber(message, (maxBusyness - minBusyness) * 100 / maxBusyness, TRUE);
+                            appendText(message, L" %.");
                             log(message);
 
                             unsigned long long minReceived = 0xFFFFFFFFFFFFFFFF, maxReceived = 0;
@@ -4420,21 +4425,17 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             {
                                 if (peers[i].tcp4Protocol)
                                 {
-                                    if (peers[i].received < minReceived) minReceived = peers[i].received;
-                                    if (peers[i].received > maxReceived) maxReceived = peers[i].received;
-                                    if (peers[i].transmitted < minTransmitted) minTransmitted = peers[i].transmitted;
-                                    if (peers[i].transmitted > maxTransmitted) maxTransmitted = peers[i].transmitted;
+                                    if (peers[i].received && peers[i].received < minReceived) minReceived = peers[i].received;
+                                    if (peers[i].received && peers[i].received > maxReceived) maxReceived = peers[i].received;
+                                    if (peers[i].transmitted && peers[i].transmitted < minTransmitted) minTransmitted = peers[i].transmitted;
+                                    if (peers[i].transmitted && peers[i].transmitted > maxTransmitted) maxTransmitted = peers[i].transmitted;
                                 }
                             }
-                            setText(message, L"RX.min = ");
-                            appendNumber(message, minReceived, TRUE);
-                            appendText(message, L" / RX.max = ");
-                            appendNumber(message, maxReceived, TRUE);
-                            appendText(message, L" / TX.min = ");
-                            appendNumber(message, minTransmitted, TRUE);
-                            appendText(message, L" / TX.max = ");
-                            appendNumber(message, maxTransmitted, TRUE);
-                            appendText(message, L".");
+                            setText(message, L"Rx spread = ");
+                            appendNumber(message, (maxReceived - minReceived) * 100 / maxReceived, TRUE);
+                            appendText(message, L" % / Tx spread = ");
+                            appendNumber(message, (maxTransmitted - minTransmitted) * 100 / maxTransmitted, TRUE);
+                            appendText(message, L" %.");
                             log(message);
                         }
                     }
