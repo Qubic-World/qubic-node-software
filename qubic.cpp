@@ -24,45 +24,64 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 ////////// Public Settings \\\\\\\\\\
 
-static const unsigned char knownPublicPeers[][4] = {
-    /*{2, 139, 196, 162},
-    { 5, 39, 223, 119 },
-    { 46, 140, 52, 174 },
-    { 65, 108, 111, 218 },
-    { 82, 114, 88, 225 },
-    { 84, 147, 171, 248 },
-    { 92, 53, 74, 130 },
-    { 93, 84, 197, 233 },
-    { 93, 125, 10, 240 },
-    { 107, 155, 83, 58 },
-    { 141, 95, 126, 127 },
-    { 142, 132, 139, 75 },
-    { 142, 132, 140, 6 },
-    { 142, 132, 157, 115 },
-    { 142, 132, 158, 142 },
-    { 142, 132, 159, 213 },
-    { 142, 132, 192, 58 },
-    { 142, 132, 197, 184 },
-    { 157, 90, 1, 165 },
-    { 165,  22, 221, 108 },
-    { 176, 98, 26, 24 },
-    { 178, 168, 200, 247 },
-    { 185, 130, 226, 119 },
-    { 185, 182, 193, 227 },
-    { 185, 184, 195, 19 },
-    { 185, 184, 195, 18 },
-    { 185, 184, 195, 43 },
-    { 185, 184, 195, 44 },
-    { 185, 184, 195, 64 },
-    { 190, 2, 147, 131 },
-    { 190, 2, 147, 188 },
-    { 190, 2, 149, 182 },
-    { 190, 2, 152, 169 },
-    { 209, 159, 156, 58 },
-    { 212, 40, 234, 76 },
-    { 213, 127, 147, 70 },
-    { 213, 184, 249, 83 }*/
-    {178,168,200,247},{213,127,147,70 },{84,208,169,239},{213,184,249,83}
+static const unsigned char knownPublicPeers[][4] = {{
+84, 208, 169, 239 }, {
+178, 168, 200, 247 }, {
+213, 127, 147, 70 }, {
+213, 184, 249, 83 }, {
+142, 132, 158, 134 }, {
+142, 132, 193, 249 }, {
+209, 159, 156, 58 }, {
+209, 159, 144, 234 }, {
+64, 20, 63, 126 }, {
+65, 108, 111, 218 }, {
+142, 132, 192, 48 }, {
+157, 90, 213, 88 }, {
+134, 17, 25, 28 }, {
+93, 84, 195, 120 }, {
+190, 2, 152, 169 }, {
+142, 132, 192, 58 }, {
+142, 132, 159, 209 }, {
+142, 132, 158, 137 }, {
+190, 2, 147, 131 }, {
+142, 132, 159, 213 }, {
+80, 109, 200, 141 }, {
+142, 132, 193, 246 }, {
+217, 232, 153, 23 }, {
+65, 108, 68, 67 }, {
+142, 132, 158, 135 }, {
+107, 155, 83, 58 }, {
+142, 132, 192, 52 }, {
+142, 132, 159, 208 }, {
+142, 132, 158, 133 }, {
+157, 90, 213, 85 }, {
+157, 90, 213, 90 }, {
+142, 132, 140, 8 }, {
+84, 149, 22, 209 }, {
+142, 132, 158, 136 }, {
+142, 132, 192, 50 }, {
+142, 132, 192, 49 }, {
+142, 132, 140, 6 }, {
+157, 90, 213, 92 }, {
+37, 85, 245, 134 }, {
+142, 132, 158, 142 }, {
+142, 132, 159, 210 }, {
+142, 132, 192, 51 }, {
+84, 147, 171, 248 }, {
+142, 132, 193, 244 }, {
+142, 132, 193, 247 }, {
+209, 159, 158, 210 }, {
+142, 132, 193, 248 }, {
+157, 90, 213, 94 }, {
+74, 130, 65, 57 }, {
+142, 132, 159, 211 }, {
+157, 90, 213, 95 }, {
+46, 140, 52, 174 }, {
+190, 2, 147, 188 }, {
+5, 147, 80, 92 }, {
+176, 98, 26, 24 }, {
+142, 132, 193, 245 }, {
+93, 125, 10, 240 }
 };
 
 
@@ -3426,14 +3445,14 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 
 ////////// Qubic \\\\\\\\\\
 
+#define BUFFER_SIZE 65536
 #define MAX_NUMBER_OF_PEERS 1000
-#define MAX_NUMBER_OF_PUBLIC_PEERS 100
 #define MAX_NUMBER_OF_PROCESSORS 1024
+#define MAX_NUMBER_OF_PUBLIC_PEERS 300
 #define MIN_NUMBER_OF_PEERS 4
 #define NUMBER_OF_COMPUTORS (26 * 26)
 #define PORT 21841
-#define PROTOCOL_VERSION 0
-#define BUFFER_SIZE 65536
+#define PROTOCOL 0
 
 typedef struct
 {
@@ -3481,7 +3500,8 @@ typedef struct
 #define PROCESS_OPERATOR_COMMAND 0
 typedef struct
 {
-    unsigned int nonce;
+    unsigned long long nonce;
+    unsigned char publicKey[32];
 } ProcessOperatorCommand;
 
 #define EXCHANGE_PUBLIC_PEERS 1
@@ -3582,7 +3602,33 @@ static void requestProcessor(void* ProcedureArgument)
     {
     case PROCESS_OPERATOR_COMMAND:
     {
-        responsePacketHeader->size = 0;
+        ProcessOperatorCommand* request = (ProcessOperatorCommand*)((char*)processor->requestBuffer + sizeof(PacketHeader));
+        if (request->nonce)
+        {
+            switch (request->nonce)
+            {
+            case 0:
+            {
+                //state = 1;
+
+                responsePacketHeader->size = 0;
+            }
+            break;
+
+            case 1:
+            {
+                ProcessOperatorCommand* response = (ProcessOperatorCommand*)((char*)processor->responseBuffer + sizeof(PacketHeader));
+                *((__m256i*)response->publicKey) = *((__m256i*)ownPublicKey);
+
+                responsePacketHeader->size = sizeof(PacketHeader) + sizeof(ProcessOperatorCommand);
+                responsePacketHeader->requestResponseType = PROCESS_OPERATOR_COMMAND;
+            }
+            break;
+
+            default:
+                responsePacketHeader->size = 0;
+            }
+        }
     }
     break;
 
@@ -4135,7 +4181,7 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
         else
         {
             PacketHeader* packetHeader = (PacketHeader*)peer->receiveBuffer;
-            if (packetHeader->protocolVersion != PROTOCOL_VERSION
+            if (packetHeader->protocolVersion != PROTOCOL
                 || packetHeader->requestResponseType >= sizeof(requestResponseMinSizes) / sizeof(requestResponseMinSizes[0])
                 || packetHeader->size < requestResponseMinSizes[packetHeader->requestResponseType])
             {
@@ -4241,7 +4287,7 @@ static BOOLEAN initialize()
 
             return FALSE;
         }
-        ((PacketHeader*)peers[peerIndex].transmitData.FragmentTable[0].FragmentBuffer)->protocolVersion = PROTOCOL_VERSION;
+        ((PacketHeader*)peers[peerIndex].transmitData.FragmentTable[0].FragmentBuffer)->protocolVersion = PROTOCOL;
         peers[peerIndex].receiveToken.Packet.RxData = &peers[peerIndex].receiveData;
         peers[peerIndex].transmitToken.Packet.TxData = &peers[peerIndex].transmitData;
         peers[peerIndex].closeToken.AbortOnClose = TRUE;
@@ -4300,7 +4346,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.0.36 is launched.");
+    log(L"Qubic 0.0.37 is launched.");
 
     if (initialize())
     {
@@ -4331,7 +4377,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                     break;
                 }
-                ((PacketHeader*)processors[numberOfProcessors].responseBuffer)->protocolVersion = PROTOCOL_VERSION;
+                ((PacketHeader*)processors[numberOfProcessors].responseBuffer)->protocolVersion = PROTOCOL;
                 processors[numberOfProcessors++].number = i;
             }
         }
@@ -4397,46 +4443,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 accept();
                             }
 
-                            /**/log(L"---");
                             /**/CHAR16 message[256]; setNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" public peers are known, "); appendNumber(message, MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots, TRUE); appendText(message, L" peers are connected ("); appendNumber(message, received, TRUE); appendText(message, L" rx / "); appendNumber(message, transmitted, TRUE); appendText(message, L" tx)."); log(message);
-
-                            unsigned int numberOfBusyProcessors = 0;
-                            unsigned long long minBusyness = 0xFFFFFFFFFFFFFFFF, maxBusyness = 0;
-                            for (unsigned int i = 0; i < numberOfProcessors; i++)
-                            {
-                                if (processors[i].peer)
-                                {
-                                    numberOfBusyProcessors++;
-                                }
-                                if (processors[i].busyness < minBusyness) minBusyness = processors[i].busyness;
-                                if (processors[i].busyness > maxBusyness) maxBusyness = processors[i].busyness;
-                            }
-                            setNumber(message, numberOfBusyProcessors, TRUE);
-                            appendText(message, L"/");
-                            appendNumber(message, numberOfProcessors, TRUE);
-                            appendText(message, L" processors are busy; busyness spread = ");
-                            appendNumber(message, (maxBusyness - minBusyness) * 100 / maxBusyness, TRUE);
-                            appendText(message, L" %.");
-                            log(message);
-
-                            unsigned long long minReceived = 0xFFFFFFFFFFFFFFFF, maxReceived = 0;
-                            unsigned long long minTransmitted = 0xFFFFFFFFFFFFFFFF, maxTransmitted = 0;
-                            for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
-                            {
-                                if (peers[i].tcp4Protocol)
-                                {
-                                    if (peers[i].received && peers[i].received < minReceived) minReceived = peers[i].received;
-                                    if (peers[i].received && peers[i].received > maxReceived) maxReceived = peers[i].received;
-                                    if (peers[i].transmitted && peers[i].transmitted < minTransmitted) minTransmitted = peers[i].transmitted;
-                                    if (peers[i].transmitted && peers[i].transmitted > maxTransmitted) maxTransmitted = peers[i].transmitted;
-                                }
-                            }
-                            setText(message, L"Rx spread = ");
-                            appendNumber(message, (maxReceived - minReceived) * 100 / maxReceived, TRUE);
-                            appendText(message, L" % / Tx spread = ");
-                            appendNumber(message, (maxTransmitted - minTransmitted) * 100 / maxTransmitted, TRUE);
-                            appendText(message, L" %.");
-                            log(message);
                         }
                     }
                 }
