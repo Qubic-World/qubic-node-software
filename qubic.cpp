@@ -11,14 +11,14 @@
 #define ROLE CANDIDATE
 
 // Do NOT share the data of "Private Settings" section with anyone!!!
-static unsigned char ownSeed[55 + 1] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+static unsigned char ownSeed[55 + 1] = "Put your seed here!";
 
 static const unsigned char ownAddress[4] = { 0, 0, 0, 0 };
 static const unsigned char ownMask[4] = { 255, 255, 255, 255 };
 static const unsigned char defaultRouteAddress[4] = { 0, 0, 0, 0 };
 static const unsigned char defaultRouteMask[4] = { 0, 0, 0, 0 };
 static const unsigned char defaultRouteGateway[4] = { 0, 0, 0, 0 };
-static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
+static const unsigned char ownPublicAddress[4] = { ?, ?, ?, ? };
 
 
 
@@ -26,64 +26,11 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define ADMIN "MGEBBBMCLILFBGOBFJCLNBBADELCIBAMGPGMFIDLPIPGIOLOGJAJGNIEAAALEEKFAEDGOH"
 
-static const unsigned char knownPublicPeers[][4] = {{
-84, 208, 169, 239 }, {
-178, 168, 200, 247 }, {
-213, 127, 147, 70 }, {
-213, 184, 249, 83 }, {
-142, 132, 158, 134 }, {
-142, 132, 193, 249 }, {
-209, 159, 156, 58 }, {
-209, 159, 144, 234 }, {
-64, 20, 63, 126 }, {
-65, 108, 111, 218 }, {
-142, 132, 192, 48 }, {
-157, 90, 213, 88 }, {
-134, 17, 25, 28 }, {
-93, 84, 195, 120 }, {
-190, 2, 152, 169 }, {
-142, 132, 192, 58 }, {
-142, 132, 159, 209 }, {
-142, 132, 158, 137 }, {
-190, 2, 147, 131 }, {
-142, 132, 159, 213 }, {
-80, 109, 200, 141 }, {
-142, 132, 193, 246 }, {
-217, 232, 153, 23 }, {
-65, 108, 68, 67 }, {
-142, 132, 158, 135 }, {
-107, 155, 83, 58 }, {
-142, 132, 192, 52 }, {
-142, 132, 159, 208 }, {
-142, 132, 158, 133 }, {
-157, 90, 213, 85 }, {
-157, 90, 213, 90 }, {
-142, 132, 140, 8 }, {
-84, 149, 22, 209 }, {
-142, 132, 158, 136 }, {
-142, 132, 192, 50 }, {
-142, 132, 192, 49 }, {
-142, 132, 140, 6 }, {
-157, 90, 213, 92 }, {
-37, 85, 245, 134 }, {
-142, 132, 158, 142 }, {
-142, 132, 159, 210 }, {
-142, 132, 192, 51 }, {
-84, 147, 171, 248 }, {
-142, 132, 193, 244 }, {
-142, 132, 193, 247 }, {
-209, 159, 158, 210 }, {
-142, 132, 193, 248 }, {
-157, 90, 213, 94 }, {
-74, 130, 65, 57 }, {
-142, 132, 159, 211 }, {
-157, 90, 213, 95 }, {
-46, 140, 52, 174 }, {
-190, 2, 147, 188 }, {
-5, 147, 80, 92 }, {
-176, 98, 26, 24 }, {
-142, 132, 193, 245 }, {
-93, 125, 10, 240 }
+static const unsigned char knownPublicPeers[][4] = {
+    { ?, ?, ?, ? },
+    { ?, ?, ?, ? },
+    { ?, ?, ?, ? },
+    { ?, ?, ?, ? }
 };
 
 
@@ -3329,6 +3276,21 @@ static void getPublicKey(const unsigned char* privateKey, unsigned char* publicK
     encode(P, publicKey);                              // Encode public key
 }
 
+static BOOLEAN getPublicKeyFromIdentity(const unsigned char* identity, unsigned char* publicKey)
+{
+    for (int i = 0; i < 32; i++)
+    {
+        if (identity[i << 1] < 'A' || identity[i << 1] > 'P'
+            || identity[(i << 1) + 1] < 'A' || identity[(i << 1) + 1] > 'P')
+        {
+            return FALSE;
+        }
+        publicKey[i] = ((identity[i << 1] - 'A') << 4) | (identity[(i << 1) + 1] - 'A');
+    }
+
+    return TRUE;
+}
+
 static BOOLEAN getSharedKey(const unsigned char* privateKey, const unsigned char* publicKey, unsigned char* sharedKey)
 { // Secret agreement computation for key exchange using a compressed, 32-byte public key
   // The output is the y-coordinate of privateKey*A, where A is the decoding of the public key publicKey
@@ -3454,7 +3416,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define MIN_NUMBER_OF_PEERS 4
 #define NUMBER_OF_COMPUTORS (26 * 26)
 #define PORT 21841
-#define PROTOCOL 0
+#define PROTOCOL 1
 
 typedef struct
 {
@@ -3540,7 +3502,7 @@ const unsigned short requestResponseMinSizes[] = {
 
 volatile static int state = 0;
 
-static unsigned char ownSubseed[32], ownPrivateKey[32], ownPublicKey[32];
+static unsigned char ownSubseed[32], ownPrivateKey[32], ownPublicKey[32], adminPublicKey[32];
 static unsigned int latestOperatorNonce;
 
 static EFI_MP_SERVICES_PROTOCOL* mpServicesProtocol;
@@ -3679,15 +3641,26 @@ static void requestProcessor(void* ProcedureArgument)
         {
             if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->destinationIdentity), *((__m256i*)ownPublicKey))) == 0xFFFFFFFF)
             {
-                // TODO: Add processing of messages for self.
+                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->sourceIdentity), *((__m256i*)adminPublicKey))) == 0xFFFFFFFF)
+                {
+                    log(L"Receives a message from Admin.");
+                    responsePacketHeader->size = 0;
+                }
+                else
+                {
+                    log(L"Receives a message for self.");
+                    responsePacketHeader->size = 0;
+                }
             }
+            else
+            {
+                BroadcastMessage* response = (BroadcastMessage*)((char*)processor->responseBuffer + sizeof(PacketHeader));
+                bs->CopyMem(response, request, sizeof(BroadcastMessage) + request->messageSize);
 
-            BroadcastMessage* response = (BroadcastMessage*)((char*)processor->responseBuffer + sizeof(PacketHeader));
-            bs->CopyMem(response, request, sizeof(BroadcastMessage) + request->messageSize);
-
-            processor->responseTransmittingType = -1;
-            responsePacketHeader->size = requestPacketHeader->size;
-            responsePacketHeader->requestResponseType = BROADCAST_MESSAGE;
+                processor->responseTransmittingType = -1;
+                responsePacketHeader->size = requestPacketHeader->size;
+                responsePacketHeader->requestResponseType = BROADCAST_MESSAGE;
+            }
         }
         else
         {
@@ -3717,14 +3690,13 @@ static void responseCallback(EFI_EVENT Event, void* Context)
         {
             if (processor->responseTransmittingType)
             {
-                /**///CHAR16 message[256]; setText(message, L"Receive a message for "); unsigned char* ptr = (unsigned char*)processor->responseBuffer; CHAR16 id[71]; getIdentity(ptr + sizeof(PacketHeader) + 32, id); appendText(message, id); log(message);
                 for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
                 {
                     if (((unsigned long long)peers[i].tcp4Protocol) > 1 && !peers[i].isTransmitting)
                     {
                         unsigned int random;
                         _rdrand32_step(&random);
-                        if ((/*random &*/ 1)
+                        if ((random & 1)
                             && (processor->responseTransmittingType > 0 || &peers[i] != processor->peer))
                         {
                             bs->CopyMem(peers[i].transmitData.FragmentTable[0].FragmentBuffer, processor->responseBuffer, packetHeader->size);
@@ -4267,6 +4239,7 @@ static BOOLEAN initialize()
     }
     getPrivateKey(ownSubseed, ownPrivateKey);
     getPublicKey(ownPrivateKey, ownPublicKey);
+    getPublicKeyFromIdentity((const unsigned char*)ADMIN, adminPublicKey);
     EFI_TIME time;
     rs->GetTime(&time, NULL);
     latestOperatorNonce = (((((time.Year - 2001) * 12 + (time.Month - 1)) * 31 + (time.Day - 1)) * 24 + time.Hour) * 60 + time.Minute) * 60 + time.Second;
@@ -4345,7 +4318,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.0.39 is launched.");
+    log(L"Qubic 0.1.0 is launched.");
 
     if (initialize())
     {
