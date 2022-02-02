@@ -3603,31 +3603,28 @@ static void requestProcessor(void* ProcedureArgument)
     case PROCESS_OPERATOR_COMMAND:
     {
         ProcessOperatorCommand* request = (ProcessOperatorCommand*)((char*)processor->requestBuffer + sizeof(PacketHeader));
-        if (request->nonce)
+        switch (request->nonce)
         {
-            switch (request->nonce)
-            {
-            case 0:
-            {
-                //state = 1;
+        case 0:
+        {
+            //state = 1;
 
-                responsePacketHeader->size = 0;
-            }
-            break;
+            responsePacketHeader->size = 0;
+        }
+        break;
 
-            case 1:
-            {
-                ProcessOperatorCommand* response = (ProcessOperatorCommand*)((char*)processor->responseBuffer + sizeof(PacketHeader));
-                *((__m256i*)response->publicKey) = *((__m256i*)ownPublicKey);
+        case 1:
+        {
+            ProcessOperatorCommand* response = (ProcessOperatorCommand*)((char*)processor->responseBuffer + sizeof(PacketHeader));
+            *((__m256i*)response->publicKey) = *((__m256i*)ownPublicKey);
 
-                responsePacketHeader->size = sizeof(PacketHeader) + sizeof(ProcessOperatorCommand);
-                responsePacketHeader->requestResponseType = PROCESS_OPERATOR_COMMAND;
-            }
-            break;
+            responsePacketHeader->size = sizeof(PacketHeader) + sizeof(ProcessOperatorCommand);
+            responsePacketHeader->requestResponseType = PROCESS_OPERATOR_COMMAND;
+        }
+        break;
 
-            default:
-                responsePacketHeader->size = 0;
-            }
+        default:
+            responsePacketHeader->size = 0;
         }
     }
     break;
@@ -4346,7 +4343,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.0.37 is launched.");
+    log(L"Qubic 0.0.38 is launched.");
 
     if (initialize())
     {
