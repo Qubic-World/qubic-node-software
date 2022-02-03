@@ -11,14 +11,14 @@
 #define ROLE CANDIDATE
 
 // Do NOT share the data of "Private Settings" section with anyone!!!
-static unsigned char ownSeed[55 + 1] = "Put your seed here!";
+static unsigned char ownSeed[55 + 1] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 static const unsigned char ownAddress[4] = { 0, 0, 0, 0 };
 static const unsigned char ownMask[4] = { 255, 255, 255, 255 };
 static const unsigned char defaultRouteAddress[4] = { 0, 0, 0, 0 };
 static const unsigned char defaultRouteMask[4] = { 0, 0, 0, 0 };
 static const unsigned char defaultRouteGateway[4] = { 0, 0, 0, 0 };
-static const unsigned char ownPublicAddress[4] = { ?, ?, ?, ? };
+static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 
 
@@ -27,10 +27,10 @@ static const unsigned char ownPublicAddress[4] = { ?, ?, ?, ? };
 #define ADMIN "MGEBBBMCLILFBGOBFJCLNBBADELCIBAMGPGMFIDLPIPGIOLOGJAJGNIEAAALEEKFAEDGOH"
 
 static const unsigned char knownPublicPeers[][4] = {
-    { ?, ?, ?, ? },
-    { ?, ?, ?, ? },
-    { ?, ?, ?, ? },
-    { ?, ?, ?, ? }
+    { 74, 138, 13, 112 },
+    { 82, 114, 88, 225 },
+    { 93, 125, 10, 240 },
+    { 142, 132, 197, 184 }
 };
 
 
@@ -3581,7 +3581,11 @@ static void requestProcessor(void* ProcedureArgument)
         {
             ProcessOperatorCommand* response = (ProcessOperatorCommand*)((char*)processor->responseBuffer + sizeof(PacketHeader));
             response->nonce = 0;
-            *((__m256i*)response->publicKey) = *((__m256i*)ownPublicKey);
+            //*((__m256i*)response->publicKey) = *((__m256i*)ownPublicKey);
+            for (unsigned int i = 0; i < 32; i++)
+            {
+                response->publicKey[i] = ownPublicKey[i];
+            }
 
             processor->responseTransmittingType = 0;
             responsePacketHeader->size = sizeof(PacketHeader) + sizeof(ProcessOperatorCommand);
@@ -3639,16 +3643,18 @@ static void requestProcessor(void* ProcedureArgument)
         BroadcastMessage* request = (BroadcastMessage*)((char*)processor->requestBuffer + sizeof(PacketHeader));
         if (requestPacketHeader->size == sizeof(PacketHeader) + sizeof(BroadcastMessage) + request->messageSize)
         {
-            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->destinationIdentity), *((__m256i*)ownPublicKey))) == 0xFFFFFFFF)
+            if (*((long long*)request->destinationIdentity) == *((long long*)ownPublicKey) && *(((long long*)request->destinationIdentity) + 1) == *(((long long*)ownPublicKey) + 1) && *(((long long*)request->destinationIdentity) + 2) == *(((long long*)ownPublicKey) + 2) && *(((long long*)request->destinationIdentity) + 3) == *(((long long*)ownPublicKey) + 3))
+            //if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->destinationIdentity), *((__m256i*)ownPublicKey))) == 0xFFFFFFFF)
             {
-                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->sourceIdentity), *((__m256i*)adminPublicKey))) == 0xFFFFFFFF)
+                if (*((long long*)request->sourceIdentity) == *((long long*)adminPublicKey) && *(((long long*)request->sourceIdentity) + 1) == *(((long long*)adminPublicKey) + 1) && *(((long long*)request->sourceIdentity) + 2) == *(((long long*)adminPublicKey) + 2) && *(((long long*)request->sourceIdentity) + 3) == *(((long long*)adminPublicKey) + 3))
+                //if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->sourceIdentity), *((__m256i*)adminPublicKey))) == 0xFFFFFFFF)
                 {
                     log(L"Receives a message from Admin.");
                     responsePacketHeader->size = 0;
                 }
                 else
                 {
-                    log(L"Receives a message for self.");
+                    //log(L"Receives a message for self.");
                     responsePacketHeader->size = 0;
                 }
             }
@@ -4225,8 +4231,8 @@ static void transmitCallback(EFI_EVENT Event, void* Context)
 
 static void processorInitializationProcessor(void* ProcedureArgument)
 {
-    __writecr4(__readcr4() | 0x40000);                                            // Enable AVX2
-    _xsetbv(_XCR_XFEATURE_ENABLED_MASK, _xgetbv(_XCR_XFEATURE_ENABLED_MASK) | 6);
+    __writecr4(__readcr4() | 0x40600);
+    _xsetbv(_XCR_XFEATURE_ENABLED_MASK, (_xgetbv(_XCR_XFEATURE_ENABLED_MASK) & 0xFFFB) | 7); // Enable AVX2
 }
 
 static BOOLEAN initialize()
@@ -4318,7 +4324,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.1.0 is launched.");
+    log(L"Qubic 0.1.1 is launched.");
 
     if (initialize())
     {
