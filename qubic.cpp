@@ -3649,8 +3649,6 @@ static void requestProcessor(void* ProcedureArgument)
                 if (*((long long*)request->sourceIdentity) == *((long long*)adminPublicKey) && *(((long long*)request->sourceIdentity) + 1) == *(((long long*)adminPublicKey) + 1) && *(((long long*)request->sourceIdentity) + 2) == *(((long long*)adminPublicKey) + 2) && *(((long long*)request->sourceIdentity) + 3) == *(((long long*)adminPublicKey) + 3))
                 //if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->sourceIdentity), *((__m256i*)adminPublicKey))) == 0xFFFFFFFF)
                 {
-                    log(L"Receives a message from Admin.");
-
                     BroadcastMessage* response = (BroadcastMessage*)((char*)processor->responseBuffer + sizeof(PacketHeader));
                     bs->CopyMem(response->destinationIdentity, request->sourceIdentity, 32);
                     bs->CopyMem(response->sourceIdentity, request->destinationIdentity, 32);
@@ -4334,7 +4332,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.1.2 is launched.");
+    log(L"Qubic 0.1.3 is launched.");
 
     if (initialize())
     {
@@ -4431,7 +4429,15 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 accept();
                             }
 
-                            /**/CHAR16 message[256]; setNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" public peers are known, "); appendNumber(message, MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots, TRUE); appendText(message, L" peers are connected ("); appendNumber(message, received, TRUE); appendText(message, L" rx / "); appendNumber(message, transmitted, TRUE); appendText(message, L" tx)."); log(message);
+                            unsigned int numberOfBusyProcessors = 0;
+                            for (unsigned int i = 0; i < numberOfProcessors; i++)
+                            {
+                                if (processors[i].peer)
+                                {
+                                    numberOfBusyProcessors++;
+                                }
+                            }
+                            /**/CHAR16 message[256]; setText(message, L"["); appendNumber(message, numberOfBusyProcessors * 100 / numberOfProcessors, FALSE); appendText(message, L"% CPU] "); appendNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" known peers, "); appendNumber(message, MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots, TRUE); appendText(message, L" connected peers ("); appendNumber(message, received, TRUE); appendText(message, L" rx / "); appendNumber(message, transmitted, TRUE); appendText(message, L" tx)."); log(message);
                         }
                     }
                 }
