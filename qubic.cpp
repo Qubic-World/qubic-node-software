@@ -11,7 +11,7 @@
 #define ROLE CANDIDATE
 
 // Do NOT share the data of "Private Settings" section with anyone!!!
-static unsigned char ownSeed[55 + 1] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+static unsigned char ownSeed[55 + 1] = "";
 
 static const unsigned char ownAddress[4] = { 0, 0, 0, 0 };
 static const unsigned char ownMask[4] = { 255, 255, 255, 255 };
@@ -27,10 +27,10 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 #define ADMIN "MGEBBBMCLILFBGOBFJCLNBBADELCIBAMGPGMFIDLPIPGIOLOGJAJGNIEAAALEEKFAEDGOH"
 
 static const unsigned char knownPublicPeers[][4] = {
-    { 74, 138, 13, 112 },
-    { 82, 114, 88, 225 },
-    { 93, 125, 10, 240 },
-    { 142, 132, 197, 184 }
+    { ? , ? , ? , ? },
+    { ? , ? , ? , ? },
+    { ? , ? , ? , ? },
+    { ? , ? , ? , ? }
 };
 
 
@@ -3650,7 +3650,17 @@ static void requestProcessor(void* ProcedureArgument)
                 //if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->sourceIdentity), *((__m256i*)adminPublicKey))) == 0xFFFFFFFF)
                 {
                     log(L"Receives a message from Admin.");
-                    responsePacketHeader->size = 0;
+
+                    BroadcastMessage* response = (BroadcastMessage*)((char*)processor->responseBuffer + sizeof(PacketHeader));
+                    bs->CopyMem(response->destinationIdentity, request->sourceIdentity, 32);
+                    bs->CopyMem(response->sourceIdentity, request->destinationIdentity, 32);
+                    response->timestamp = request->timestamp;
+                    response->messageSize = 32;
+                    KangarooTwelve((unsigned char*)response, sizeof(BroadcastMessage) + response->messageSize, (unsigned char*)response + sizeof(BroadcastMessage), response->messageSize);
+
+                    processor->responseTransmittingType = 1;
+                    responsePacketHeader->size = (unsigned short)(sizeof(PacketHeader) + sizeof(BroadcastMessage) + response->messageSize);
+                    responsePacketHeader->requestResponseType = BROADCAST_MESSAGE;
                 }
                 else
                 {
@@ -4324,7 +4334,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.1.1 is launched.");
+    log(L"Qubic 0.1.2 is launched.");
 
     if (initialize())
     {
