@@ -5,10 +5,10 @@
 ////////// Private Settings \\\\\\\\\\
 
 #define COMPUTOR 0
-#define CANDIDATE 1
-#define MINER 2
+#define MINER 1
+#define USER 2
 
-#define ROLE CANDIDATE
+#define ROLE USER
 
 // Do NOT share the data of "Private Settings" section with anyone!!!
 static unsigned char ownSeed[55 + 1] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -32,7 +32,7 @@ static const unsigned char knownPublicPeers[][4] = {
     { ? , ? , ? , ? },
     { ? , ? , ? , ? },
     { ? , ? , ? , ? },
-    { ? , ? , ? , ? },
+    { ? , ? , ? , ? }
 };
 
 
@@ -3433,8 +3433,8 @@ typedef struct
     EFI_TCP4_TRANSMIT_DATA transmitData;
     EFI_TCP4_IO_TOKEN transmitToken;
     EFI_TCP4_CLOSE_TOKEN closeToken;
-    unsigned long long received;
-    unsigned long long transmitted;
+    unsigned long long numberOfReceivedBytes;
+    unsigned long long numberOfTransmittedBytes;
     unsigned int id;
     BOOLEAN isWebSocketClient;
     BOOLEAN exchangedPublicPeers;
@@ -3462,16 +3462,46 @@ typedef struct
 typedef struct
 {
     unsigned short size;
-    unsigned char protocolVersion;
-    unsigned char requestResponseType;
-} PacketHeader;
+    unsigned char protocol;
+    unsigned char type;
+} RequestResponseHeader;
 
-#define PROCESS_WEBSOCKET_CLIENT_COMMAND 0
+#define PROCESS_WEBSOCKET_CLIENT_REQUEST 0
 typedef struct
 {
-    unsigned long long nonce;
-    unsigned char publicKey[32];
-} ProcessWebSocketClientCommand;
+    char type;
+    unsigned long long timestamp;
+} ProcessWebSocketClientRequest;
+
+#define PROCESS_WEBSOCKET_CLIENT_REQUEST_SHUT_NODE_DOWN (-1)
+typedef struct
+{
+    char type;
+    unsigned long long timestamp;
+    unsigned char signature[64];
+} ProcessWebSocketClientRequest_ShutNodeDown_Request;
+
+#define PROCESS_WEBSOCKET_CLIENT_REQUEST_GET_NODE_INFO (-2)
+typedef struct
+{
+    char type;
+    unsigned long long timestamp;
+    unsigned char signature[64];
+} ProcessWebSocketClientRequest_GetNodeInfo_Request;
+typedef struct
+{
+    char type;
+    unsigned char role;
+    short padding;
+    unsigned char ownPublicKey[32];
+    unsigned short numberOfProcessors;
+    unsigned short numberOfBusyProcessors;
+    unsigned long long launchTime;
+    unsigned long long numberOfProcessedRequests;
+    unsigned long long numberOfReceivedBytes;
+    unsigned long long numberOfTransmittedBytes;
+    unsigned int numberOfPeers;
+} ProcessWebSocketClientRequest_GetNodeInfo_Response;
 
 #define EXCHANGE_PUBLIC_PEERS 1
 typedef struct
@@ -3482,51 +3512,53 @@ typedef struct
 #define BROADCAST_MESSAGE 2
 typedef struct
 {
-    unsigned char sourceIdentity[32];
-    unsigned char destinationIdentity[32];
+    unsigned char sourcePublicKey[32];
+    unsigned char destinationPublicKey[32];
     unsigned long long timestamp;
     unsigned long long messageSize;
 } BroadcastMessage;
 
 typedef struct
 {
-    unsigned char signature[64];
-    unsigned char sourceIdentity[32];
-    unsigned char destinationIdentity[32];
+    unsigned char sourcePublicKey[32];
+    unsigned char destinationPublicKey[32];
     unsigned long long energy;
     unsigned long long timestamp;
     long long environment;
     unsigned long long effectSize;
-} Transaction;
+} Transfer;
 
 const unsigned short requestResponseMinSizes[] = {
-    sizeof(PacketHeader) + sizeof(ProcessWebSocketClientCommand),
-    sizeof(PacketHeader) + sizeof(ExchangePublicPeers),
-    sizeof(PacketHeader) + sizeof(BroadcastMessage)
+    sizeof(RequestResponseHeader) + sizeof(ProcessWebSocketClientRequest),
+    sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers),
+    sizeof(RequestResponseHeader) + sizeof(BroadcastMessage)
 };
 
 volatile static int state = 0;
 
+static unsigned long long launchTime = 0;
+
 static unsigned char ownSubseed[32], ownPrivateKey[32], ownPublicKey[32], operatorPublicKey[32], adminPublicKey[32];
-static unsigned int latestOperatorNonce;
+static unsigned long long latestOperatorTimestamp;
 static unsigned int salt;
 
-static unsigned long long frequency;
 volatile static unsigned long long* dejavu0 = NULL;
 volatile static unsigned long long* dejavu1 = NULL;
 
 static EFI_MP_SERVICES_PROTOCOL* mpServicesProtocol;
+static unsigned long long frequency;
 static unsigned int numberOfProcessors = 0;
 static Processor processors[MAX_NUMBER_OF_PROCESSORS];
 static unsigned int latestUsedProcessorIndex = (unsigned int)(-1);
+volatile static long long numberOfProcessedRequests = 0;
 
-volatile static long long received = 0, transmitted = 0;
 static EFI_GUID tcp4ServiceBindingProtocolGuid = EFI_TCP4_SERVICE_BINDING_PROTOCOL_GUID;
 static EFI_SERVICE_BINDING_PROTOCOL* tcp4ServiceBindingProtocol;
 static EFI_GUID tcp4ProtocolGuid = EFI_TCP4_PROTOCOL_GUID;
 static EFI_TCP4_PROTOCOL* tcp4Protocol;
 static Peer peers[MAX_NUMBER_OF_PEERS];
 static unsigned int latestPeerId; // Initial value doesn't matter
+volatile static long long numberOfReceivedBytes = 0, numberOfTransmittedBytes = 0;
 
 static volatile char publicPeersLock = 0;
 static unsigned int numberOfPublicPeers = 0;
@@ -3571,37 +3603,106 @@ static void requestProcessor(void* ProcedureArgument)
     unsigned long long busynessBeginningTick = __rdtsc();
 
     Processor* processor = (Processor*)ProcedureArgument;
-    PacketHeader* requestPacketHeader = (PacketHeader*)processor->requestBuffer;
-    PacketHeader* responsePacketHeader = (PacketHeader*)processor->responseBuffer;
-    switch (requestPacketHeader->requestResponseType)
+    RequestResponseHeader* requestHeader = (RequestResponseHeader*)processor->requestBuffer;
+    RequestResponseHeader* responseHeader = (RequestResponseHeader*)processor->responseBuffer;
+
+    processor->responseTransmittingType = 0;
+    responseHeader->size = 0;
+
+    switch (requestHeader->type)
     {
-    case PROCESS_WEBSOCKET_CLIENT_COMMAND:
+    case PROCESS_WEBSOCKET_CLIENT_REQUEST:
     {
-        ProcessWebSocketClientCommand* request = (ProcessWebSocketClientCommand*)((char*)processor->requestBuffer + sizeof(PacketHeader));
-        switch (request->nonce)
-        {
-        case 0:
-        {
-            //state = 1;
+        responseHeader->type = PROCESS_WEBSOCKET_CLIENT_REQUEST;
 
-            responsePacketHeader->size = 0;
+        ProcessWebSocketClientRequest* request = (ProcessWebSocketClientRequest*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
+        if (request->type < 0)
+        {
+            if (request->timestamp > latestOperatorTimestamp)
+            {
+                switch (request->type)
+                {
+                case PROCESS_WEBSOCKET_CLIENT_REQUEST_SHUT_NODE_DOWN:
+                {
+                    ProcessWebSocketClientRequest_ShutNodeDown_Request* shutNodeDownRequest = (ProcessWebSocketClientRequest_ShutNodeDown_Request*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
+                    unsigned char digest[32];
+                    KangarooTwelve((unsigned char*)shutNodeDownRequest, sizeof(ProcessWebSocketClientRequest_ShutNodeDown_Request) - 64, digest, 32);
+                    if (verify(operatorPublicKey, digest, shutNodeDownRequest->signature))
+                    {
+                        latestOperatorTimestamp = request->timestamp;
+
+                        state = 1;
+                    }
+                }
+                break;
+
+                case PROCESS_WEBSOCKET_CLIENT_REQUEST_GET_NODE_INFO:
+                {
+                    ProcessWebSocketClientRequest_GetNodeInfo_Request* getNodeInfoRequest = (ProcessWebSocketClientRequest_GetNodeInfo_Request*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
+                    unsigned char digest[32];
+                    KangarooTwelve((unsigned char*)getNodeInfoRequest, sizeof(ProcessWebSocketClientRequest_GetNodeInfo_Request) - 64, digest, 32);
+                    if (verify(operatorPublicKey, digest, getNodeInfoRequest->signature))
+                    {
+                        latestOperatorTimestamp = request->timestamp;
+
+                        ProcessWebSocketClientRequest_GetNodeInfo_Response* response = (ProcessWebSocketClientRequest_GetNodeInfo_Response*)((char*)processor->responseBuffer + sizeof(RequestResponseHeader));
+
+                        response->type = PROCESS_WEBSOCKET_CLIENT_REQUEST_GET_NODE_INFO;
+                        response->role = ROLE;
+                        response->padding = 0;
+                        *((__m256i*)response->ownPublicKey) = *((__m256i*)ownPublicKey);
+                        response->numberOfProcessors = numberOfProcessors;
+
+                        response->numberOfBusyProcessors = 0;
+                        for (unsigned int i = 0; i < numberOfProcessors; i++)
+                        {
+                            if (processors[i].peer)
+                            {
+                                response->numberOfBusyProcessors++;
+                            }
+                        }
+
+                        response->launchTime = launchTime;
+                        response->numberOfProcessedRequests = numberOfProcessedRequests;
+                        response->numberOfReceivedBytes = numberOfReceivedBytes;
+                        response->numberOfTransmittedBytes = numberOfTransmittedBytes;
+
+                        response->numberOfPeers = MAX_NUMBER_OF_PEERS;
+                        for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
+                        {
+                            if (!peers[i].tcp4Protocol)
+                            {
+                                response->numberOfPeers--;
+                            }
+                            else
+                            {
+                                if (((unsigned long long)peers[i].tcp4Protocol) == 1)
+                                {
+                                    response->numberOfPeers--;
+                                }
+                                else
+                                {
+                                    if (peers[i].isWebSocketClient)
+                                    {
+                                        response->numberOfPeers--;
+                                    }
+                                }
+                            }
+                        }
+
+                        responseHeader->size = sizeof(RequestResponseHeader) + sizeof(ProcessWebSocketClientRequest_GetNodeInfo_Response);
+                    }
+                }
+                break;
+                }
+            }
         }
-        break;
-
-        case 1:
+        else
         {
-            ProcessWebSocketClientCommand* response = (ProcessWebSocketClientCommand*)((char*)processor->responseBuffer + sizeof(PacketHeader));
-            response->nonce = 0;
-            *((__m256i*)response->publicKey) = *((__m256i*)ownPublicKey);
-
-            processor->responseTransmittingType = 0;
-            responsePacketHeader->size = sizeof(PacketHeader) + sizeof(ProcessWebSocketClientCommand);
-            responsePacketHeader->requestResponseType = PROCESS_WEBSOCKET_CLIENT_COMMAND;
-        }
-        break;
-
-        default:
-            responsePacketHeader->size = 0;
+            switch (request->type)
+            {
+                ///////
+            }
         }
     }
     break;
@@ -3622,22 +3723,17 @@ static void requestProcessor(void* ProcedureArgument)
         {
             processor->peer->exchangedPublicPeers = TRUE;
 
-            ExchangePublicPeers* response = (ExchangePublicPeers*)((char*)processor->responseBuffer + sizeof(PacketHeader));
+            ExchangePublicPeers* response = (ExchangePublicPeers*)((char*)processor->responseBuffer + sizeof(RequestResponseHeader));
             for (unsigned int i = 0; i < MIN_NUMBER_OF_PEERS; i++)
             {
                 *((int*)response->peers[i]) = *((int*)publicPeers[randoms[i] % numberOfPublicPeers].address);
             }
 
-            processor->responseTransmittingType = 0;
-            responsePacketHeader->size = sizeof(PacketHeader) + sizeof(ExchangePublicPeers);
-            responsePacketHeader->requestResponseType = EXCHANGE_PUBLIC_PEERS;
-        }
-        else
-        {
-            responsePacketHeader->size = 0;
+            responseHeader->size = sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers);
+            responseHeader->type = EXCHANGE_PUBLIC_PEERS;
         }
 
-        ExchangePublicPeers* request = (ExchangePublicPeers*)((char*)processor->requestBuffer + sizeof(PacketHeader));
+        ExchangePublicPeers* request = (ExchangePublicPeers*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
         for (unsigned int i = 0; i < MIN_NUMBER_OF_PEERS && numberOfPublicPeers < MAX_NUMBER_OF_PUBLIC_PEERS; i++)
         {
             addPublicPeer(request->peers[i]);
@@ -3649,67 +3745,49 @@ static void requestProcessor(void* ProcedureArgument)
 
     case BROADCAST_MESSAGE:
     {
-        BroadcastMessage* request = (BroadcastMessage*)((char*)processor->requestBuffer + sizeof(PacketHeader));
-        if (requestPacketHeader->size == sizeof(PacketHeader) + sizeof(BroadcastMessage) + request->messageSize)
+        BroadcastMessage* request = (BroadcastMessage*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
+        if (requestHeader->size == sizeof(RequestResponseHeader) + sizeof(BroadcastMessage) + request->messageSize + 64)
         {
             unsigned int saltedId;
 
-            const int tmp = *((int*)requestPacketHeader);
-            *((int*)requestPacketHeader) = salt;
-            KangarooTwelve((unsigned char*)requestPacketHeader, ((PacketHeader*)&tmp)->size, (unsigned char*)&saltedId, sizeof(saltedId));
-            *((int*)requestPacketHeader) = tmp;
+            const int tmp = *((int*)requestHeader);
+            *((int*)requestHeader) = salt;
+            KangarooTwelve((unsigned char*)requestHeader, ((RequestResponseHeader*)&tmp)->size, (unsigned char*)&saltedId, sizeof(saltedId));
+            *((int*)requestHeader) = tmp;
 
             if (!((dejavu0[saltedId >> 6] | dejavu1[saltedId >> 6]) & (((unsigned long long)1) << (saltedId & 63))))
             {
                 dejavu0[saltedId >> 6] |= (((unsigned long long)1) << (saltedId & 63));
 
-                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->destinationIdentity), *((__m256i*)ownPublicKey))) == 0xFFFFFFFF)
+                unsigned char digest[32];
+                KangarooTwelve((unsigned char*)requestHeader, sizeof(BroadcastMessage) + request->messageSize, digest, sizeof(digest));
+                if (verify(request->sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastMessage) + request->messageSize)))
                 {
-                    if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->sourceIdentity), *((__m256i*)adminPublicKey))) == 0xFFFFFFFF)
+                    if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->destinationPublicKey), *((__m256i*)ownPublicKey))) == 0xFFFFFFFF)
                     {
-                        if (request->messageSize >= 16)
+                        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->sourcePublicKey), *((__m256i*)adminPublicKey))) == 0xFFFFFFFF)
                         {
-                            rewardPoints = *((unsigned long long*)(((char*)request) + sizeof(BroadcastMessage)));
-                            totalRewardPoints = *((unsigned long long*)(((char*)request) + sizeof(BroadcastMessage) + 8));
+                            if (request->messageSize >= 16)
+                            {
+                                rewardPoints = *((unsigned long long*)(((char*)request) + sizeof(BroadcastMessage)));
+                                totalRewardPoints = *((unsigned long long*)(((char*)request) + sizeof(BroadcastMessage) + 8));
+                            }
                         }
 
-                        BroadcastMessage* response = (BroadcastMessage*)((char*)processor->responseBuffer + sizeof(PacketHeader));
-                        bs->CopyMem(response->destinationIdentity, request->sourceIdentity, 32);
-                        bs->CopyMem(response->sourceIdentity, request->destinationIdentity, 32);
-                        response->timestamp = request->timestamp;
-                        response->messageSize = 32;
-                        KangarooTwelve((unsigned char*)response, sizeof(BroadcastMessage), (unsigned char*)response + sizeof(BroadcastMessage), response->messageSize);
-
-                        processor->responseTransmittingType = 1;
-                        responsePacketHeader->size = (unsigned short)(sizeof(PacketHeader) + sizeof(BroadcastMessage) + response->messageSize);
-                        responsePacketHeader->requestResponseType = BROADCAST_MESSAGE;
-                    }
-                    else
-                    {
                         //log(L"Receives a message for self.");
-                        responsePacketHeader->size = 0;
                     }
-                }
-                else
-                {
-                    bs->CopyMem(responsePacketHeader, requestPacketHeader, requestPacketHeader->size);
 
+                    bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
                     processor->responseTransmittingType = -1;
                 }
             }
         }
-        else
-        {
-            responsePacketHeader->size = 0;
-        }
     }
     break;
-
-    default:
-        responsePacketHeader->size = 0;
     }
 
     processor->busyness += (__rdtsc() - busynessBeginningTick);
+    _InterlockedIncrement64(&numberOfProcessedRequests);
 }
 
 static void responseCallback(EFI_EVENT Event, void* Context)
@@ -3721,8 +3799,8 @@ static void responseCallback(EFI_EVENT Event, void* Context)
     Processor* processor = (Processor*)Context;
     if (((unsigned long long)processor->peer->tcp4Protocol) > 1 && processor->peerId == processor->peer->id)
     {
-        PacketHeader* packetHeader = (PacketHeader*)processor->responseBuffer;
-        if (packetHeader->size)
+        RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)processor->responseBuffer;
+        if (requestResponseHeader->size)
         {
             if (processor->responseTransmittingType)
             {
@@ -3731,7 +3809,7 @@ static void responseCallback(EFI_EVENT Event, void* Context)
                     if (((unsigned long long)peers[i].tcp4Protocol) > 1 && !peers[i].isWebSocketClient && !peers[i].isTransmitting
                         && (processor->responseTransmittingType > 0 || &peers[i] != processor->peer))
                     {
-                        bs->CopyMem(peers[i].transmitData.FragmentTable[0].FragmentBuffer, processor->responseBuffer, packetHeader->size);
+                        bs->CopyMem(peers[i].transmitData.FragmentTable[0].FragmentBuffer, processor->responseBuffer, requestResponseHeader->size);
                         transmit(&peers[i]);
                     }
                 }
@@ -3924,8 +4002,8 @@ static BOOLEAN accept()
     {
         peers[freePeerSlot].tcp4Protocol = (EFI_TCP4_PROTOCOL*)1;
         peers[freePeerSlot].acceptToken.NewChildHandle = NULL;
-        peers[freePeerSlot].received = 0;
-        peers[freePeerSlot].transmitted = 0;
+        peers[freePeerSlot].numberOfReceivedBytes = 0;
+        peers[freePeerSlot].numberOfTransmittedBytes = 0;
         bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, acceptCallback, &peers[freePeerSlot], &peers[freePeerSlot].acceptToken.CompletionToken.Event);
         EFI_STATUS status;
         if (status = tcp4Protocol->Accept(tcp4Protocol, &peers[freePeerSlot].acceptToken))
@@ -3962,8 +4040,8 @@ static void connect(unsigned char* address)
             peers[freePeerSlot].tcp4Protocol = tcp4Protocol;
             peers[freePeerSlot].acceptToken.NewChildHandle = NULL;
             peers[freePeerSlot].connectChildHandle = childHandle;
-            peers[freePeerSlot].received = 0;
-            peers[freePeerSlot].transmitted = 0;
+            peers[freePeerSlot].numberOfReceivedBytes = 0;
+            peers[freePeerSlot].numberOfTransmittedBytes = 0;
             bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, connectCallback, &peers[freePeerSlot], &peers[freePeerSlot].connectToken.CompletionToken.Event);
             EFI_STATUS status;
             if (status = peers[freePeerSlot].tcp4Protocol->Connect(peers[freePeerSlot].tcp4Protocol, &peers[freePeerSlot].connectToken))
@@ -4055,11 +4133,11 @@ static void transmit(Peer* peer)
     EFI_STATUS status;
     bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, transmitCallback, peer, &peer->transmitToken.CompletionToken.Event);
 
-    int size = ((PacketHeader*)peer->transmitData.FragmentTable[0].FragmentBuffer)->size;
+    int size = ((RequestResponseHeader*)peer->transmitData.FragmentTable[0].FragmentBuffer)->size;
 
     if (peer->isWebSocketClient)
     {
-        if (((PacketHeader*)peer->transmitData.FragmentTable[0].FragmentBuffer)->size <= 125)
+        if (((RequestResponseHeader*)peer->transmitData.FragmentTable[0].FragmentBuffer)->size <= 125)
         {
             bs->CopyMem(((char*)peer->transmitData.FragmentTable[0].FragmentBuffer) + 2, peer->transmitData.FragmentTable[0].FragmentBuffer, size);
             ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[1] = size;
@@ -4133,7 +4211,7 @@ static void connectCallback(EFI_EVENT Event, void* Context)
         peer->isWebSocketClient = FALSE;
         peer->exchangedPublicPeers = TRUE;
 
-        ExchangePublicPeers* request = (ExchangePublicPeers*)((char*)peer->transmitData.FragmentTable[0].FragmentBuffer + sizeof(PacketHeader));
+        ExchangePublicPeers* request = (ExchangePublicPeers*)((char*)peer->transmitData.FragmentTable[0].FragmentBuffer + sizeof(RequestResponseHeader));
         unsigned int i;
         if (*((int*)ownPublicAddress))
         {
@@ -4155,9 +4233,9 @@ static void connectCallback(EFI_EVENT Event, void* Context)
         }
         publicPeersLock = 0;
 
-        PacketHeader* packetHeader = (PacketHeader*)peer->transmitData.FragmentTable[0].FragmentBuffer;
-        packetHeader->size = sizeof(PacketHeader) + sizeof(ExchangePublicPeers);
-        packetHeader->requestResponseType = EXCHANGE_PUBLIC_PEERS;
+        RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peer->transmitData.FragmentTable[0].FragmentBuffer;
+        requestResponseHeader->size = sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers);
+        requestResponseHeader->type = EXCHANGE_PUBLIC_PEERS;
         transmit(peer);
 
         peer->receiveData.FragmentTable[0].FragmentBuffer = peer->receiveBuffer;
@@ -4193,9 +4271,9 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
     }
     else
     {
-        received += peer->receiveData.DataLength;
+        numberOfReceivedBytes += peer->receiveData.DataLength;
         *((unsigned long long*) & peer->receiveData.FragmentTable[0].FragmentBuffer) += peer->receiveData.DataLength;
-        peer->received += peer->receiveData.DataLength;
+        peer->numberOfReceivedBytes += peer->receiveData.DataLength;
         
     theOnlyGotoLabel:
         unsigned int receivedDataSize = (unsigned int)((unsigned long long)peer->receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peer->receiveBuffer);
@@ -4226,11 +4304,11 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                     }
 
                     unsigned int ptr = ((size <= 125) ? 2 : 4) + (((char*)peer->receiveBuffer)[1] < 0 ? 4 : 0);
-                    PacketHeader* packetHeader = (PacketHeader*)&((char*)peer->receiveBuffer)[ptr];
-                    if (packetHeader->protocolVersion != PROTOCOL
-                        || packetHeader->requestResponseType >= sizeof(requestResponseMinSizes) / sizeof(requestResponseMinSizes[0])
-                        || packetHeader->size < requestResponseMinSizes[packetHeader->requestResponseType]
-                        || receivedDataSize < ptr + packetHeader->size)
+                    RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)&((char*)peer->receiveBuffer)[ptr];
+                    if (requestResponseHeader->protocol != PROTOCOL
+                        || requestResponseHeader->type >= sizeof(requestResponseMinSizes) / sizeof(requestResponseMinSizes[0])
+                        || requestResponseHeader->size < requestResponseMinSizes[requestResponseHeader->type]
+                        || receivedDataSize < ptr + requestResponseHeader->size)
                     {
                         close(peer);
                     }
@@ -4249,12 +4327,12 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                                 processors[latestUsedProcessorIndex].peer = peer;
                                 processors[latestUsedProcessorIndex].peerId = peer->id;
 
-                                bs->CopyMem(processors[latestUsedProcessorIndex].requestBuffer, &((char*)peer->receiveBuffer)[ptr], packetHeader->size);
+                                bs->CopyMem(processors[latestUsedProcessorIndex].requestBuffer, &((char*)peer->receiveBuffer)[ptr], requestResponseHeader->size);
 
                                 bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, responseCallback, &processors[latestUsedProcessorIndex], &processors[latestUsedProcessorIndex].event);
                                 mpServicesProtocol->StartupThisAP(mpServicesProtocol, requestProcessor, processors[latestUsedProcessorIndex].number, processors[latestUsedProcessorIndex].event, 0, &processors[latestUsedProcessorIndex], NULL);
 
-                                bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + ptr + packetHeader->size, receivedDataSize -= (ptr + packetHeader->size));
+                                bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + ptr + requestResponseHeader->size, receivedDataSize -= (ptr + requestResponseHeader->size));
                                 peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + receivedDataSize;
 
                                 goto theOnlyGotoLabel;
@@ -4268,7 +4346,7 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
         }
         else
         {
-            if (peer->received == peer->receiveData.DataLength
+            if (peer->numberOfReceivedBytes == peer->receiveData.DataLength
                 && receivedDataSize >= 20 && *((unsigned long long*)peer->receiveBuffer) == 0x5448202F20544547 // "GET / HT"
                 && receivedDataSize <= BUFFER_SIZE - 1024)
             {
@@ -4527,22 +4605,22 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
             }
             else
             {
-                if (receivedDataSize < sizeof(PacketHeader))
+                if (receivedDataSize < sizeof(RequestResponseHeader))
                 {
                     receive(peer);
                 }
                 else
                 {
-                    PacketHeader* packetHeader = (PacketHeader*)peer->receiveBuffer;
-                    if (packetHeader->protocolVersion != PROTOCOL
-                        || packetHeader->requestResponseType >= sizeof(requestResponseMinSizes) / sizeof(requestResponseMinSizes[0])
-                        || packetHeader->size < requestResponseMinSizes[packetHeader->requestResponseType])
+                    RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peer->receiveBuffer;
+                    if (requestResponseHeader->protocol != PROTOCOL
+                        || requestResponseHeader->type >= sizeof(requestResponseMinSizes) / sizeof(requestResponseMinSizes[0])
+                        || requestResponseHeader->size < requestResponseMinSizes[requestResponseHeader->type])
                     {
                         close(peer);
                     }
                     else
                     {
-                        if (receivedDataSize >= packetHeader->size)
+                        if (receivedDataSize >= requestResponseHeader->size)
                         {
                             int counter = numberOfProcessors;
                             while (counter-- > 0)
@@ -4556,7 +4634,7 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                                 {
                                     processors[latestUsedProcessorIndex].peer = peer;
                                     processors[latestUsedProcessorIndex].peerId = peer->id;
-                                    if (receivedDataSize == packetHeader->size)
+                                    if (receivedDataSize == requestResponseHeader->size)
                                     {
                                         void* tmp = processors[latestUsedProcessorIndex].requestBuffer;
                                         processors[latestUsedProcessorIndex].requestBuffer = peer->receiveBuffer;
@@ -4568,12 +4646,12 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                                     }
                                     else
                                     {
-                                        bs->CopyMem(processors[latestUsedProcessorIndex].requestBuffer, peer->receiveBuffer, packetHeader->size);
+                                        bs->CopyMem(processors[latestUsedProcessorIndex].requestBuffer, peer->receiveBuffer, requestResponseHeader->size);
 
                                         bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, responseCallback, &processors[latestUsedProcessorIndex], &processors[latestUsedProcessorIndex].event);
                                         mpServicesProtocol->StartupThisAP(mpServicesProtocol, requestProcessor, processors[latestUsedProcessorIndex].number, processors[latestUsedProcessorIndex].event, 0, &processors[latestUsedProcessorIndex], NULL);
 
-                                        bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + packetHeader->size, receivedDataSize -= packetHeader->size);
+                                        bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + requestResponseHeader->size, receivedDataSize -= requestResponseHeader->size);
                                         peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + receivedDataSize;
                                     }
 
@@ -4601,8 +4679,8 @@ static void transmitCallback(EFI_EVENT Event, void* Context)
     }
     else
     {
-        transmitted += peer->transmitData.DataLength;
-        peer->transmitted += peer->transmitData.DataLength;
+        numberOfTransmittedBytes += peer->transmitData.DataLength;
+        peer->numberOfTransmittedBytes += peer->transmitData.DataLength;
         peer->isTransmitting = FALSE;
     }
 }
@@ -4627,7 +4705,7 @@ static BOOLEAN initialize()
     getPublicKeyFromIdentity((const unsigned char*)ADMIN, adminPublicKey);
     EFI_TIME time;
     rs->GetTime(&time, NULL);
-    latestOperatorNonce = (((((time.Year - 2001) * 12 + (time.Month - 1)) * 31 + (time.Day - 1)) * 24 + time.Hour) * 60 + time.Minute) * 60 + time.Second;
+    latestOperatorTimestamp = launchTime = (((((time.Year - 2001) * 12 + (time.Month - 1)) * 31 + (time.Day - 1)) * 24 + time.Hour) * 60 + time.Minute) * 60 + time.Second;
     _rdrand32_step(&salt);
 
     frequency = __rdtsc();
@@ -4665,7 +4743,7 @@ static BOOLEAN initialize()
 
             return FALSE;
         }
-        ((PacketHeader*)peers[peerIndex].transmitData.FragmentTable[0].FragmentBuffer)->protocolVersion = PROTOCOL;
+        ((RequestResponseHeader*)peers[peerIndex].transmitData.FragmentTable[0].FragmentBuffer)->protocol = PROTOCOL;
         peers[peerIndex].receiveToken.Packet.RxData = &peers[peerIndex].receiveData;
         peers[peerIndex].transmitToken.Packet.TxData = &peers[peerIndex].transmitData;
         peers[peerIndex].closeToken.AbortOnClose = TRUE;
@@ -4732,7 +4810,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.1.6 is launched.");
+    log(L"Qubic 0.1.7 is launched.");
 
     if (initialize())
     {
@@ -4763,7 +4841,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                     break;
                 }
-                ((PacketHeader*)processors[numberOfProcessors].responseBuffer)->protocolVersion = PROTOCOL;
+                ((RequestResponseHeader*)processors[numberOfProcessors].responseBuffer)->protocol = PROTOCOL;
                 processors[numberOfProcessors++].number = i;
             }
         }
@@ -4796,23 +4874,21 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             connect(publicPeers[i].address);
                         }
 
-                        unsigned long long previousDejavuSwapTime = 0;
+                        unsigned long long prevDejavuSwapTime = 0;
+                        /**/unsigned long long prevRewardDisplayTime = 0;
                         while (!state)
                         {
-                            if (__rdtsc() - previousDejavuSwapTime >= DEJAVU_SWAP_PERIOD * frequency)
+                            if (__rdtsc() - prevDejavuSwapTime >= DEJAVU_SWAP_PERIOD * frequency)
                             {
                                 volatile unsigned long long* tmp = dejavu1;
                                 dejavu1 = dejavu0;
                                 bs->SetMem((void*)tmp, 536870912, 0);
                                 dejavu0 = tmp;
 
-                                previousDejavuSwapTime = __rdtsc();
+                                prevDejavuSwapTime = __rdtsc();
                             }
 
-                            bs->Stall(1000000);
-
                             bs->RaiseTPL(TPL_NOTIFY);
-
                             unsigned int numberOfFreePeerSlots = 0, numberOfAcceptingPeerSlots = 0, numberOfWebSocketClients = 0;
                             for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
                             {
@@ -4835,27 +4911,68 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     }
                                 }
                             }
-
                             bs->RestoreTPL(TPL_APPLICATION);
 
                             if (MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots - numberOfWebSocketClients < MIN_NUMBER_OF_PEERS)
                             {
                                 connectToAnyPublicPeer();
                             }
-                            if (numberOfAcceptingPeerSlots == 0 && numberOfFreePeerSlots > 0)
+                            if (!numberOfAcceptingPeerSlots && numberOfFreePeerSlots)
                             {
                                 accept();
                             }
 
-                            unsigned int numberOfBusyProcessors = 0;
-                            for (unsigned int i = 0; i < numberOfProcessors; i++)
+                            if (__rdtsc() - prevRewardDisplayTime >= frequency)
                             {
-                                if (processors[i].peer)
+                                unsigned int numberOfBusyProcessors = 0;
+                                for (unsigned int i = 0; i < numberOfProcessors; i++)
                                 {
-                                    numberOfBusyProcessors++;
+                                    if (processors[i].peer)
+                                    {
+                                        numberOfBusyProcessors++;
+                                    }
+                                }
+                                CHAR16 message[256]; setText(message, L"Reward points = "); appendNumber(message, rewardPoints, TRUE); appendText(message, L"/"); appendNumber(message, totalRewardPoints, TRUE); appendText(message, L" | ["); appendNumber(message, numberOfBusyProcessors * 100 / numberOfProcessors, FALSE); appendText(message, L"% CPU / "); appendNumber(message, numberOfProcessedRequests, TRUE); appendText(message, L"] "); appendNumber(message, MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots - numberOfWebSocketClients, TRUE); appendText(message, L"/"); appendNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" peers ("); appendNumber(message, numberOfReceivedBytes, TRUE); appendText(message, L" rx / "); appendNumber(message, numberOfTransmittedBytes, TRUE); appendText(message, L" tx)."); log(message);
+
+                                prevRewardDisplayTime = __rdtsc();
+                            }
+
+                            {
+                                unsigned char buffer[1024];
+                                RequestResponseHeader* header = (RequestResponseHeader*)buffer;
+                                BroadcastMessage* request = (BroadcastMessage*)&buffer[sizeof(RequestResponseHeader)];
+                                header->size = sizeof(RequestResponseHeader) + sizeof(BroadcastMessage) + 64;
+                                header->protocol = PROTOCOL;
+                                header->type = BROADCAST_MESSAGE;
+                                *((__m256i*)request->sourcePublicKey) = *((__m256i*)ownPublicKey);
+                                *((__m256i*)request->destinationPublicKey) = *((__m256i*)adminPublicKey);
+
+                                EFI_TIME time;
+                                rs->GetTime(&time, NULL);
+                                request->timestamp = (((((time.Year - 2001) * 12 + (time.Month - 1)) * 31 + (time.Day - 1)) * 24 + time.Hour) * 60 + time.Minute) * 60 + time.Second;
+
+                                request->messageSize = 0;
+
+                                unsigned char digest[32];
+                                KangarooTwelve(buffer, sizeof(RequestResponseHeader) + sizeof(BroadcastMessage), digest, sizeof(digest));
+                                sign(ownSubseed, ownPublicKey, digest, &buffer[sizeof(RequestResponseHeader) + sizeof(BroadcastMessage)]);
+
+                                for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
+                                {
+                                    if (((unsigned long long)peers[i].tcp4Protocol) > 1 && !peers[i].isWebSocketClient)
+                                    {
+                                        bs->RaiseTPL(TPL_NOTIFY);
+
+                                        if (!peers[i].isTransmitting)
+                                        {
+                                            bs->CopyMem(peers[i].transmitData.FragmentTable[0].FragmentBuffer, buffer, header->size);
+                                            transmit(&peers[i]);
+                                        }
+
+                                        bs->RestoreTPL(TPL_APPLICATION);
+                                    }
                                 }
                             }
-                            /**/CHAR16 message[256]; setText(message, L"Reward points = "); appendNumber(message, rewardPoints, TRUE); appendText(message, L"/"); appendNumber(message, totalRewardPoints, TRUE); appendText(message, L" | ["); appendNumber(message, numberOfBusyProcessors * 100 / numberOfProcessors, FALSE); appendText(message, L"% CPU] "); appendNumber(message, MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots - numberOfWebSocketClients, TRUE); appendText(message, L"/"); appendNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" peers ("); appendNumber(message, received, TRUE); appendText(message, L" rx / "); appendNumber(message, transmitted, TRUE); appendText(message, L" tx)."); log(message);
                         }
                     }
                 }
