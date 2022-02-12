@@ -3416,8 +3416,10 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define MAX_NUMBER_OF_PEERS 1000
 #define MAX_NUMBER_OF_PROCESSORS 1024
 #define MAX_NUMBER_OF_PUBLIC_PEERS 16
+#define MIN_ENERGY_AMOUNT 1000000
 #define MIN_NUMBER_OF_PEERS 4
 #define NUMBER_OF_COMPUTORS (26 * 26)
+#define PEER_RATING_PERIOD 5
 #define PORT 21841
 #define PROTOCOL 1
 
@@ -3433,8 +3435,8 @@ typedef struct
     EFI_TCP4_TRANSMIT_DATA transmitData;
     EFI_TCP4_IO_TOKEN transmitToken;
     EFI_TCP4_CLOSE_TOKEN closeToken;
-    unsigned long long numberOfReceivedBytes;
-    unsigned long long numberOfTransmittedBytes;
+    unsigned long long numberOfReceivedBytes, prevNumberOfReceivedBytes;
+    unsigned long long numberOfTransmittedBytes, prevNumberOfTransmittedBytes;
     unsigned int id;
     char type;
     BOOLEAN exchangedPublicPeers;
@@ -3518,7 +3520,26 @@ typedef struct
     unsigned long long messageSize;
 } BroadcastMessage;
 
-#define BROADCAST_COMPUTOR_STATE 3
+#define BROADCAST_TRANSFER 3
+typedef struct
+{
+    unsigned char sourcePublicKey[32];
+    unsigned char destinationPublicKey[32];
+    unsigned long long timestamp;
+    unsigned long long amount;
+    unsigned char signature[64];
+} BroadcastTransfer;
+
+#define BROADCAST_EFFECT 4
+typedef struct
+{
+    unsigned char sourcePublicKey[32];
+    unsigned char environment[32];
+    unsigned long long timestamp;
+    unsigned long long effectSize;
+} BroadcastEffect;
+
+#define BROADCAST_COMPUTOR_STATE 5
 typedef struct
 {
     unsigned short computorIndex;
@@ -3526,22 +3547,16 @@ typedef struct
     unsigned int tick;
     unsigned long long timestamp;
     unsigned char computorPublicKeys[NUMBER_OF_COMPUTORS][32];
+    unsigned char signature[64];
 } BroadcastComputorState;
-
-typedef struct
-{
-    unsigned char sourcePublicKey[32];
-    unsigned char destinationPublicKey[32];
-    unsigned long long energy;
-    unsigned long long timestamp;
-    long long environment;
-    unsigned long long effectSize;
-} Transfer;
 
 const unsigned short requestResponseMinSizes[] = {
     sizeof(RequestResponseHeader) + sizeof(ProcessWebSocketClientRequest),
     sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers),
-    sizeof(RequestResponseHeader) + sizeof(BroadcastMessage)
+    sizeof(RequestResponseHeader) + sizeof(BroadcastMessage) + 64,
+    sizeof(RequestResponseHeader) + sizeof(BroadcastTransfer),
+    sizeof(RequestResponseHeader) + sizeof(BroadcastEffect) + 64,
+    sizeof(RequestResponseHeader) + sizeof(BroadcastComputorState)
 };
 
 volatile static int state = 0;
@@ -3552,6 +3567,9 @@ static unsigned char ownSubseed[32], ownPrivateKey[32], ownPublicKey[32], operat
 const static unsigned char nullPublicKey[32] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 static unsigned long long latestOperatorTimestamp;
 static unsigned int salt;
+
+volatile static char latestComputorStatesLock = 0;
+static BroadcastComputorState latestComputorStates[NUMBER_OF_COMPUTORS + 1];
 
 volatile static unsigned long long* dejavu0 = NULL;
 volatile static unsigned long long* dejavu1 = NULL;
@@ -3571,7 +3589,7 @@ static Peer peers[MAX_NUMBER_OF_PEERS];
 static unsigned int latestPeerId; // Initial value doesn't matter
 volatile static long long numberOfReceivedBytes = 0, numberOfTransmittedBytes = 0;
 
-static volatile char publicPeersLock = 0;
+volatile static char publicPeersLock = 0;
 static unsigned int numberOfPublicPeers = 0;
 static PublicPeer publicPeers[MAX_NUMBER_OF_PUBLIC_PEERS];
 static unsigned long long totalRatingOfPublicPeers = 0;
@@ -3795,6 +3813,109 @@ static void requestProcessor(void* ProcedureArgument)
         }
     }
     break;
+
+    case BROADCAST_TRANSFER:
+    {
+        BroadcastTransfer* request = (BroadcastTransfer*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
+        if (request->amount >= MIN_ENERGY_AMOUNT)
+        {
+            unsigned int saltedId;
+
+            const int tmp = *((int*)requestHeader);
+            *((int*)requestHeader) = salt;
+            KangarooTwelve((unsigned char*)requestHeader, ((RequestResponseHeader*)&tmp)->size, (unsigned char*)&saltedId, sizeof(saltedId));
+            *((int*)requestHeader) = tmp;
+
+            if (!((dejavu0[saltedId >> 6] | dejavu1[saltedId >> 6]) & (((unsigned long long)1) << (saltedId & 63))))
+            {
+                dejavu0[saltedId >> 6] |= (((unsigned long long)1) << (saltedId & 63));
+
+                unsigned char digest[32];
+                request->sourcePublicKey[0] ^= 1;
+                KangarooTwelve((unsigned char*)request, sizeof(BroadcastTransfer) - 64, digest, sizeof(digest));
+                request->sourcePublicKey[0] ^= 1;
+                if (verify(request->sourcePublicKey, digest, request->signature))
+                {
+                    bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
+                    processor->responseTransmittingType = -1;
+                }
+            }
+        }
+    }
+    break;
+
+    case BROADCAST_EFFECT:
+    {
+        BroadcastEffect* request = (BroadcastEffect*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
+        if (requestHeader->size == sizeof(RequestResponseHeader) + sizeof(BroadcastEffect) + request->effectSize + 64)
+        {
+            unsigned int saltedId;
+
+            const int tmp = *((int*)requestHeader);
+            *((int*)requestHeader) = salt;
+            KangarooTwelve((unsigned char*)requestHeader, ((RequestResponseHeader*)&tmp)->size, (unsigned char*)&saltedId, sizeof(saltedId));
+            *((int*)requestHeader) = tmp;
+
+            if (!((dejavu0[saltedId >> 6] | dejavu1[saltedId >> 6]) & (((unsigned long long)1) << (saltedId & 63))))
+            {
+                dejavu0[saltedId >> 6] |= (((unsigned long long)1) << (saltedId & 63));
+
+                unsigned char digest[32];
+                request->sourcePublicKey[0] ^= 2;
+                KangarooTwelve((unsigned char*)request, sizeof(BroadcastEffect) + request->effectSize, digest, sizeof(digest));
+                request->sourcePublicKey[0] ^= 2;
+                if (verify(request->sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastEffect) + request->effectSize)))
+                {
+                    bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
+                    processor->responseTransmittingType = -1;
+                }
+            }
+        }
+    }
+    break;
+
+    case BROADCAST_COMPUTOR_STATE:
+    {
+        BroadcastComputorState* request = (BroadcastComputorState*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
+
+        while (_InterlockedCompareExchange8(&latestComputorStatesLock, 1, 0))
+        {
+        }
+
+        if (request->computorIndex < NUMBER_OF_COMPUTORS)
+        {
+            if (request->timestamp > latestComputorStates[request->computorIndex].timestamp && latestComputorStates[NUMBER_OF_COMPUTORS].timestamp)
+            {
+                unsigned char digest[32];
+                KangarooTwelve((unsigned char*)request, sizeof(BroadcastComputorState) - 64, digest, sizeof(digest));
+                if (verify(latestComputorStates[NUMBER_OF_COMPUTORS].computorPublicKeys[request->computorIndex], digest, request->signature))
+                {
+                    bs->CopyMem(&latestComputorStates[request->computorIndex], request, sizeof(BroadcastComputorState));
+
+                    bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
+                    processor->responseTransmittingType = -1;
+                }
+            }
+        }
+        else
+        {
+            if (request->timestamp > latestComputorStates[NUMBER_OF_COMPUTORS].timestamp)
+            {
+                unsigned char digest[32];
+                KangarooTwelve((unsigned char*)request, sizeof(BroadcastComputorState) - 64, digest, sizeof(digest));
+                if (verify(adminPublicKey, digest, request->signature))
+                {
+                    bs->CopyMem(&latestComputorStates[NUMBER_OF_COMPUTORS], request, sizeof(BroadcastComputorState));
+
+                    bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
+                    processor->responseTransmittingType = -1;
+                }
+            }
+        }
+
+        latestComputorStatesLock = 0;
+    }
+    break;
     }
 
     processor->busyness += (__rdtsc() - busynessBeginningTick);
@@ -4013,8 +4134,8 @@ static BOOLEAN accept()
     {
         peers[freePeerSlot].tcp4Protocol = (EFI_TCP4_PROTOCOL*)1;
         peers[freePeerSlot].acceptToken.NewChildHandle = NULL;
-        peers[freePeerSlot].numberOfReceivedBytes = 0;
-        peers[freePeerSlot].numberOfTransmittedBytes = 0;
+        peers[freePeerSlot].prevNumberOfReceivedBytes = peers[freePeerSlot].numberOfReceivedBytes = 0;
+        peers[freePeerSlot].prevNumberOfTransmittedBytes = peers[freePeerSlot].numberOfTransmittedBytes = 0;
         bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, acceptCallback, &peers[freePeerSlot], &peers[freePeerSlot].acceptToken.CompletionToken.Event);
         EFI_STATUS status;
         if (status = tcp4Protocol->Accept(tcp4Protocol, &peers[freePeerSlot].acceptToken))
@@ -4051,8 +4172,8 @@ static void connect(unsigned char* address)
             peers[freePeerSlot].tcp4Protocol = tcp4Protocol;
             peers[freePeerSlot].acceptToken.NewChildHandle = NULL;
             peers[freePeerSlot].connectChildHandle = childHandle;
-            peers[freePeerSlot].numberOfReceivedBytes = 0;
-            peers[freePeerSlot].numberOfTransmittedBytes = 0;
+            peers[freePeerSlot].prevNumberOfReceivedBytes = peers[freePeerSlot].numberOfReceivedBytes = 0;
+            peers[freePeerSlot].prevNumberOfTransmittedBytes = peers[freePeerSlot].numberOfTransmittedBytes = 0;
             bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, connectCallback, &peers[freePeerSlot], &peers[freePeerSlot].connectToken.CompletionToken.Event);
             EFI_STATUS status;
             if (status = peers[freePeerSlot].tcp4Protocol->Connect(peers[freePeerSlot].tcp4Protocol, &peers[freePeerSlot].connectToken))
@@ -4284,6 +4405,7 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
     {
         numberOfReceivedBytes += peer->receiveData.DataLength;
         *((unsigned long long*) & peer->receiveData.FragmentTable[0].FragmentBuffer) += peer->receiveData.DataLength;
+        peer->prevNumberOfReceivedBytes = peer->numberOfReceivedBytes;
         peer->numberOfReceivedBytes += peer->receiveData.DataLength;
         
     theOnlyGotoLabel:
@@ -4696,6 +4818,7 @@ static void transmitCallback(EFI_EVENT Event, void* Context)
     else
     {
         numberOfTransmittedBytes += peer->transmitData.DataLength;
+        peer->prevNumberOfTransmittedBytes = peer->numberOfTransmittedBytes;
         peer->numberOfTransmittedBytes += peer->transmitData.DataLength;
         peer->isTransmitting = FALSE;
     }
@@ -4733,6 +4856,7 @@ static BOOLEAN initialize()
     appendText(message, L" Hz.");
     log(message);
 
+    bs->SetMem(latestComputorStates, sizeof(latestComputorStates), 0);
     bs->SetMem(processors, sizeof(processors), 0);
     bs->SetMem(peers, sizeof(peers), 0);
     bs->SetMem(publicPeers, sizeof(publicPeers), 0);
@@ -4826,7 +4950,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.1.8 is launched.");
+    log(L"Qubic 0.1.9 is launched.");
 
     if (initialize())
     {
@@ -4891,6 +5015,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                         }
 
                         unsigned long long prevDejavuSwapTime = 0;
+                        unsigned long long prevPeerRatingTime = 0;
                         /**/unsigned long long prevRewardDisplayTime = 0;
                         while (!state)
                         {
@@ -4902,6 +5027,32 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 dejavu0 = tmp;
 
                                 prevDejavuSwapTime = __rdtsc();
+                            }
+
+                            if (__rdtsc() - prevPeerRatingTime >= PEER_RATING_PERIOD * frequency)
+                            {
+                                int worstPeerIndex = -1;
+                                unsigned long long worstPeerReceivedBytesDelta = 0xFFFFFFFFFFFFFFFF;
+
+                                for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
+                                {
+                                    if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type > 0)
+                                    {
+                                        unsigned long long delta = peers[i].numberOfReceivedBytes - peers[i].prevNumberOfReceivedBytes;
+                                        if (delta < worstPeerReceivedBytesDelta)
+                                        {
+                                            worstPeerIndex = i;
+                                            worstPeerReceivedBytesDelta = delta;
+                                        }
+                                    }
+                                }
+
+                                if (worstPeerIndex >= 0)
+                                {
+                                    close(&peers[worstPeerIndex]);
+                                }
+
+                                prevPeerRatingTime = __rdtsc();
                             }
 
                             bs->RaiseTPL(TPL_NOTIFY);
