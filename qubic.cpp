@@ -32,7 +32,7 @@ static const unsigned char knownPublicPeers[][4] = {
     { ? , ? , ? , ? },
     { ? , ? , ? , ? },
     { ? , ? , ? , ? },
-    { ? , ? , ? , ? }
+    { ? , ? , ? , ? },
 };
 
 
@@ -3412,8 +3412,9 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 ////////// Qubic \\\\\\\\\\
 
 #define BUFFER_SIZE (65536 + 8)
+#define DATA_TO_TRANSMIT_BUFFER_SIZE 1048576
 #define DEJAVU_SWAP_PERIOD 30
-#define MAX_NUMBER_OF_PEERS 1000
+#define MAX_NUMBER_OF_PEERS 64
 #define MAX_NUMBER_OF_PROCESSORS 1024
 #define MAX_NUMBER_OF_PUBLIC_PEERS 16
 #define MIN_ENERGY_AMOUNT 1000000
@@ -3434,6 +3435,8 @@ typedef struct
     EFI_TCP4_IO_TOKEN receiveToken;
     EFI_TCP4_TRANSMIT_DATA transmitData;
     EFI_TCP4_IO_TOKEN transmitToken;
+    char* dataToTransmit;
+    unsigned int dataToTransmitSize;
     EFI_TCP4_CLOSE_TOKEN closeToken;
     unsigned long long numberOfReceivedBytes, prevNumberOfReceivedBytes;
     unsigned long long numberOfTransmittedBytes, prevNumberOfTransmittedBytes;
@@ -3931,24 +3934,43 @@ static void responseCallback(EFI_EVENT Event, void* Context)
     Processor* processor = (Processor*)Context;
     if (((unsigned long long)processor->peer->tcp4Protocol) > 1 && processor->peerId == processor->peer->id)
     {
-        RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)processor->responseBuffer;
-        if (requestResponseHeader->size)
+        RequestResponseHeader* responseHeader = (RequestResponseHeader*)processor->responseBuffer;
+        if (responseHeader->size)
         {
             if (processor->responseTransmittingType)
             {
                 for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
                 {
-                    if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type > 0 && !peers[i].isTransmitting
+                    if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type > 0
                         && (processor->responseTransmittingType > 0 || &peers[i] != processor->peer))
                     {
-                        bs->CopyMem(peers[i].transmitData.FragmentTable[0].FragmentBuffer, processor->responseBuffer, requestResponseHeader->size);
-                        transmit(&peers[i]);
+                        if (peers[i].isTransmitting)
+                        {
+                            if (peers[i].dataToTransmitSize <= DATA_TO_TRANSMIT_BUFFER_SIZE - responseHeader->size)
+                            {
+                                bs->CopyMem(&peers[i].dataToTransmit[peers[i].dataToTransmitSize], processor->responseBuffer, responseHeader->size);
+                                peers[i].dataToTransmitSize += responseHeader->size;
+                            }
+                        }
+                        else
+                        {
+                            bs->CopyMem(peers[i].transmitData.FragmentTable[0].FragmentBuffer, processor->responseBuffer, responseHeader->size);
+                            transmit(&peers[i]);
+                        }
                     }
                 }
             }
             else
             {
-                if (!processor->peer->isTransmitting)
+                if (processor->peer->isTransmitting)
+                {
+                    if (processor->peer->dataToTransmitSize <= DATA_TO_TRANSMIT_BUFFER_SIZE - responseHeader->size)
+                    {
+                        bs->CopyMem(&processor->peer->dataToTransmit[processor->peer->dataToTransmitSize], processor->responseBuffer, responseHeader->size);
+                        processor->peer->dataToTransmitSize += responseHeader->size;
+                    }
+                }
+                else
                 {
                     void* tmp = processor->responseBuffer;
                     processor->responseBuffer = processor->peer->transmitData.FragmentTable[0].FragmentBuffer;
@@ -4318,6 +4340,7 @@ static void acceptCallback(EFI_EVENT Event, void* Context)
         {
             peer->id = ++latestPeerId;
             peer->receiveData.FragmentTable[0].FragmentBuffer = peer->receiveBuffer;
+            peer->dataToTransmitSize = 0;
             peer->type = 0;
             peer->exchangedPublicPeers = FALSE;
             peer->isTransmitting = FALSE;
@@ -4340,6 +4363,7 @@ static void connectCallback(EFI_EVENT Event, void* Context)
     else
     {
         peer->id = ++latestPeerId;
+        peer->dataToTransmitSize = 0;
         peer->type = 0;
         peer->exchangedPublicPeers = TRUE;
 
@@ -4820,7 +4844,20 @@ static void transmitCallback(EFI_EVENT Event, void* Context)
         numberOfTransmittedBytes += peer->transmitData.DataLength;
         peer->prevNumberOfTransmittedBytes = peer->numberOfTransmittedBytes;
         peer->numberOfTransmittedBytes += peer->transmitData.DataLength;
-        peer->isTransmitting = FALSE;
+
+        if (peer->dataToTransmitSize)
+        {
+            bs->CopyMem(peer->transmitData.FragmentTable[0].FragmentBuffer, peer->dataToTransmit, ((RequestResponseHeader*)peer->dataToTransmit)->size);
+            if (peer->dataToTransmitSize -= ((RequestResponseHeader*)peer->dataToTransmit)->size)
+            {
+                bs->CopyMem(peer->dataToTransmit, &peer->dataToTransmit[((RequestResponseHeader*)peer->dataToTransmit)->size], peer->dataToTransmitSize);
+            }
+            transmit(peer);
+        }
+        else
+        {
+            peer->isTransmitting = FALSE;
+        }
     }
 }
 
@@ -4877,7 +4914,8 @@ static BOOLEAN initialize()
         peers[peerIndex].receiveData.FragmentCount = 1;
         peers[peerIndex].transmitData.FragmentCount = 1;
         if ((status = bs->AllocatePool(EfiRuntimeServicesData, BUFFER_SIZE, &peers[peerIndex].receiveBuffer))
-            || (status = bs->AllocatePool(EfiRuntimeServicesData, BUFFER_SIZE, &peers[peerIndex].transmitData.FragmentTable[0].FragmentBuffer)))
+            || (status = bs->AllocatePool(EfiRuntimeServicesData, BUFFER_SIZE, &peers[peerIndex].transmitData.FragmentTable[0].FragmentBuffer))
+            || (status = bs->AllocatePool(EfiRuntimeServicesData, DATA_TO_TRANSMIT_BUFFER_SIZE, (void**)&peers[peerIndex].dataToTransmit)))
         {
             logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status);
 
@@ -4937,6 +4975,10 @@ static void deinitialize()
         {
             bs->FreePool(peers[peerIndex].transmitData.FragmentTable[0].FragmentBuffer);
         }
+        if (peers[peerIndex].dataToTransmit)
+        {
+            bs->FreePool(peers[peerIndex].dataToTransmit);
+        }
     }
 }
 
@@ -4950,7 +4992,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.1.9 is launched.");
+    log(L"Qubic 0.1.10 is launched.");
 
     if (initialize())
     {
