@@ -3418,7 +3418,9 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define NUMBER_OF_COMPUTORS (26 * 26)
 #define PEER_RATING_PERIOD 5
 #define PORT 21841
-#define PROTOCOL 1
+#define PROTOCOL 2
+
+static __m256i ZERO;
 
 typedef struct
 {
@@ -3427,6 +3429,7 @@ typedef struct
     unsigned long long amount;
     unsigned int latestUpdateTick;
     volatile char lock;
+    char padding[11];
 } Entity;
 
 typedef struct
@@ -3572,7 +3575,6 @@ volatile static int state = 0;
 static unsigned long long launchTime = 0;
 
 static unsigned char ownSubseed[32], ownPrivateKey[32], ownPublicKey[32], operatorPublicKey[32], adminPublicKey[32];
-const static unsigned char nullPublicKey[32] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 static unsigned long long latestOperatorTimestamp;
 static unsigned int salt;
 
@@ -3619,7 +3621,15 @@ static void transmitCallback(EFI_EVENT Event, void* Context);
 
 static void increaseEnergy(unsigned char* publicKey, unsigned long long amount)
 {
-    unsigned int id = (*((unsigned int*)publicKey)) & (0xFFFFFF);
+    unsigned int index = (*((unsigned int*)publicKey)) & 0xFFFFFF;
+
+    while (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)entities[index].publicKey), ZERO)) != 0xFFFFFFFF
+        && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)entities[index].publicKey), *((__m256i*)publicKey))) != 0xFFFFFFFF)
+    {
+        index = (index + 1) & 0xFFFFFF;
+    }
+
+    ////////
 }
 
 static BOOLEAN decreaseEnergy(unsigned char* publicKey, unsigned long long timestamp, unsigned long long amount)
@@ -3961,20 +3971,16 @@ static void responseCallback(EFI_EVENT Event, void* Context)
                 if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type > 0
                     && (processor->responseTransmittingType > 0 || &peers[i] != processor->peer))
                 {
-                    /**/st->ConOut->OutputString(st->ConOut, (CHAR16*)L"0");
                     if (peers[i].isTransmitting)
                     {
-                        /**/st->ConOut->OutputString(st->ConOut, (CHAR16*)L"2");
                         if (peers[i].dataToTransmitSize + responseHeader->size <= DATA_TO_TRANSMIT_BUFFER_SIZE)
                         {
-                            /**/st->ConOut->OutputString(st->ConOut, (CHAR16*)L"3");
                             bs->CopyMem(&peers[i].dataToTransmit[peers[i].dataToTransmitSize], processor->responseBuffer, responseHeader->size);
                             peers[i].dataToTransmitSize += responseHeader->size;
                         }
                     }
                     else
                     {
-                        /**/st->ConOut->OutputString(st->ConOut, (CHAR16*)L"1");
                         bs->CopyMem(peers[i].transmitData.FragmentTable[0].FragmentBuffer, processor->responseBuffer, responseHeader->size);
                         transmit(&peers[i], responseHeader->size);
                     }
@@ -4898,6 +4904,8 @@ static BOOLEAN initialize()
 {
     processorInitializationProcessor(NULL);
 
+    ZERO = _mm256_setzero_si256();
+
     if (!getSubseed(ownSeed, ownSubseed))
     {
         return FALSE;
@@ -4929,7 +4937,7 @@ static BOOLEAN initialize()
 
     if (ROLE == COMPUTOR)
     {
-        if (status = bs->AllocatePool(EfiRuntimeServicesData, (((unsigned long long)1) << 24) * 64, (void**)&entities))
+        if (status = bs->AllocatePool(EfiRuntimeServicesData, 0x1000000 * sizeof(Entity), (void**)&entities))
         {
             logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status);
 
@@ -5039,7 +5047,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.1.12 is launched.");
+    log(L"Qubic 0.2.0 is launched.");
 
     if (initialize())
     {
@@ -5198,6 +5206,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         {
                                             bs->CopyMem(peers[i].transmitData.FragmentTable[0].FragmentBuffer, buffer, header->size);
                                             transmit(&peers[i], header->size);
+
+                                            bs->Stall(1000);
                                         }
 
                                         bs->RestoreTPL(TPL_APPLICATION);
