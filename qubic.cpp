@@ -29,10 +29,6 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 #define ADMIN "MGEBBBMCLILFBGOBFJCLNBBADELCIBAMGPGMFIDLPIPGIOLOGJAJGNIEAAALEEKFAEDGOH"
 
 static const unsigned char knownPublicPeers[][4] = {
-    { ? , ? , ? , ? },
-    { ? , ? , ? , ? },
-    { ? , ? , ? , ? },
-    { ? , ? , ? , ? },
 };
 
 
@@ -3965,16 +3961,20 @@ static void responseCallback(EFI_EVENT Event, void* Context)
                 if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type > 0
                     && (processor->responseTransmittingType > 0 || &peers[i] != processor->peer))
                 {
+                    /**/st->ConOut->OutputString(st->ConOut, (CHAR16*)L"0");
                     if (peers[i].isTransmitting)
                     {
+                        /**/st->ConOut->OutputString(st->ConOut, (CHAR16*)L"2");
                         if (peers[i].dataToTransmitSize + responseHeader->size <= DATA_TO_TRANSMIT_BUFFER_SIZE)
                         {
+                            /**/st->ConOut->OutputString(st->ConOut, (CHAR16*)L"3");
                             bs->CopyMem(&peers[i].dataToTransmit[peers[i].dataToTransmitSize], processor->responseBuffer, responseHeader->size);
                             peers[i].dataToTransmitSize += responseHeader->size;
                         }
                     }
                     else
                     {
+                        /**/st->ConOut->OutputString(st->ConOut, (CHAR16*)L"1");
                         bs->CopyMem(peers[i].transmitData.FragmentTable[0].FragmentBuffer, processor->responseBuffer, responseHeader->size);
                         transmit(&peers[i], responseHeader->size);
                     }
@@ -5039,7 +5039,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.1.11 is launched.");
+    log(L"Qubic 0.1.12 is launched.");
 
     if (initialize())
     {
@@ -5104,7 +5104,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                         }
 
                         unsigned long long prevDejavuSwapTime = 0;
-                        unsigned long long prevPeerRatingTime = 0;
                         /**/unsigned long long prevRewardDisplayTime = 0;
                         while (!state)
                         {
@@ -5117,32 +5116,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                 prevDejavuSwapTime = __rdtsc();
                             }
-
-                            /*if (__rdtsc() - prevPeerRatingTime >= PEER_RATING_PERIOD * frequency)
-                            {
-                                int worstPeerIndex = -1;
-                                unsigned long long worstPeerReceivedBytesDelta = 0xFFFFFFFFFFFFFFFF;
-
-                                for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
-                                {
-                                    if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type > 0)
-                                    {
-                                        unsigned long long delta = peers[i].numberOfReceivedBytes - peers[i].prevNumberOfReceivedBytes;
-                                        if (delta < worstPeerReceivedBytesDelta)
-                                        {
-                                            worstPeerIndex = i;
-                                            worstPeerReceivedBytesDelta = delta;
-                                        }
-                                    }
-                                }
-
-                                if (worstPeerIndex >= 0)
-                                {
-                                    close(&peers[worstPeerIndex]);
-                                }
-
-                                prevPeerRatingTime = __rdtsc();
-                            }*/
 
                             bs->RaiseTPL(TPL_NOTIFY);
                             unsigned int numberOfFreePeerSlots = 0, numberOfAcceptingPeerSlots = 0, numberOfWebSocketClients = 0;
