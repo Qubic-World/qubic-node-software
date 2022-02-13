@@ -4283,23 +4283,31 @@ static void receive(Peer* peer)
         return;
     }
 
-    bs->RaiseTPL(TPL_NOTIFY);
-
-    EFI_STATUS status;
-    bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, receiveCallback, peer, &peer->receiveToken.CompletionToken.Event);
-    peer->receiveData.DataLength = peer->receiveData.FragmentTable[0].FragmentLength = BUFFER_SIZE - (unsigned int)((unsigned long long)peer->receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peer->receiveBuffer);
-    if (status = peer->tcp4Protocol->Receive(peer->tcp4Protocol, &peer->receiveToken))
+    if (((unsigned long long)peer->receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peer->receiveBuffer) >= BUFFER_SIZE)
     {
-        logStatus(L"EFI_TCP4_PROTOCOL.Receive() fails", status);
+        close(peer);
+        log(L"A peer sending too many requests is disconnected.");
+    }
+    else
+    {
+        bs->RaiseTPL(TPL_NOTIFY);
 
-        bs->CloseEvent(peer->receiveToken.CompletionToken.Event);
+        EFI_STATUS status;
+        bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, receiveCallback, peer, &peer->receiveToken.CompletionToken.Event);
+        peer->receiveData.DataLength = peer->receiveData.FragmentTable[0].FragmentLength = BUFFER_SIZE - (unsigned int)((unsigned long long)peer->receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peer->receiveBuffer);
+        if (status = peer->tcp4Protocol->Receive(peer->tcp4Protocol, &peer->receiveToken))
+        {
+            logStatus(L"EFI_TCP4_PROTOCOL.Receive() fails", status);
+
+            bs->CloseEvent(peer->receiveToken.CompletionToken.Event);
+
+            bs->RestoreTPL(TPL_APPLICATION);
+            close(peer);
+            bs->RaiseTPL(TPL_NOTIFY);
+        }
 
         bs->RestoreTPL(TPL_APPLICATION);
-        close(peer);
-        bs->RaiseTPL(TPL_NOTIFY);
     }
-
-    bs->RestoreTPL(TPL_APPLICATION);
 }
 
 static void transmit(Peer* peer, unsigned int size)
@@ -4456,7 +4464,7 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
     else
     {
         numberOfReceivedBytes += peer->receiveData.DataLength;
-        *((unsigned long long*) & peer->receiveData.FragmentTable[0].FragmentBuffer) += peer->receiveData.DataLength;
+        *((unsigned long long*)&peer->receiveData.FragmentTable[0].FragmentBuffer) += peer->receiveData.DataLength;
         peer->prevNumberOfReceivedBytes = peer->numberOfReceivedBytes;
         peer->numberOfReceivedBytes += peer->receiveData.DataLength;
         
@@ -4832,17 +4840,17 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                                         bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, responseCallback, &processors[latestUsedProcessorIndex], &processors[latestUsedProcessorIndex].event);
                                         mpServicesProtocol->StartupThisAP(mpServicesProtocol, requestProcessor, processors[latestUsedProcessorIndex].number, processors[latestUsedProcessorIndex].event, 0, &processors[latestUsedProcessorIndex], NULL);
 
-peer->receiveData.FragmentTable[0].FragmentBuffer = peer->receiveBuffer = tmp;
+                                        peer->receiveData.FragmentTable[0].FragmentBuffer = peer->receiveBuffer = tmp;
                                     }
                                     else
                                     {
-                                    bs->CopyMem(processors[latestUsedProcessorIndex].requestBuffer, peer->receiveBuffer, requestResponseHeader->size);
+                                        bs->CopyMem(processors[latestUsedProcessorIndex].requestBuffer, peer->receiveBuffer, requestResponseHeader->size);
 
-                                    bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, responseCallback, &processors[latestUsedProcessorIndex], &processors[latestUsedProcessorIndex].event);
-                                    mpServicesProtocol->StartupThisAP(mpServicesProtocol, requestProcessor, processors[latestUsedProcessorIndex].number, processors[latestUsedProcessorIndex].event, 0, &processors[latestUsedProcessorIndex], NULL);
+                                        bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, responseCallback, &processors[latestUsedProcessorIndex], &processors[latestUsedProcessorIndex].event);
+                                        mpServicesProtocol->StartupThisAP(mpServicesProtocol, requestProcessor, processors[latestUsedProcessorIndex].number, processors[latestUsedProcessorIndex].event, 0, &processors[latestUsedProcessorIndex], NULL);
 
-                                    bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + requestResponseHeader->size, receivedDataSize -= requestResponseHeader->size);
-                                    peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + receivedDataSize;
+                                        bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + requestResponseHeader->size, receivedDataSize -= requestResponseHeader->size);
+                                        peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + receivedDataSize;
                                     }
 
                                     goto theOnlyGotoLabel;
@@ -5047,7 +5055,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.2.0 is launched.");
+    log(L"Qubic 0.2.1 is launched.");
 
     if (initialize())
     {
