@@ -3426,6 +3426,15 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 
 typedef struct
 {
+    unsigned char publicKey[32];
+    unsigned long long latestTimestamp;
+    unsigned long long amount;
+    unsigned int latestUpdateTick;
+    volatile char lock;
+} Entity;
+
+typedef struct
+{
     EFI_TCP4_PROTOCOL* tcp4Protocol;
     EFI_TCP4_LISTEN_TOKEN acceptToken;
     EFI_TCP4_CONNECTION_TOKEN connectToken;
@@ -3571,6 +3580,10 @@ const static unsigned char nullPublicKey[32] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 static unsigned long long latestOperatorTimestamp;
 static unsigned int salt;
 
+static unsigned short epoch = 0;
+static unsigned int tick = 0;
+static Entity* entities = NULL;
+
 volatile static char latestComputorStatesLock = 0;
 static BroadcastComputorState latestComputorStates[NUMBER_OF_COMPUTORS + 1];
 
@@ -3601,12 +3614,22 @@ static BOOLEAN accept();
 static void connect(unsigned char* address);
 static void close(Peer* peer);
 static void receive(Peer* peer);
-static void transmit(Peer* peer);
+static void transmit(Peer* peer, unsigned int size);
 static void acceptCallback(EFI_EVENT Event, void* Context);
 static void connectCallback(EFI_EVENT Event, void* Context);
 static void closeCallback(EFI_EVENT Event, void* Context);
 static void receiveCallback(EFI_EVENT Event, void* Context);
 static void transmitCallback(EFI_EVENT Event, void* Context);
+
+static void increaseEnergy(unsigned char* publicKey, unsigned long long amount)
+{
+    unsigned int id = (*((unsigned int*)publicKey)) & (0xFFFFFF);
+}
+
+static BOOLEAN decreaseEnergy(unsigned char* publicKey, unsigned long long timestamp, unsigned long long amount)
+{
+    /////
+}
 
 static void addPublicPeer(unsigned char address[4])
 {
@@ -3921,50 +3944,50 @@ static void requestProcessor(void* ProcedureArgument)
     break;
     }
 
-    processor->busyness += (__rdtsc() - busynessBeginningTick);
     _InterlockedIncrement64(&numberOfProcessedRequests);
+    processor->busyness += (__rdtsc() - busynessBeginningTick);
 }
 
 static void responseCallback(EFI_EVENT Event, void* Context)
 {
     bs->CloseEvent(Event);
 
-    bs->RaiseTPL(TPL_NOTIFY);
-
     Processor* processor = (Processor*)Context;
-    if (((unsigned long long)processor->peer->tcp4Protocol) > 1 && processor->peerId == processor->peer->id)
+    RequestResponseHeader* responseHeader = (RequestResponseHeader*)processor->responseBuffer;
+    if (responseHeader->size)
     {
-        RequestResponseHeader* responseHeader = (RequestResponseHeader*)processor->responseBuffer;
-        if (responseHeader->size)
+        bs->RaiseTPL(TPL_NOTIFY);
+
+        if (processor->responseTransmittingType)
         {
-            if (processor->responseTransmittingType)
+            for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
             {
-                for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
+                if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type > 0
+                    && (processor->responseTransmittingType > 0 || &peers[i] != processor->peer))
                 {
-                    if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type > 0
-                        && (processor->responseTransmittingType > 0 || &peers[i] != processor->peer))
+                    if (peers[i].isTransmitting)
                     {
-                        if (peers[i].isTransmitting)
+                        if (peers[i].dataToTransmitSize + responseHeader->size <= DATA_TO_TRANSMIT_BUFFER_SIZE)
                         {
-                            if (peers[i].dataToTransmitSize <= DATA_TO_TRANSMIT_BUFFER_SIZE - responseHeader->size)
-                            {
-                                bs->CopyMem(&peers[i].dataToTransmit[peers[i].dataToTransmitSize], processor->responseBuffer, responseHeader->size);
-                                peers[i].dataToTransmitSize += responseHeader->size;
-                            }
+                            bs->CopyMem(&peers[i].dataToTransmit[peers[i].dataToTransmitSize], processor->responseBuffer, responseHeader->size);
+                            peers[i].dataToTransmitSize += responseHeader->size;
                         }
-                        else
-                        {
-                            bs->CopyMem(peers[i].transmitData.FragmentTable[0].FragmentBuffer, processor->responseBuffer, responseHeader->size);
-                            transmit(&peers[i]);
-                        }
+                    }
+                    else
+                    {
+                        bs->CopyMem(peers[i].transmitData.FragmentTable[0].FragmentBuffer, processor->responseBuffer, responseHeader->size);
+                        transmit(&peers[i], responseHeader->size);
                     }
                 }
             }
-            else
+        }
+        else
+        {
+            if (processor->peerId == processor->peer->id && ((unsigned long long)processor->peer->tcp4Protocol) > 1)
             {
                 if (processor->peer->isTransmitting)
                 {
-                    if (processor->peer->dataToTransmitSize <= DATA_TO_TRANSMIT_BUFFER_SIZE - responseHeader->size)
+                    if (processor->peer->dataToTransmitSize + responseHeader->size <= DATA_TO_TRANSMIT_BUFFER_SIZE)
                     {
                         bs->CopyMem(&processor->peer->dataToTransmit[processor->peer->dataToTransmitSize], processor->responseBuffer, responseHeader->size);
                         processor->peer->dataToTransmitSize += responseHeader->size;
@@ -3975,13 +3998,13 @@ static void responseCallback(EFI_EVENT Event, void* Context)
                     void* tmp = processor->responseBuffer;
                     processor->responseBuffer = processor->peer->transmitData.FragmentTable[0].FragmentBuffer;
                     processor->peer->transmitData.FragmentTable[0].FragmentBuffer = tmp;
-                    transmit(processor->peer);
+                    transmit(processor->peer, responseHeader->size);
                 }
             }
         }
-    }
 
-    bs->RestoreTPL(TPL_APPLICATION);
+        bs->RestoreTPL(TPL_APPLICATION);
+    }
 
     processor->peer = NULL;
 }
@@ -4273,7 +4296,7 @@ static void receive(Peer* peer)
     bs->RestoreTPL(TPL_APPLICATION);
 }
 
-static void transmit(Peer* peer)
+static void transmit(Peer* peer, unsigned int size)
 {
     if (!peer->tcp4Protocol)
     {
@@ -4287,11 +4310,9 @@ static void transmit(Peer* peer)
     EFI_STATUS status;
     bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, transmitCallback, peer, &peer->transmitToken.CompletionToken.Event);
 
-    int size = ((RequestResponseHeader*)peer->transmitData.FragmentTable[0].FragmentBuffer)->size;
-
     if (peer->type < 0)
     {
-        if (((RequestResponseHeader*)peer->transmitData.FragmentTable[0].FragmentBuffer)->size <= 125)
+        if (size <= 125)
         {
             bs->CopyMem(((char*)peer->transmitData.FragmentTable[0].FragmentBuffer) + 2, peer->transmitData.FragmentTable[0].FragmentBuffer, size);
             ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[1] = size;
@@ -4299,6 +4320,7 @@ static void transmit(Peer* peer)
         }
         else
         {
+            bs->CopyMem(((char*)peer->transmitData.FragmentTable[0].FragmentBuffer) + 4, peer->transmitData.FragmentTable[0].FragmentBuffer, size);
             ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[1] = 126;
             ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[2] = size >> 8;
             ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[3] = size;
@@ -4389,10 +4411,10 @@ static void connectCallback(EFI_EVENT Event, void* Context)
         }
         publicPeersLock = 0;
 
-        RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peer->transmitData.FragmentTable[0].FragmentBuffer;
-        requestResponseHeader->size = sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers);
-        requestResponseHeader->type = EXCHANGE_PUBLIC_PEERS;
-        transmit(peer);
+        RequestResponseHeader* requestHeader = (RequestResponseHeader*)peer->transmitData.FragmentTable[0].FragmentBuffer;
+        requestHeader->size = sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers);
+        requestHeader->type = EXCHANGE_PUBLIC_PEERS;
+        transmit(peer, requestHeader->size);
 
         peer->receiveData.FragmentTable[0].FragmentBuffer = peer->receiveBuffer;
         receive(peer);
@@ -4804,17 +4826,17 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                                         bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, responseCallback, &processors[latestUsedProcessorIndex], &processors[latestUsedProcessorIndex].event);
                                         mpServicesProtocol->StartupThisAP(mpServicesProtocol, requestProcessor, processors[latestUsedProcessorIndex].number, processors[latestUsedProcessorIndex].event, 0, &processors[latestUsedProcessorIndex], NULL);
 
-                                        peer->receiveData.FragmentTable[0].FragmentBuffer = peer->receiveBuffer = tmp;
+peer->receiveData.FragmentTable[0].FragmentBuffer = peer->receiveBuffer = tmp;
                                     }
                                     else
                                     {
-                                        bs->CopyMem(processors[latestUsedProcessorIndex].requestBuffer, peer->receiveBuffer, requestResponseHeader->size);
+                                    bs->CopyMem(processors[latestUsedProcessorIndex].requestBuffer, peer->receiveBuffer, requestResponseHeader->size);
 
-                                        bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, responseCallback, &processors[latestUsedProcessorIndex], &processors[latestUsedProcessorIndex].event);
-                                        mpServicesProtocol->StartupThisAP(mpServicesProtocol, requestProcessor, processors[latestUsedProcessorIndex].number, processors[latestUsedProcessorIndex].event, 0, &processors[latestUsedProcessorIndex], NULL);
+                                    bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, responseCallback, &processors[latestUsedProcessorIndex], &processors[latestUsedProcessorIndex].event);
+                                    mpServicesProtocol->StartupThisAP(mpServicesProtocol, requestProcessor, processors[latestUsedProcessorIndex].number, processors[latestUsedProcessorIndex].event, 0, &processors[latestUsedProcessorIndex], NULL);
 
-                                        bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + requestResponseHeader->size, receivedDataSize -= requestResponseHeader->size);
-                                        peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + receivedDataSize;
+                                    bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + requestResponseHeader->size, receivedDataSize -= requestResponseHeader->size);
+                                    peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + receivedDataSize;
                                     }
 
                                     goto theOnlyGotoLabel;
@@ -4847,12 +4869,17 @@ static void transmitCallback(EFI_EVENT Event, void* Context)
 
         if (peer->dataToTransmitSize)
         {
-            bs->CopyMem(peer->transmitData.FragmentTable[0].FragmentBuffer, peer->dataToTransmit, ((RequestResponseHeader*)peer->dataToTransmit)->size);
-            if (peer->dataToTransmitSize -= ((RequestResponseHeader*)peer->dataToTransmit)->size)
+            unsigned int size = 0;
+            while ((peer->dataToTransmitSize - size > 0) && (size + ((RequestResponseHeader*)&peer->dataToTransmit[size])->size) <= BUFFER_SIZE)
             {
-                bs->CopyMem(peer->dataToTransmit, &peer->dataToTransmit[((RequestResponseHeader*)peer->dataToTransmit)->size], peer->dataToTransmitSize);
+                bs->CopyMem(((char*)peer->transmitData.FragmentTable[0].FragmentBuffer) + size, &peer->dataToTransmit[size], ((RequestResponseHeader*)&peer->dataToTransmit[size])->size);
+                size += ((RequestResponseHeader*)&peer->dataToTransmit[size])->size;
             }
-            transmit(peer);
+            if (peer->dataToTransmitSize -= size)
+            {
+                bs->CopyMem(peer->dataToTransmit, &peer->dataToTransmit[size], peer->dataToTransmitSize);
+            }
+            transmit(peer, size);
         }
         else
         {
@@ -4899,6 +4926,18 @@ static BOOLEAN initialize()
     bs->SetMem(publicPeers, sizeof(publicPeers), 0);
 
     EFI_STATUS status;
+
+    if (ROLE == COMPUTOR)
+    {
+        if (status = bs->AllocatePool(EfiRuntimeServicesData, (((unsigned long long)1) << 24) * 64, (void**)&entities))
+        {
+            logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status);
+
+            return FALSE;
+        }
+        bs->SetMem(entities, (((unsigned long long)1) << 24) * 64, 0);
+    }
+
     if ((status = bs->AllocatePool(EfiRuntimeServicesData, 536870912, (void**)&dejavu0))
         || (status = bs->AllocatePool(EfiRuntimeServicesData, 536870912, (void**)&dejavu1)))
     {
@@ -4943,6 +4982,14 @@ static void deinitialize()
     bs->SetMem(ownSubseed, sizeof(ownSubseed), 0);
     bs->SetMem(ownPrivateKey, sizeof(ownPrivateKey), 0);
     bs->SetMem(ownPublicKey, sizeof(ownPublicKey), 0);
+
+    if (ROLE == COMPUTOR)
+    {
+        if (entities)
+        {
+            bs->FreePool(entities);
+        }
+    }
 
     if (dejavu0)
     {
@@ -4992,7 +5039,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.1.10 is launched.");
+    log(L"Qubic 0.1.11 is launched.");
 
     if (initialize())
     {
@@ -5071,7 +5118,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 prevDejavuSwapTime = __rdtsc();
                             }
 
-                            if (__rdtsc() - prevPeerRatingTime >= PEER_RATING_PERIOD * frequency)
+                            /*if (__rdtsc() - prevPeerRatingTime >= PEER_RATING_PERIOD * frequency)
                             {
                                 int worstPeerIndex = -1;
                                 unsigned long long worstPeerReceivedBytesDelta = 0xFFFFFFFFFFFFFFFF;
@@ -5095,7 +5142,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 }
 
                                 prevPeerRatingTime = __rdtsc();
-                            }
+                            }*/
 
                             bs->RaiseTPL(TPL_NOTIFY);
                             unsigned int numberOfFreePeerSlots = 0, numberOfAcceptingPeerSlots = 0, numberOfWebSocketClients = 0;
@@ -5117,6 +5164,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         {
                                             numberOfWebSocketClients++;
                                         }
+
+                                        peers[i].tcp4Protocol->Poll(peers[i].tcp4Protocol);
                                     }
                                 }
                             }
@@ -5175,7 +5224,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         if (!peers[i].isTransmitting)
                                         {
                                             bs->CopyMem(peers[i].transmitData.FragmentTable[0].FragmentBuffer, buffer, header->size);
-                                            transmit(&peers[i]);
+                                            transmit(&peers[i], header->size);
                                         }
 
                                         bs->RestoreTPL(TPL_APPLICATION);
