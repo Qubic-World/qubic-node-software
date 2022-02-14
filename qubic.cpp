@@ -3966,7 +3966,7 @@ static void responseCallback(EFI_EVENT Event, void* Context)
     RequestResponseHeader* responseHeader = (RequestResponseHeader*)processor->responseBuffer;
     if (responseHeader->size)
     {
-        bs->RaiseTPL(TPL_NOTIFY);
+        const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
 
         if (processor->responseTransmittingType)
         {
@@ -4013,7 +4013,7 @@ static void responseCallback(EFI_EVENT Event, void* Context)
             }
         }
 
-        bs->RestoreTPL(TPL_APPLICATION);
+        bs->RestoreTPL(tpl);
     }
 
     processor->peer = NULL;
@@ -4182,7 +4182,7 @@ static void connectToAnyPublicPeer()
 
 static BOOLEAN accept()
 {
-    bs->RaiseTPL(TPL_NOTIFY);
+    const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
 
     const int freePeerSlot = getFreePeerSlot();
     if (freePeerSlot >= 0)
@@ -4202,20 +4202,20 @@ static BOOLEAN accept()
         }
         else
         {
-            bs->RestoreTPL(TPL_APPLICATION);
+            bs->RestoreTPL(tpl);
 
             return TRUE;
         }
     }
 
-    bs->RestoreTPL(TPL_APPLICATION);
+    bs->RestoreTPL(tpl);
 
     return FALSE;
 }
 
 static void connect(unsigned char* address)
 {
-    bs->RaiseTPL(TPL_NOTIFY);
+    const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
 
     EFI_TCP4_PROTOCOL* tcp4Protocol;
     EFI_HANDLE childHandle = getTcp4Protocol(address, &tcp4Protocol);
@@ -4248,17 +4248,19 @@ static void connect(unsigned char* address)
         }
     }
 
-    bs->RestoreTPL(TPL_APPLICATION);
+    bs->RestoreTPL(tpl);
 }
 
 static void close(Peer* peer)
 {
+    const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
+
     if (!peer->tcp4Protocol)
     {
+        bs->RestoreTPL(tpl);
+
         return;
     }
-
-    bs->RaiseTPL(TPL_NOTIFY);
 
     bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, closeCallback, peer, &peer->closeToken.CompletionToken.Event);
     EFI_STATUS status;
@@ -4279,13 +4281,17 @@ static void close(Peer* peer)
         peer->tcp4Protocol = NULL;
     }
 
-    bs->RestoreTPL(TPL_APPLICATION);
+    bs->RestoreTPL(tpl);
 }
 
 static void receive(Peer* peer)
 {
+    const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
+
     if (!peer->tcp4Protocol)
     {
+        bs->RestoreTPL(tpl);
+
         return;
     }
 
@@ -4296,8 +4302,6 @@ static void receive(Peer* peer)
     }
     else
     {
-        bs->RaiseTPL(TPL_NOTIFY);
-
         EFI_STATUS status;
         bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, receiveCallback, peer, &peer->receiveToken.CompletionToken.Event);
         peer->receiveData.DataLength = peer->receiveData.FragmentTable[0].FragmentLength = BUFFER_SIZE - (unsigned int)((unsigned long long)peer->receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peer->receiveBuffer);
@@ -4310,23 +4314,23 @@ static void receive(Peer* peer)
 
             bs->CloseEvent(peer->receiveToken.CompletionToken.Event);
 
-            bs->RestoreTPL(TPL_APPLICATION);
             close(peer);
-            bs->RaiseTPL(TPL_NOTIFY);
         }
-
-        bs->RestoreTPL(TPL_APPLICATION);
     }
+
+    bs->RestoreTPL(tpl);
 }
 
 static void transmit(Peer* peer, unsigned int size)
 {
+    const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
+
     if (!peer->tcp4Protocol)
     {
+        bs->RestoreTPL(tpl);
+
         return;
     }
-
-    bs->RaiseTPL(TPL_NOTIFY);
 
     peer->isTransmitting = TRUE;
 
@@ -4362,12 +4366,10 @@ static void transmit(Peer* peer, unsigned int size)
 
         bs->CloseEvent(peer->transmitToken.CompletionToken.Event);
 
-        bs->RestoreTPL(TPL_APPLICATION);
         close(peer);
-        bs->RaiseTPL(TPL_NOTIFY);
     }
 
-    bs->RestoreTPL(TPL_APPLICATION);
+    bs->RestoreTPL(tpl);
 }
 
 static void acceptCallback(EFI_EVENT Event, void* Context)
@@ -4782,7 +4784,7 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                     peer->receiveData.FragmentTable[0].FragmentBuffer = peer->receiveBuffer;
                     receive(peer);
 
-                    bs->RaiseTPL(TPL_NOTIFY);
+                    const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
 
                     peer->isTransmitting = TRUE;
 
@@ -4798,12 +4800,10 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
 
                         bs->CloseEvent(peer->transmitToken.CompletionToken.Event);
 
-                        bs->RestoreTPL(TPL_APPLICATION);
                         close(peer);
-                        bs->RaiseTPL(TPL_NOTIFY);
                     }
 
-                    bs->RestoreTPL(TPL_APPLICATION);
+                    bs->RestoreTPL(tpl);
                 }
                 else
                 {
@@ -5068,7 +5068,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.2.6 is launched.");
+    log(L"Qubic 0.2.7 is launched.");
 
     if (initialize())
     {
@@ -5147,7 +5147,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 prevDejavuSwapTick = __rdtsc();
                             }
 
-                            bs->RaiseTPL(TPL_NOTIFY);
+                            const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
                             unsigned int numberOfFreePeerSlots = 0, numberOfAcceptingPeerSlots = 0, numberOfWebSocketClients = 0;
                             for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
                             {
@@ -5173,7 +5173,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 while (_InterlockedCompareExchange8(&publicPeersLock, 1, 0))
                                                 {
                                                 }
-                                                for (unsigned int j = 0; j < numberOfPublicPeers; j++)
+                                                for (unsigned int j = 0; numberOfPublicPeers > MIN_NUMBER_OF_PEERS && j < numberOfPublicPeers; j++)
                                                 {
                                                     if (*((int*)publicPeers[j].address) == *((int*)peers[i].address))
                                                     {
@@ -5200,7 +5200,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     }
                                 }
                             }
-                            bs->RestoreTPL(TPL_APPLICATION);
+                            bs->RestoreTPL(tpl);
 
                             if (MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots - numberOfWebSocketClients < MIN_NUMBER_OF_PEERS)
                             {
@@ -5288,7 +5288,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         numberOfBusyProcessors++;
                                     }
                                 }
-                                CHAR16 message[256]; setText(message, L"Reward points = "); appendNumber(message, rewardPoints, TRUE); appendText(message, L"/"); appendNumber(message, totalRewardPoints, TRUE); appendText(message, L" | ["); appendNumber(message, numberOfBusyProcessors * 100 / numberOfProcessors, FALSE); appendText(message, L"% CPU / +"); appendNumber(message, numberOfProcessedRequests - prevNumberOfProcessedRequests, TRUE); appendText(message, L"] "); appendNumber(message, MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots - numberOfWebSocketClients, TRUE); appendText(message, L"/"); appendNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" peers (+"); appendNumber(message, numberOfReceivedBytes - prevNumberOfReceivedBytes, TRUE); appendText(message, L" rx / +"); appendNumber(message, numberOfTransmittedBytes - prevNumberOfTransmittedBytes, TRUE); appendText(message, L" tx)."); log(message);
+                                CHAR16 message[256]; setText(message, L"Reward = "); appendNumber(message, rewardPoints * 34100000000 / totalRewardPoints, TRUE); appendText(message, L" | ["); appendNumber(message, numberOfBusyProcessors * 100 / numberOfProcessors, FALSE); appendText(message, L"% CPU / +"); appendNumber(message, numberOfProcessedRequests - prevNumberOfProcessedRequests, TRUE); appendText(message, L" req] "); appendNumber(message, MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots - numberOfWebSocketClients, TRUE); appendText(message, L"/"); appendNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" peers (+"); appendNumber(message, numberOfReceivedBytes - prevNumberOfReceivedBytes, TRUE); appendText(message, L" rx / +"); appendNumber(message, numberOfTransmittedBytes - prevNumberOfTransmittedBytes, TRUE); appendText(message, L" tx)."); log(message);
                                 prevNumberOfProcessedRequests = numberOfProcessedRequests;
                                 prevNumberOfReceivedBytes = numberOfReceivedBytes;
                                 prevNumberOfTransmittedBytes = numberOfTransmittedBytes;
@@ -5316,23 +5316,16 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 KangarooTwelve(&buffer[sizeof(RequestResponseHeader)], sizeof(BroadcastMessage), digest, sizeof(digest));
                                 sign(ownSubseed, ownPublicKey, digest, &buffer[sizeof(RequestResponseHeader) + sizeof(BroadcastMessage)]);
 
+                                const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
                                 for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
                                 {
-                                    if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type > 0)
+                                    if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type > 0 && !peers[i].isTransmitting)
                                     {
-                                        bs->RaiseTPL(TPL_NOTIFY);
-
-                                        if (!peers[i].isTransmitting)
-                                        {
-                                            bs->CopyMem(peers[i].transmitData.FragmentTable[0].FragmentBuffer, buffer, header->size);
-                                            transmit(&peers[i], header->size);
-
-                                            bs->Stall(1000);
-                                        }
-
-                                        bs->RestoreTPL(TPL_APPLICATION);
+                                        bs->CopyMem(peers[i].transmitData.FragmentTable[0].FragmentBuffer, buffer, header->size);
+                                        transmit(&peers[i], header->size);
                                     }
                                 }
+                                bs->RestoreTPL(tpl);
                             }
                         }
                     }
