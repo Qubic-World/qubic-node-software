@@ -3438,6 +3438,7 @@ typedef struct
     EFI_TCP4_PROTOCOL* tcp4Protocol;
     EFI_TCP4_LISTEN_TOKEN acceptToken;
     EFI_TCP4_CONNECTION_TOKEN connectToken;
+    unsigned char address[4];
     unsigned long long connectionBeginningTick;
     EFI_HANDLE connectChildHandle;
     void* receiveBuffer;
@@ -3595,7 +3596,7 @@ static unsigned long long frequency;
 static unsigned int numberOfProcessors = 0;
 static Processor processors[MAX_NUMBER_OF_PROCESSORS];
 static unsigned int latestUsedProcessorIndex = (unsigned int)(-1);
-volatile static long long numberOfProcessedRequests = 0;
+volatile static long long numberOfProcessedRequests = 0, prevNumberOfProcessedRequests = 0;
 
 static EFI_GUID tcp4ServiceBindingProtocolGuid = EFI_TCP4_SERVICE_BINDING_PROTOCOL_GUID;
 static EFI_SERVICE_BINDING_PROTOCOL* tcp4ServiceBindingProtocol;
@@ -3603,7 +3604,8 @@ static EFI_GUID tcp4ProtocolGuid = EFI_TCP4_PROTOCOL_GUID;
 static EFI_TCP4_PROTOCOL* tcp4Protocol;
 static Peer peers[MAX_NUMBER_OF_PEERS];
 static unsigned int latestPeerId; // Initial value doesn't matter
-volatile static long long numberOfReceivedBytes = 0, numberOfTransmittedBytes = 0;
+volatile static long long numberOfReceivedBytes = 0, prevNumberOfReceivedBytes = 0;
+volatile static long long numberOfTransmittedBytes = 0, prevNumberOfTransmittedBytes = 0;
 
 volatile static char publicPeersLock = 0;
 static unsigned int numberOfPublicPeers = 0;
@@ -3830,7 +3832,7 @@ static void requestProcessor(void* ProcedureArgument)
                     {
                         if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->sourcePublicKey), *((__m256i*)adminPublicKey))) == 0xFFFFFFFF)
                         {
-                            if (request->messageSize >= 16)
+                            if (request->messageSize >= 16 && *((unsigned long long*)(((char*)request) + sizeof(BroadcastMessage) + 8)) > totalRewardPoints)
                             {
                                 rewardPoints = *((unsigned long long*)(((char*)request) + sizeof(BroadcastMessage)));
                                 totalRewardPoints = *((unsigned long long*)(((char*)request) + sizeof(BroadcastMessage) + 8));
@@ -4224,6 +4226,7 @@ static void connect(unsigned char* address)
         {
             peers[freePeerSlot].tcp4Protocol = tcp4Protocol;
             peers[freePeerSlot].acceptToken.NewChildHandle = NULL;
+            *((int*)peers[freePeerSlot].address) = *((int*)address);
             peers[freePeerSlot].connectionBeginningTick = __rdtsc();
             peers[freePeerSlot].connectChildHandle = childHandle;
             peers[freePeerSlot].prevNumberOfReceivedBytes = peers[freePeerSlot].numberOfReceivedBytes = 0;
@@ -4300,7 +4303,10 @@ static void receive(Peer* peer)
         peer->receiveData.DataLength = peer->receiveData.FragmentTable[0].FragmentLength = BUFFER_SIZE - (unsigned int)((unsigned long long)peer->receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peer->receiveBuffer);
         if (status = peer->tcp4Protocol->Receive(peer->tcp4Protocol, &peer->receiveToken))
         {
-            logStatus(L"EFI_TCP4_PROTOCOL.Receive() fails", status);
+            if (status != EFI_ACCESS_DENIED)
+            {
+                logStatus(L"EFI_TCP4_PROTOCOL.Receive() fails", status);
+            }
 
             bs->CloseEvent(peer->receiveToken.CompletionToken.Event);
 
@@ -4349,7 +4355,10 @@ static void transmit(Peer* peer, unsigned int size)
     peer->transmitData.DataLength = peer->transmitData.FragmentTable[0].FragmentLength = size;
     if (status = peer->tcp4Protocol->Transmit(peer->tcp4Protocol, &peer->transmitToken))
     {
-        logStatus(L"EFI_TCP4_PROTOCOL.Transmit() fails", status);
+        if (status != EFI_ACCESS_DENIED)
+        {
+            logStatus(L"EFI_TCP4_PROTOCOL.Transmit() fails", status);
+        }
 
         bs->CloseEvent(peer->transmitToken.CompletionToken.Event);
 
@@ -4782,7 +4791,10 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                     peer->transmitData.DataLength = peer->transmitData.FragmentTable[0].FragmentLength = i;
                     if (status = peer->tcp4Protocol->Transmit(peer->tcp4Protocol, &peer->transmitToken))
                     {
-                        logStatus(L"EFI_TCP4_PROTOCOL.Transmit() fails", status);
+                        if (status != EFI_ACCESS_DENIED)
+                        {
+                            logStatus(L"EFI_TCP4_PROTOCOL.Transmit() fails", status);
+                        }
 
                         bs->CloseEvent(peer->transmitToken.CompletionToken.Event);
 
@@ -5056,7 +5068,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.2.3 is launched.");
+    log(L"Qubic 0.2.4 is launched.");
 
     if (initialize())
     {
@@ -5158,6 +5170,20 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if ((!peers[i].numberOfReceivedBytes || !peers[i].numberOfTransmittedBytes)
                                                 && __rdtsc() - peers[i].connectionBeginningTick > MAX_CONNECTION_DELAY * frequency)
                                             {
+                                                while (_InterlockedCompareExchange8(&publicPeersLock, 1, 0))
+                                                {
+                                                }
+                                                for (unsigned int j = 0; j < numberOfPublicPeers; j++)
+                                                {
+                                                    if (*((int*)publicPeers[j].address) == *((int*)peers[i].address))
+                                                    {
+                                                        bs->CopyMem(&publicPeers[j], &publicPeers[--numberOfPublicPeers], sizeof(PublicPeer));
+
+                                                        break;
+                                                    }
+                                                }
+                                                publicPeersLock = 0;
+
                                                 close(&peers[i]);
                                             }
                                         }
@@ -5259,7 +5285,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         numberOfBusyProcessors++;
                                     }
                                 }
-                                CHAR16 message[256]; setText(message, L"Reward points = "); appendNumber(message, rewardPoints, TRUE); appendText(message, L"/"); appendNumber(message, totalRewardPoints, TRUE); appendText(message, L" | ["); appendNumber(message, numberOfBusyProcessors * 100 / numberOfProcessors, FALSE); appendText(message, L"% CPU / "); appendNumber(message, numberOfProcessedRequests, TRUE); appendText(message, L"] "); appendNumber(message, MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots - numberOfWebSocketClients, TRUE); appendText(message, L"/"); appendNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" peers ("); appendNumber(message, numberOfReceivedBytes, TRUE); appendText(message, L" rx / "); appendNumber(message, numberOfTransmittedBytes, TRUE); appendText(message, L" tx)."); log(message);
+                                CHAR16 message[256]; setText(message, L"Reward points = "); appendNumber(message, rewardPoints, TRUE); appendText(message, L"/"); appendNumber(message, totalRewardPoints, TRUE); appendText(message, L" | ["); appendNumber(message, numberOfBusyProcessors * 100 / numberOfProcessors, FALSE); appendText(message, L"% CPU / +"); appendNumber(message, numberOfProcessedRequests - prevNumberOfProcessedRequests, TRUE); appendText(message, L"] "); appendNumber(message, MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots - numberOfWebSocketClients, TRUE); appendText(message, L"/"); appendNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" peers (+"); appendNumber(message, numberOfReceivedBytes - prevNumberOfReceivedBytes, TRUE); appendText(message, L" rx / +"); appendNumber(message, numberOfTransmittedBytes - prevNumberOfTransmittedBytes, TRUE); appendText(message, L" tx)."); log(message);
+                                prevNumberOfProcessedRequests = numberOfProcessedRequests;
+                                prevNumberOfReceivedBytes = numberOfReceivedBytes;
+                                prevNumberOfTransmittedBytes = numberOfTransmittedBytes;
 
                                 prevRewardDisplayTick = __rdtsc();
                             }
