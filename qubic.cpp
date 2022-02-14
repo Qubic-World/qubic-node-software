@@ -3410,13 +3410,14 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define BUFFER_SIZE (65536 + 8)
 #define DATA_TO_TRANSMIT_BUFFER_SIZE 1048576
 #define DEJAVU_SWAP_PERIOD 30
+#define MAX_CONNECTION_DELAY 5
 #define MAX_NUMBER_OF_PEERS 64
 #define MAX_NUMBER_OF_PROCESSORS 1024
 #define MAX_NUMBER_OF_PUBLIC_PEERS 64
 #define MIN_ENERGY_AMOUNT 1000000
 #define MIN_NUMBER_OF_PEERS 4
 #define NUMBER_OF_COMPUTORS (26 * 26)
-#define PEER_RATING_PERIOD 5
+#define PEER_RATING_PERIOD 15
 #define PORT 21841
 #define PROTOCOL 2
 
@@ -3437,6 +3438,7 @@ typedef struct
     EFI_TCP4_PROTOCOL* tcp4Protocol;
     EFI_TCP4_LISTEN_TOKEN acceptToken;
     EFI_TCP4_CONNECTION_TOKEN connectToken;
+    unsigned long long connectionBeginningTick;
     EFI_HANDLE connectChildHandle;
     void* receiveBuffer;
     EFI_TCP4_RECEIVE_DATA receiveData;
@@ -4222,6 +4224,7 @@ static void connect(unsigned char* address)
         {
             peers[freePeerSlot].tcp4Protocol = tcp4Protocol;
             peers[freePeerSlot].acceptToken.NewChildHandle = NULL;
+            peers[freePeerSlot].connectionBeginningTick = __rdtsc();
             peers[freePeerSlot].connectChildHandle = childHandle;
             peers[freePeerSlot].prevNumberOfReceivedBytes = peers[freePeerSlot].numberOfReceivedBytes = 0;
             peers[freePeerSlot].prevNumberOfTransmittedBytes = peers[freePeerSlot].numberOfTransmittedBytes = 0;
@@ -4465,7 +4468,6 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
     {
         numberOfReceivedBytes += peer->receiveData.DataLength;
         *((unsigned long long*)&peer->receiveData.FragmentTable[0].FragmentBuffer) += peer->receiveData.DataLength;
-        peer->prevNumberOfReceivedBytes = peer->numberOfReceivedBytes;
         peer->numberOfReceivedBytes += peer->receiveData.DataLength;
         
     theOnlyGotoLabel:
@@ -4878,7 +4880,6 @@ static void transmitCallback(EFI_EVENT Event, void* Context)
     else
     {
         numberOfTransmittedBytes += peer->transmitData.DataLength;
-        peer->prevNumberOfTransmittedBytes = peer->numberOfTransmittedBytes;
         peer->numberOfTransmittedBytes += peer->transmitData.DataLength;
 
         if (peer->dataToTransmitSize)
@@ -5055,7 +5056,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.2.2 is launched.");
+    log(L"Qubic 0.2.3 is launched.");
 
     if (initialize())
     {
@@ -5119,19 +5120,19 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             connect(publicPeers[i].address);
                         }
 
-                        unsigned long long prevDejavuSwapTime = __rdtsc();
-                        unsigned long long prevPeerRatingTime = __rdtsc();
-                        /**/unsigned long long prevRewardDisplayTime = __rdtsc();
+                        unsigned long long prevDejavuSwapTick = __rdtsc();
+                        unsigned long long prevPeerRatingTick = __rdtsc();
+                        /**/unsigned long long prevRewardDisplayTick = __rdtsc();
                         while (!state)
                         {
-                            if (__rdtsc() - prevDejavuSwapTime >= DEJAVU_SWAP_PERIOD * frequency)
+                            if (__rdtsc() - prevDejavuSwapTick >= DEJAVU_SWAP_PERIOD * frequency)
                             {
                                 volatile unsigned long long* tmp = dejavu1;
                                 dejavu1 = dejavu0;
                                 bs->SetMem((void*)tmp, 536870912, 0);
                                 dejavu0 = tmp;
 
-                                prevDejavuSwapTime = __rdtsc();
+                                prevDejavuSwapTick = __rdtsc();
                             }
 
                             bs->RaiseTPL(TPL_NOTIFY);
@@ -5150,12 +5151,23 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     }
                                     else
                                     {
-                                        if (peers[i].type < 0)
-                                        {
-                                            numberOfWebSocketClients++;
-                                        }
-
                                         peers[i].tcp4Protocol->Poll(peers[i].tcp4Protocol);
+
+                                        if (!peers[i].acceptToken.NewChildHandle)
+                                        {
+                                            if ((!peers[i].numberOfReceivedBytes || !peers[i].numberOfTransmittedBytes)
+                                                && __rdtsc() - peers[i].connectionBeginningTick > MAX_CONNECTION_DELAY * frequency)
+                                            {
+                                                close(&peers[i]);
+                                            }
+                                        }
+                                        else
+                                        {
+                                            if (peers[i].type < 0)
+                                            {
+                                                numberOfWebSocketClients++;
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -5170,44 +5182,74 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 accept();
                             }
 
-                            if (__rdtsc() - prevPeerRatingTime >= PEER_RATING_PERIOD * frequency)
+                            if (__rdtsc() - prevPeerRatingTick >= PEER_RATING_PERIOD * frequency)
                             {
                                 int worstNumberOfReceivedBytesPeerIndex = -1;
                                 unsigned long long worstNumberOfReceivedBytesDelta = 0xFFFFFFFFFFFFFFFF;
+                                unsigned long long bestNumberOfReceivedBytesDelta = 0;
                                 int worstNumberOfTransmittedBytesPeerIndex = -1;
                                 unsigned long long worstNumberOfTransmittedBytesDelta = 0xFFFFFFFFFFFFFFFF;
+                                unsigned long long bestNumberOfTransmittedBytesDelta = 0;
 
-                                for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
+                                for (unsigned int i = MAX_NUMBER_OF_PEERS; i-- > 0; )
                                 {
                                     if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type > 0)
                                     {
-                                        if (peers[i].numberOfReceivedBytes - peers[i].prevNumberOfReceivedBytes < worstNumberOfReceivedBytesDelta)
+                                        unsigned long long delta = peers[i].numberOfReceivedBytes - peers[i].prevNumberOfReceivedBytes;
+                                        peers[i].prevNumberOfReceivedBytes = peers[i].numberOfReceivedBytes;
+                                        if (delta < worstNumberOfReceivedBytesDelta)
                                         {
                                             worstNumberOfReceivedBytesPeerIndex = i;
-                                            worstNumberOfReceivedBytesDelta = peers[i].numberOfReceivedBytes - peers[i].prevNumberOfReceivedBytes;
+                                            worstNumberOfReceivedBytesDelta = delta;
                                         }
-                                        if (peers[i].numberOfTransmittedBytes - peers[i].prevNumberOfTransmittedBytes < worstNumberOfTransmittedBytesDelta)
+                                        if (delta > bestNumberOfReceivedBytesDelta)
+                                        {
+                                            bestNumberOfReceivedBytesDelta = delta;
+                                        }
+                                        delta = peers[i].numberOfTransmittedBytes - peers[i].prevNumberOfTransmittedBytes;
+                                        peers[i].prevNumberOfTransmittedBytes = peers[i].numberOfTransmittedBytes;
+                                        if (delta < worstNumberOfTransmittedBytesDelta)
                                         {
                                             worstNumberOfTransmittedBytesPeerIndex = i;
-                                            worstNumberOfTransmittedBytesDelta = peers[i].numberOfTransmittedBytes - peers[i].prevNumberOfTransmittedBytes;
+                                            worstNumberOfTransmittedBytesDelta = delta;
+                                        }
+                                        if (delta > bestNumberOfTransmittedBytesDelta)
+                                        {
+                                            bestNumberOfTransmittedBytesDelta = delta;
                                         }
                                     }
                                 }
-                                if (worstNumberOfReceivedBytesPeerIndex >= 0)
+                                if (worstNumberOfReceivedBytesPeerIndex >= 0 && worstNumberOfReceivedBytesDelta < bestNumberOfReceivedBytesDelta / 3)
                                 {
-                                    log(L"A peer sending too few bytes is disconnected.");
+                                    setText(message, L"A peer sending too few bytes (");
+                                    appendNumber(message, worstNumberOfReceivedBytesDelta, TRUE);
+                                    appendText(message, L" / ");
+                                    appendNumber(message, bestNumberOfReceivedBytesDelta, TRUE);
+                                    appendText(message, L") is disconnected.");
+                                    log(message);
+
                                     close(&peers[worstNumberOfReceivedBytesPeerIndex]);
                                 }
-                                if (worstNumberOfTransmittedBytesPeerIndex >= 0 && worstNumberOfTransmittedBytesPeerIndex != worstNumberOfReceivedBytesPeerIndex)
+                                else
                                 {
-                                    log(L"A peer receiving too few bytes is disconnected.");
+                                    worstNumberOfReceivedBytesPeerIndex = -1;
+                                }
+                                if (worstNumberOfTransmittedBytesPeerIndex != worstNumberOfReceivedBytesPeerIndex && worstNumberOfTransmittedBytesPeerIndex >= 0 && worstNumberOfTransmittedBytesDelta < bestNumberOfTransmittedBytesDelta / 3)
+                                {
+                                    setText(message, L"A peer receiving too few bytes (");
+                                    appendNumber(message, worstNumberOfTransmittedBytesDelta, TRUE);
+                                    appendText(message, L" / ");
+                                    appendNumber(message, bestNumberOfTransmittedBytesDelta, TRUE);
+                                    appendText(message, L") is disconnected.");
+                                    log(message);
+
                                     close(&peers[worstNumberOfTransmittedBytesPeerIndex]);
                                 }
 
-                                prevPeerRatingTime = __rdtsc();
+                                prevPeerRatingTick = __rdtsc();
                             }
 
-                            if (__rdtsc() - prevRewardDisplayTime >= frequency)
+                            if (__rdtsc() - prevRewardDisplayTick >= frequency)
                             {
                                 unsigned int numberOfBusyProcessors = 0;
                                 for (unsigned int i = 0; i < numberOfProcessors; i++)
@@ -5219,7 +5261,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 }
                                 CHAR16 message[256]; setText(message, L"Reward points = "); appendNumber(message, rewardPoints, TRUE); appendText(message, L"/"); appendNumber(message, totalRewardPoints, TRUE); appendText(message, L" | ["); appendNumber(message, numberOfBusyProcessors * 100 / numberOfProcessors, FALSE); appendText(message, L"% CPU / "); appendNumber(message, numberOfProcessedRequests, TRUE); appendText(message, L"] "); appendNumber(message, MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots - numberOfWebSocketClients, TRUE); appendText(message, L"/"); appendNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" peers ("); appendNumber(message, numberOfReceivedBytes, TRUE); appendText(message, L" rx / "); appendNumber(message, numberOfTransmittedBytes, TRUE); appendText(message, L" tx)."); log(message);
 
-                                prevRewardDisplayTime = __rdtsc();
+                                prevRewardDisplayTick = __rdtsc();
                             }
 
                             {
