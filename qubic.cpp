@@ -3412,7 +3412,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define DEJAVU_SWAP_PERIOD 30
 #define MAX_NUMBER_OF_PEERS 64
 #define MAX_NUMBER_OF_PROCESSORS 1024
-#define MAX_NUMBER_OF_PUBLIC_PEERS 16
+#define MAX_NUMBER_OF_PUBLIC_PEERS 64
 #define MIN_ENERGY_AMOUNT 1000000
 #define MIN_NUMBER_OF_PEERS 4
 #define NUMBER_OF_COMPUTORS (26 * 26)
@@ -5055,7 +5055,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.2.1 is launched.");
+    log(L"Qubic 0.2.2 is launched.");
 
     if (initialize())
     {
@@ -5119,8 +5119,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             connect(publicPeers[i].address);
                         }
 
-                        unsigned long long prevDejavuSwapTime = 0;
-                        /**/unsigned long long prevRewardDisplayTime = 0;
+                        unsigned long long prevDejavuSwapTime = __rdtsc();
+                        unsigned long long prevPeerRatingTime = __rdtsc();
+                        /**/unsigned long long prevRewardDisplayTime = __rdtsc();
                         while (!state)
                         {
                             if (__rdtsc() - prevDejavuSwapTime >= DEJAVU_SWAP_PERIOD * frequency)
@@ -5167,6 +5168,43 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             if (!numberOfAcceptingPeerSlots && numberOfFreePeerSlots)
                             {
                                 accept();
+                            }
+
+                            if (__rdtsc() - prevPeerRatingTime >= PEER_RATING_PERIOD * frequency)
+                            {
+                                int worstNumberOfReceivedBytesPeerIndex = -1;
+                                unsigned long long worstNumberOfReceivedBytesDelta = 0xFFFFFFFFFFFFFFFF;
+                                int worstNumberOfTransmittedBytesPeerIndex = -1;
+                                unsigned long long worstNumberOfTransmittedBytesDelta = 0xFFFFFFFFFFFFFFFF;
+
+                                for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
+                                {
+                                    if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type > 0)
+                                    {
+                                        if (peers[i].numberOfReceivedBytes - peers[i].prevNumberOfReceivedBytes < worstNumberOfReceivedBytesDelta)
+                                        {
+                                            worstNumberOfReceivedBytesPeerIndex = i;
+                                            worstNumberOfReceivedBytesDelta = peers[i].numberOfReceivedBytes - peers[i].prevNumberOfReceivedBytes;
+                                        }
+                                        if (peers[i].numberOfTransmittedBytes - peers[i].prevNumberOfTransmittedBytes < worstNumberOfTransmittedBytesDelta)
+                                        {
+                                            worstNumberOfTransmittedBytesPeerIndex = i;
+                                            worstNumberOfTransmittedBytesDelta = peers[i].numberOfTransmittedBytes - peers[i].prevNumberOfTransmittedBytes;
+                                        }
+                                    }
+                                }
+                                if (worstNumberOfReceivedBytesPeerIndex >= 0)
+                                {
+                                    log(L"A peer sending too few bytes is disconnected.");
+                                    close(&peers[worstNumberOfReceivedBytesPeerIndex]);
+                                }
+                                if (worstNumberOfTransmittedBytesPeerIndex >= 0 && worstNumberOfTransmittedBytesPeerIndex != worstNumberOfReceivedBytesPeerIndex)
+                                {
+                                    log(L"A peer receiving too few bytes is disconnected.");
+                                    close(&peers[worstNumberOfTransmittedBytesPeerIndex]);
+                                }
+
+                                prevPeerRatingTime = __rdtsc();
                             }
 
                             if (__rdtsc() - prevRewardDisplayTime >= frequency)
