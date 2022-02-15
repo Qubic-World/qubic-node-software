@@ -5090,7 +5090,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.2.10 is launched.");
+    log(L"Qubic 0.2.11 is launched.");
 
     if (initialize())
     {
@@ -5268,31 +5268,34 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         numberOfDeltas++;
                                     }
                                 }
-                                if (worstNumberOfReceivedBytesPeerIndex >= 0 && worstNumberOfReceivedBytesDelta < numberOfReceivedBytesSumOfDeltas / (numberOfDeltas * 3))
+                                if (numberOfDeltas)
                                 {
-                                    setText(message, L"A peer sending too few bytes (");
-                                    appendNumber(message, worstNumberOfReceivedBytesDelta, TRUE);
-                                    appendText(message, L" / ");
-                                    appendNumber(message, numberOfReceivedBytesSumOfDeltas / numberOfDeltas, TRUE);
-                                    appendText(message, L") is disconnected.");
-                                    log(message);
+                                    if (worstNumberOfReceivedBytesPeerIndex >= 0 && worstNumberOfReceivedBytesDelta < numberOfReceivedBytesSumOfDeltas / (numberOfDeltas * 3))
+                                    {
+                                        setText(message, L"A peer sending too few bytes (");
+                                        appendNumber(message, worstNumberOfReceivedBytesDelta, TRUE);
+                                        appendText(message, L" / ");
+                                        appendNumber(message, numberOfReceivedBytesSumOfDeltas / numberOfDeltas, TRUE);
+                                        appendText(message, L") is disconnected.");
+                                        log(message);
 
-                                    close(&peers[worstNumberOfReceivedBytesPeerIndex]);
-                                }
-                                else
-                                {
-                                    worstNumberOfReceivedBytesPeerIndex = -1;
-                                }
-                                if (worstNumberOfTransmittedBytesPeerIndex != worstNumberOfReceivedBytesPeerIndex && worstNumberOfTransmittedBytesPeerIndex >= 0 && worstNumberOfTransmittedBytesDelta < numberOfTransmittedBytesSumOfDeltas / (numberOfDeltas * 3))
-                                {
-                                    setText(message, L"A peer receiving too few bytes (");
-                                    appendNumber(message, worstNumberOfTransmittedBytesDelta, TRUE);
-                                    appendText(message, L" / ");
-                                    appendNumber(message, numberOfTransmittedBytesSumOfDeltas / numberOfDeltas, TRUE);
-                                    appendText(message, L") is disconnected.");
-                                    log(message);
+                                        close(&peers[worstNumberOfReceivedBytesPeerIndex]);
+                                    }
+                                    else
+                                    {
+                                        worstNumberOfReceivedBytesPeerIndex = -1;
+                                    }
+                                    if (worstNumberOfTransmittedBytesPeerIndex != worstNumberOfReceivedBytesPeerIndex && worstNumberOfTransmittedBytesPeerIndex >= 0 && worstNumberOfTransmittedBytesDelta < numberOfTransmittedBytesSumOfDeltas / (numberOfDeltas * 3))
+                                    {
+                                        setText(message, L"A peer receiving too few bytes (");
+                                        appendNumber(message, worstNumberOfTransmittedBytesDelta, TRUE);
+                                        appendText(message, L" / ");
+                                        appendNumber(message, numberOfTransmittedBytesSumOfDeltas / numberOfDeltas, TRUE);
+                                        appendText(message, L") is disconnected.");
+                                        log(message);
 
-                                    close(&peers[worstNumberOfTransmittedBytesPeerIndex]);
+                                        close(&peers[worstNumberOfTransmittedBytesPeerIndex]);
+                                    }
                                 }
 
                                 prevPeerRatingTick = __rdtsc();
@@ -5300,13 +5303,16 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                             if (__rdtsc() - prevRewardDisplayTick >= frequency)
                             {
-                                CHAR16 message[256]; setText(message, L"Reward = "); appendNumber(message, rewardPoints * 34100000000 / totalRewardPoints, TRUE); appendText(message, L" qus | ["); appendNumber(message, (numberOfBusyProcessorsSumOfValues * 100) / (numberOfBusyProcessorsNumberOfValues * numberOfProcessors), FALSE); appendText(message, L"% CPU / +"); appendNumber(message, numberOfProcessedRequests - prevNumberOfProcessedRequests, TRUE); appendText(message, L" / -"); appendNumber(message, numberOfSkippedRequests - prevNumberOfSkippedRequests, TRUE); appendText(message, L"] "); appendNumber(message, MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots - numberOfWebSocketClients, TRUE); appendText(message, L"/"); appendNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" peers ("); appendNumber(message, numberOfReceivedBytes - prevNumberOfReceivedBytes, TRUE); appendText(message, L" rx / "); appendNumber(message, numberOfTransmittedBytes - prevNumberOfTransmittedBytes, TRUE); appendText(message, L" tx)."); log(message);
-                                numberOfBusyProcessorsSumOfValues = 0;
-                                numberOfBusyProcessorsNumberOfValues = 0;
-                                prevNumberOfProcessedRequests = numberOfProcessedRequests;
-                                prevNumberOfSkippedRequests = numberOfSkippedRequests;
-                                prevNumberOfReceivedBytes = numberOfReceivedBytes;
-                                prevNumberOfTransmittedBytes = numberOfTransmittedBytes;
+                                if (numberOfBusyProcessorsNumberOfValues)
+                                {
+                                    CHAR16 message[256]; setText(message, L"Reward = "); appendNumber(message, rewardPoints * 34100000000 / totalRewardPoints, TRUE); appendText(message, L" qus | ["); appendNumber(message, (numberOfBusyProcessorsSumOfValues * 100) / (numberOfBusyProcessorsNumberOfValues * numberOfProcessors), FALSE); appendText(message, L"% CPU / +"); appendNumber(message, numberOfProcessedRequests - prevNumberOfProcessedRequests, TRUE); appendText(message, L" / -"); appendNumber(message, numberOfSkippedRequests - prevNumberOfSkippedRequests, TRUE); appendText(message, L"] "); appendNumber(message, MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots - numberOfWebSocketClients, TRUE); appendText(message, L"/"); appendNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" peers ("); appendNumber(message, numberOfReceivedBytes - prevNumberOfReceivedBytes, TRUE); appendText(message, L" rx / "); appendNumber(message, numberOfTransmittedBytes - prevNumberOfTransmittedBytes, TRUE); appendText(message, L" tx)."); log(message);
+                                    numberOfBusyProcessorsSumOfValues = 0;
+                                    numberOfBusyProcessorsNumberOfValues = 0;
+                                    prevNumberOfProcessedRequests = numberOfProcessedRequests;
+                                    prevNumberOfSkippedRequests = numberOfSkippedRequests;
+                                    prevNumberOfReceivedBytes = numberOfReceivedBytes;
+                                    prevNumberOfTransmittedBytes = numberOfTransmittedBytes;
+                                }
 
                                 prevRewardDisplayTick = __rdtsc();
                             }
