@@ -3603,6 +3603,7 @@ static EFI_MP_SERVICES_PROTOCOL* mpServicesProtocol;
 static unsigned long long frequency;
 static unsigned int numberOfProcessors = 0;
 static volatile long long numberOfBusyProcessors = 0;
+static unsigned long long numberOfBusyProcessorsSumOfValues = 0, numberOfBusyProcessorsNumberOfValues = 0;
 static Processor processors[MAX_NUMBER_OF_PROCESSORS];
 static unsigned int latestUsedProcessorIndex = (unsigned int)(-1);
 static volatile long long numberOfProcessedRequests = 0, prevNumberOfProcessedRequests = 0;
@@ -3728,7 +3729,7 @@ static void requestProcessor(void* ProcedureArgument)
                         response->padding = 0;
                         *((__m256i*)response->ownPublicKey) = *((__m256i*)ownPublicKey);
                         response->numberOfProcessors = numberOfProcessors;
-                        response->numberOfBusyProcessors = (unsigned short)_interlockedadd64(&numberOfBusyProcessors, 0);
+                        response->numberOfBusyProcessors = (unsigned short)numberOfBusyProcessors;
                         response->launchTime = launchTime;
                         response->numberOfProcessedRequests = numberOfProcessedRequests;
                         response->numberOfReceivedBytes = numberOfReceivedBytes;
@@ -4511,32 +4512,38 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                     }
                     else
                     {
-                        int counter = numberOfProcessors;
-                        while (counter-- > 0)
+                        numberOfBusyProcessorsSumOfValues += numberOfBusyProcessors;
+                        numberOfBusyProcessorsNumberOfValues++;
+
+                        if (numberOfBusyProcessors < numberOfProcessors)
                         {
-                            if (++latestUsedProcessorIndex == numberOfProcessors)
+                            int counter = numberOfProcessors;
+                            while (counter-- > 0)
                             {
-                                latestUsedProcessorIndex = 0;
-                            }
+                                if (++latestUsedProcessorIndex == numberOfProcessors)
+                                {
+                                    latestUsedProcessorIndex = 0;
+                                }
 
-                            if (!processors[latestUsedProcessorIndex].peer)
-                            {
-                                processors[latestUsedProcessorIndex].peer = peer;
-                                processors[latestUsedProcessorIndex].peerId = peer->id;
+                                if (!processors[latestUsedProcessorIndex].peer)
+                                {
+                                    processors[latestUsedProcessorIndex].peer = peer;
+                                    processors[latestUsedProcessorIndex].peerId = peer->id;
 
-                                bs->CopyMem(processors[latestUsedProcessorIndex].requestBuffer, &((char*)peer->receiveBuffer)[ptr], requestResponseHeader->size);
+                                    bs->CopyMem(processors[latestUsedProcessorIndex].requestBuffer, &((char*)peer->receiveBuffer)[ptr], requestResponseHeader->size);
 
-                                bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, responseCallback, &processors[latestUsedProcessorIndex], &processors[latestUsedProcessorIndex].event);
-                                mpServicesProtocol->StartupThisAP(mpServicesProtocol, requestProcessor, processors[latestUsedProcessorIndex].number, processors[latestUsedProcessorIndex].event, 0, &processors[latestUsedProcessorIndex], NULL);
+                                    bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, responseCallback, &processors[latestUsedProcessorIndex], &processors[latestUsedProcessorIndex].event);
+                                    mpServicesProtocol->StartupThisAP(mpServicesProtocol, requestProcessor, processors[latestUsedProcessorIndex].number, processors[latestUsedProcessorIndex].event, 0, &processors[latestUsedProcessorIndex], NULL);
 
-                                bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + ptr + requestResponseHeader->size, receivedDataSize -= (ptr + requestResponseHeader->size));
-                                peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + receivedDataSize;
+                                    bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + ptr + requestResponseHeader->size, receivedDataSize -= (ptr + requestResponseHeader->size));
+                                    peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + receivedDataSize;
 
-                                goto theOnlyGotoLabel;
+                                    goto theOnlyGotoLabel;
+                                }
                             }
                         }
 
-                        if (requestResponse1stStagePriorities[requestResponseHeader->type] > _interlockedadd64(&numberOfBusyProcessors, 0) * 100 / numberOfProcessors)
+                        if (requestResponse1stStagePriorities[requestResponseHeader->type] > numberOfBusyProcessors * 100 / numberOfProcessors)
                         {
                             bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + ptr + requestResponseHeader->size, receivedDataSize -= (ptr + requestResponseHeader->size));
                             peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + receivedDataSize;
@@ -4833,44 +4840,50 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                     {
                         if (receivedDataSize >= requestResponseHeader->size)
                         {
-                            int counter = numberOfProcessors;
-                            while (counter-- > 0)
+                            numberOfBusyProcessorsSumOfValues += numberOfBusyProcessors;
+                            numberOfBusyProcessorsNumberOfValues++;
+
+                            if (numberOfBusyProcessors < numberOfProcessors)
                             {
-                                if (++latestUsedProcessorIndex == numberOfProcessors)
+                                int counter = numberOfProcessors;
+                                while (counter-- > 0)
                                 {
-                                    latestUsedProcessorIndex = 0;
-                                }
-
-                                if (!processors[latestUsedProcessorIndex].peer)
-                                {
-                                    processors[latestUsedProcessorIndex].peer = peer;
-                                    processors[latestUsedProcessorIndex].peerId = peer->id;
-                                    if (receivedDataSize == requestResponseHeader->size)
+                                    if (++latestUsedProcessorIndex == numberOfProcessors)
                                     {
-                                        void* tmp = processors[latestUsedProcessorIndex].requestBuffer;
-                                        processors[latestUsedProcessorIndex].requestBuffer = peer->receiveBuffer;
-
-                                        bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, responseCallback, &processors[latestUsedProcessorIndex], &processors[latestUsedProcessorIndex].event);
-                                        mpServicesProtocol->StartupThisAP(mpServicesProtocol, requestProcessor, processors[latestUsedProcessorIndex].number, processors[latestUsedProcessorIndex].event, 0, &processors[latestUsedProcessorIndex], NULL);
-
-                                        peer->receiveData.FragmentTable[0].FragmentBuffer = peer->receiveBuffer = tmp;
-                                    }
-                                    else
-                                    {
-                                        bs->CopyMem(processors[latestUsedProcessorIndex].requestBuffer, peer->receiveBuffer, requestResponseHeader->size);
-
-                                        bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, responseCallback, &processors[latestUsedProcessorIndex], &processors[latestUsedProcessorIndex].event);
-                                        mpServicesProtocol->StartupThisAP(mpServicesProtocol, requestProcessor, processors[latestUsedProcessorIndex].number, processors[latestUsedProcessorIndex].event, 0, &processors[latestUsedProcessorIndex], NULL);
-
-                                        bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + requestResponseHeader->size, receivedDataSize -= requestResponseHeader->size);
-                                        peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + receivedDataSize;
+                                        latestUsedProcessorIndex = 0;
                                     }
 
-                                    goto theOnlyGotoLabel;
+                                    if (!processors[latestUsedProcessorIndex].peer)
+                                    {
+                                        processors[latestUsedProcessorIndex].peer = peer;
+                                        processors[latestUsedProcessorIndex].peerId = peer->id;
+                                        if (receivedDataSize == requestResponseHeader->size)
+                                        {
+                                            void* tmp = processors[latestUsedProcessorIndex].requestBuffer;
+                                            processors[latestUsedProcessorIndex].requestBuffer = peer->receiveBuffer;
+
+                                            bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, responseCallback, &processors[latestUsedProcessorIndex], &processors[latestUsedProcessorIndex].event);
+                                            mpServicesProtocol->StartupThisAP(mpServicesProtocol, requestProcessor, processors[latestUsedProcessorIndex].number, processors[latestUsedProcessorIndex].event, 0, &processors[latestUsedProcessorIndex], NULL);
+
+                                            peer->receiveData.FragmentTable[0].FragmentBuffer = peer->receiveBuffer = tmp;
+                                        }
+                                        else
+                                        {
+                                            bs->CopyMem(processors[latestUsedProcessorIndex].requestBuffer, peer->receiveBuffer, requestResponseHeader->size);
+
+                                            bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, responseCallback, &processors[latestUsedProcessorIndex], &processors[latestUsedProcessorIndex].event);
+                                            mpServicesProtocol->StartupThisAP(mpServicesProtocol, requestProcessor, processors[latestUsedProcessorIndex].number, processors[latestUsedProcessorIndex].event, 0, &processors[latestUsedProcessorIndex], NULL);
+
+                                            bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + requestResponseHeader->size, receivedDataSize -= requestResponseHeader->size);
+                                            peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + receivedDataSize;
+                                        }
+
+                                        goto theOnlyGotoLabel;
+                                    }
                                 }
                             }
 
-                            if (requestResponse1stStagePriorities[requestResponseHeader->type] > _interlockedadd64(&numberOfBusyProcessors, 0) * 100 / numberOfProcessors)
+                            if (requestResponse1stStagePriorities[requestResponseHeader->type] > numberOfBusyProcessors * 100 / numberOfProcessors)
                             {
                                 if (receivedDataSize == requestResponseHeader->size)
                                 {
@@ -5077,7 +5090,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.2.9 is launched.");
+    log(L"Qubic 0.2.10 is launched.");
 
     if (initialize())
     {
@@ -5224,10 +5237,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             {
                                 int worstNumberOfReceivedBytesPeerIndex = -1;
                                 unsigned long long worstNumberOfReceivedBytesDelta = 0xFFFFFFFFFFFFFFFF;
-                                unsigned long long bestNumberOfReceivedBytesDelta = 0;
+                                unsigned long long numberOfReceivedBytesSumOfDeltas = 0;
                                 int worstNumberOfTransmittedBytesPeerIndex = -1;
                                 unsigned long long worstNumberOfTransmittedBytesDelta = 0xFFFFFFFFFFFFFFFF;
-                                unsigned long long bestNumberOfTransmittedBytesDelta = 0;
+                                unsigned long long numberOfTransmittedBytesSumOfDeltas = 0;
+                                unsigned long long numberOfDeltas = 0;
 
                                 for (unsigned int i = MAX_NUMBER_OF_PEERS; i-- > 0; )
                                 {
@@ -5240,10 +5254,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             worstNumberOfReceivedBytesPeerIndex = i;
                                             worstNumberOfReceivedBytesDelta = delta;
                                         }
-                                        if (delta > bestNumberOfReceivedBytesDelta)
-                                        {
-                                            bestNumberOfReceivedBytesDelta = delta;
-                                        }
+                                        numberOfReceivedBytesSumOfDeltas += delta;
+
                                         delta = peers[i].numberOfTransmittedBytes - peers[i].prevNumberOfTransmittedBytes;
                                         peers[i].prevNumberOfTransmittedBytes = peers[i].numberOfTransmittedBytes;
                                         if (delta < worstNumberOfTransmittedBytesDelta)
@@ -5251,18 +5263,17 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             worstNumberOfTransmittedBytesPeerIndex = i;
                                             worstNumberOfTransmittedBytesDelta = delta;
                                         }
-                                        if (delta > bestNumberOfTransmittedBytesDelta)
-                                        {
-                                            bestNumberOfTransmittedBytesDelta = delta;
-                                        }
+                                        numberOfTransmittedBytesSumOfDeltas += delta;
+
+                                        numberOfDeltas++;
                                     }
                                 }
-                                if (worstNumberOfReceivedBytesPeerIndex >= 0 && worstNumberOfReceivedBytesDelta < bestNumberOfReceivedBytesDelta / 3)
+                                if (worstNumberOfReceivedBytesPeerIndex >= 0 && worstNumberOfReceivedBytesDelta < numberOfReceivedBytesSumOfDeltas / (numberOfDeltas * 3))
                                 {
                                     setText(message, L"A peer sending too few bytes (");
                                     appendNumber(message, worstNumberOfReceivedBytesDelta, TRUE);
                                     appendText(message, L" / ");
-                                    appendNumber(message, bestNumberOfReceivedBytesDelta, TRUE);
+                                    appendNumber(message, numberOfReceivedBytesSumOfDeltas / numberOfDeltas, TRUE);
                                     appendText(message, L") is disconnected.");
                                     log(message);
 
@@ -5272,12 +5283,12 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 {
                                     worstNumberOfReceivedBytesPeerIndex = -1;
                                 }
-                                if (worstNumberOfTransmittedBytesPeerIndex != worstNumberOfReceivedBytesPeerIndex && worstNumberOfTransmittedBytesPeerIndex >= 0 && worstNumberOfTransmittedBytesDelta < bestNumberOfTransmittedBytesDelta / 3)
+                                if (worstNumberOfTransmittedBytesPeerIndex != worstNumberOfReceivedBytesPeerIndex && worstNumberOfTransmittedBytesPeerIndex >= 0 && worstNumberOfTransmittedBytesDelta < numberOfTransmittedBytesSumOfDeltas / (numberOfDeltas * 3))
                                 {
                                     setText(message, L"A peer receiving too few bytes (");
                                     appendNumber(message, worstNumberOfTransmittedBytesDelta, TRUE);
                                     appendText(message, L" / ");
-                                    appendNumber(message, bestNumberOfTransmittedBytesDelta, TRUE);
+                                    appendNumber(message, numberOfTransmittedBytesSumOfDeltas / numberOfDeltas, TRUE);
                                     appendText(message, L") is disconnected.");
                                     log(message);
 
@@ -5289,7 +5300,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                             if (__rdtsc() - prevRewardDisplayTick >= frequency)
                             {
-                                CHAR16 message[256]; setText(message, L"Reward = "); appendNumber(message, rewardPoints * 34100000000 / totalRewardPoints, TRUE); appendText(message, L" qus | ["); appendNumber(message, _interlockedadd64(&numberOfBusyProcessors, 0) * 100 / numberOfProcessors, FALSE); appendText(message, L"% CPU / +"); appendNumber(message, numberOfProcessedRequests - prevNumberOfProcessedRequests, TRUE); appendText(message, L" / -"); appendNumber(message, numberOfSkippedRequests - prevNumberOfSkippedRequests, TRUE); appendText(message, L"] "); appendNumber(message, MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots - numberOfWebSocketClients, TRUE); appendText(message, L"/"); appendNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" peers ("); appendNumber(message, numberOfReceivedBytes - prevNumberOfReceivedBytes, TRUE); appendText(message, L" rx / "); appendNumber(message, numberOfTransmittedBytes - prevNumberOfTransmittedBytes, TRUE); appendText(message, L" tx)."); log(message);
+                                CHAR16 message[256]; setText(message, L"Reward = "); appendNumber(message, rewardPoints * 34100000000 / totalRewardPoints, TRUE); appendText(message, L" qus | ["); appendNumber(message, (numberOfBusyProcessorsSumOfValues * 100) / (numberOfBusyProcessorsNumberOfValues * numberOfProcessors), FALSE); appendText(message, L"% CPU / +"); appendNumber(message, numberOfProcessedRequests - prevNumberOfProcessedRequests, TRUE); appendText(message, L" / -"); appendNumber(message, numberOfSkippedRequests - prevNumberOfSkippedRequests, TRUE); appendText(message, L"] "); appendNumber(message, MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots - numberOfWebSocketClients, TRUE); appendText(message, L"/"); appendNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" peers ("); appendNumber(message, numberOfReceivedBytes - prevNumberOfReceivedBytes, TRUE); appendText(message, L" rx / "); appendNumber(message, numberOfTransmittedBytes - prevNumberOfTransmittedBytes, TRUE); appendText(message, L" tx)."); log(message);
+                                numberOfBusyProcessorsSumOfValues = 0;
+                                numberOfBusyProcessorsNumberOfValues = 0;
                                 prevNumberOfProcessedRequests = numberOfProcessedRequests;
                                 prevNumberOfSkippedRequests = numberOfSkippedRequests;
                                 prevNumberOfReceivedBytes = numberOfReceivedBytes;
