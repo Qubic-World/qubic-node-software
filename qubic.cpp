@@ -3583,7 +3583,7 @@ const unsigned char requestResponse1stStagePriorities[] = {
 
 static volatile int state = 0;
 
-static unsigned long long launchTime = 0;
+static unsigned long long launchTime;
 
 static unsigned char ownSubseed[32], ownPrivateKey[32], ownPublicKey[32], operatorPublicKey[32], adminPublicKey[32];
 static unsigned long long latestOperatorTimestamp;
@@ -3638,18 +3638,84 @@ static void increaseEnergy(unsigned char* publicKey, unsigned long long amount)
 {
     unsigned int index = (*((unsigned int*)publicKey)) & 0xFFFFFF;
 
-    while (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)entities[index].publicKey), ZERO)) != 0xFFFFFFFF
-        && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)entities[index].publicKey), *((__m256i*)publicKey))) != 0xFFFFFFFF)
+iteration:
+    while (_InterlockedCompareExchange8(&entities[index].lock, 1, 0))
     {
-        index = (index + 1) & 0xFFFFFF;
     }
 
-    ////////
+    if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)entities[index].publicKey), *((__m256i*)publicKey))) == 0xFFFFFFFF)
+    {
+        entities[index].amount += amount;
+    }
+    else
+    {
+        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)entities[index].publicKey), ZERO)) == 0xFFFFFFFF)
+        {
+            *((__m256i*)entities[index].publicKey) = *((__m256i*)publicKey);
+            entities[index].amount = amount;
+        }
+        else
+        {
+            entities[index].lock = 0;
+
+            index = (index + 1) & 0xFFFFFF;
+
+            goto iteration;
+        }
+    }
+
+    entities[index].latestUpdateTick = tick;
+
+    entities[index].lock = 0;
 }
 
 static BOOLEAN decreaseEnergy(unsigned char* publicKey, unsigned long long timestamp, unsigned long long amount)
 {
-    /////
+    unsigned int index = (*((unsigned int*)publicKey)) & 0xFFFFFF;
+
+iteration:
+    while (_InterlockedCompareExchange8(&entities[index].lock, 1, 0))
+    {
+    }
+
+    if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)entities[index].publicKey), *((__m256i*)publicKey))) == 0xFFFFFFFF)
+    {
+        if (timestamp > entities[index].latestTimestamp)
+        {
+            if (entities[index].amount >= amount)
+            {
+                entities[index].latestTimestamp = timestamp;
+                if (entities[index].amount < amount + MIN_ENERGY_AMOUNT)
+                {
+                    entities[index].amount = 0;
+                }
+                else
+                {
+                    entities[index].amount -= amount;
+                }
+                entities[index].latestUpdateTick = tick;
+
+                entities[index].lock = 0;
+
+                return TRUE;
+            }
+        }
+    }
+    else
+    {
+        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)entities[index].publicKey), ZERO)) != 0xFFFFFFFF)
+        {
+            entities[index].lock = 0;
+
+            index = (index + 1) & 0xFFFFFF;
+
+            goto iteration;
+        }
+    }
+
+    entities[index].lock = 0;
+
+    return FALSE;
 }
 
 static void addPublicPeer(unsigned char address[4])
@@ -3856,7 +3922,7 @@ static void requestProcessor(void* ProcedureArgument)
     case BROADCAST_TRANSFER:
     {
         BroadcastTransfer* request = (BroadcastTransfer*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
-        if (request->amount >= MIN_ENERGY_AMOUNT)
+        if (request->timestamp >= launchTime && request->amount >= MIN_ENERGY_AMOUNT)
         {
             unsigned int saltedId;
 
@@ -4237,6 +4303,7 @@ static void connect(unsigned char* address)
             peers[freePeerSlot].prevNumberOfTransmittedBytes = peers[freePeerSlot].numberOfTransmittedBytes = 0;
             bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, connectCallback, &peers[freePeerSlot], &peers[freePeerSlot].connectToken.CompletionToken.Event);
             EFI_STATUS status;
+            /**/if (((unsigned long long)peers[freePeerSlot].tcp4Protocol) <= 1) { log(L"::1"); bs->Stall(1000000000); };
             if (status = peers[freePeerSlot].tcp4Protocol->Connect(peers[freePeerSlot].tcp4Protocol, &peers[freePeerSlot].connectToken))
             {
                 logStatus(L"EFI_TCP4_PROTOCOL.Connect() fails", status);
@@ -4263,6 +4330,7 @@ static void close(Peer* peer)
     {
         bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, closeCallback, peer, &peer->closeToken.CompletionToken.Event);
         EFI_STATUS status;
+        /**/if (((unsigned long long)peer->tcp4Protocol) <= 1) { log(L"::2"); bs->Stall(1000000000); };
         if (status = peer->tcp4Protocol->Close(peer->tcp4Protocol, &peer->closeToken))
         {
             logStatus(L"EFI_TCP4_PROTOCOL.Close() fails", status);
@@ -4300,6 +4368,7 @@ static void receive(Peer* peer)
             EFI_STATUS status;
             bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, receiveCallback, peer, &peer->receiveToken.CompletionToken.Event);
             peer->receiveData.DataLength = peer->receiveData.FragmentTable[0].FragmentLength = BUFFER_SIZE - (unsigned int)((unsigned long long)peer->receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peer->receiveBuffer);
+            /**/if (((unsigned long long)peer->tcp4Protocol) <= 1) { log(L"::3"); bs->Stall(1000000000); };
             if (status = peer->tcp4Protocol->Receive(peer->tcp4Protocol, &peer->receiveToken))
             {
                 if (status != EFI_ACCESS_DENIED)
@@ -4348,6 +4417,7 @@ static void transmit(Peer* peer, unsigned int size)
         }
 
         peer->transmitData.DataLength = peer->transmitData.FragmentTable[0].FragmentLength = size;
+        /**/if (((unsigned long long)peer->tcp4Protocol) <= 1) { log(L"::4"); bs->Stall(1000000000); };
         if (status = peer->tcp4Protocol->Transmit(peer->tcp4Protocol, &peer->transmitToken))
         {
             if (status != EFI_ACCESS_DENIED)
@@ -4366,6 +4436,8 @@ static void transmit(Peer* peer, unsigned int size)
 
 static void acceptCallback(EFI_EVENT Event, void* Context)
 {
+    const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
+
     bs->CloseEvent(Event);
 
     Peer* peer = (Peer*)Context;
@@ -4391,10 +4463,14 @@ static void acceptCallback(EFI_EVENT Event, void* Context)
     }
 
     accept();
+
+    bs->RestoreTPL(tpl);
 }
 
 static void connectCallback(EFI_EVENT Event, void* Context)
 {
+    const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
+
     bs->CloseEvent(Event);
 
     Peer* peer = (Peer*)Context;
@@ -4439,10 +4515,14 @@ static void connectCallback(EFI_EVENT Event, void* Context)
         peer->receiveData.FragmentTable[0].FragmentBuffer = peer->receiveBuffer;
         receive(peer);
     }
+
+    bs->RestoreTPL(tpl);
 }
 
 static void closeCallback(EFI_EVENT Event, void* Context)
 {
+    const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
+
     bs->CloseEvent(Event);
 
     Peer* peer = (Peer*)Context;
@@ -4456,10 +4536,14 @@ static void closeCallback(EFI_EVENT Event, void* Context)
         tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peer->connectChildHandle);
     }
     peer->tcp4Protocol = NULL;
+
+    bs->RestoreTPL(tpl);
 }
 
 static void receiveCallback(EFI_EVENT Event, void* Context)
 {
+    const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
+
     bs->CloseEvent(Event);
 
     Peer* peer = (Peer*)Context;
@@ -4473,7 +4557,7 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
         *((unsigned long long*)&peer->receiveData.FragmentTable[0].FragmentBuffer) += peer->receiveData.DataLength;
         peer->numberOfReceivedBytes += peer->receiveData.DataLength;
         
-    theOnlyGotoLabel:
+    iteration:
         unsigned int receivedDataSize = (unsigned int)((unsigned long long)peer->receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peer->receiveBuffer);
 
         if (peer->type < 0)
@@ -4538,7 +4622,7 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                                     bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + ptr + requestResponseHeader->size, receivedDataSize -= (ptr + requestResponseHeader->size));
                                     peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + receivedDataSize;
 
-                                    goto theOnlyGotoLabel;
+                                    goto iteration;
                                 }
                             }
                         }
@@ -4797,6 +4881,7 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                     EFI_STATUS status;
                     bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, transmitCallback, peer, &peer->transmitToken.CompletionToken.Event);
                     peer->transmitData.DataLength = peer->transmitData.FragmentTable[0].FragmentLength = i;
+                    /**/if (((unsigned long long)peer->tcp4Protocol) <= 1) { log(L"::5"); bs->Stall(1000000000); };
                     if (status = peer->tcp4Protocol->Transmit(peer->tcp4Protocol, &peer->transmitToken))
                     {
                         if (status != EFI_ACCESS_DENIED)
@@ -4861,11 +4946,10 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                                         {
                                             void* tmp = processors[latestUsedProcessorIndex].requestBuffer;
                                             processors[latestUsedProcessorIndex].requestBuffer = peer->receiveBuffer;
+                                            peer->receiveData.FragmentTable[0].FragmentBuffer = peer->receiveBuffer = tmp;
 
                                             bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, responseCallback, &processors[latestUsedProcessorIndex], &processors[latestUsedProcessorIndex].event);
                                             mpServicesProtocol->StartupThisAP(mpServicesProtocol, requestProcessor, processors[latestUsedProcessorIndex].number, processors[latestUsedProcessorIndex].event, 0, &processors[latestUsedProcessorIndex], NULL);
-
-                                            peer->receiveData.FragmentTable[0].FragmentBuffer = peer->receiveBuffer = tmp;
                                         }
                                         else
                                         {
@@ -4878,7 +4962,7 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                                             peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + receivedDataSize;
                                         }
 
-                                        goto theOnlyGotoLabel;
+                                        goto iteration;
                                     }
                                 }
                             }
@@ -4905,10 +4989,14 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
             }
         }
     }
+
+    bs->RestoreTPL(tpl);
 }
 
 static void transmitCallback(EFI_EVENT Event, void* Context)
 {
+    const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
+
     bs->CloseEvent(Event);
 
     Peer* peer = (Peer*)Context;
@@ -4935,6 +5023,8 @@ static void transmitCallback(EFI_EVENT Event, void* Context)
             peer->isTransmitting = FALSE;
         }
     }
+
+    bs->RestoreTPL(tpl);
 }
 
 static void processorInitializationProcessor(void* ProcedureArgument)
@@ -5090,7 +5180,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.2.11 is launched.");
+    log(L"Qubic 0.2.12 is launched.");
 
     if (initialize())
     {
@@ -5185,6 +5275,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     }
                                     else
                                     {
+                                        /**/if (((unsigned long long)peers[i].tcp4Protocol) <= 1) { log(L"::6"); bs->Stall(1000000000); };
                                         peers[i].tcp4Protocol->Poll(peers[i].tcp4Protocol);
 
                                         if (!peers[i].acceptToken.NewChildHandle)
