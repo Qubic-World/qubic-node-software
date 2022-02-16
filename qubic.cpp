@@ -3412,7 +3412,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define MAX_CONNECTION_DELAY 5
 #define MAX_NUMBER_OF_PEERS 64
 #define MAX_NUMBER_OF_PROCESSORS 1024
-#define MAX_NUMBER_OF_PUBLIC_PEERS 64
+#define MAX_NUMBER_OF_PUBLIC_PEERS 16
 #define MIN_ENERGY_AMOUNT 1000000
 #define MIN_NUMBER_OF_PEERS 4
 #define NUMBER_OF_COMPUTORS (26 * 26)
@@ -3843,12 +3843,6 @@ static void requestProcessor(void* ProcedureArgument)
 
     case EXCHANGE_PUBLIC_PEERS:
     {
-        unsigned int randoms[MIN_NUMBER_OF_PEERS];
-        for (unsigned int i = 0; i < MIN_NUMBER_OF_PEERS; i++)
-        {
-            _rdrand32_step(&randoms[i]);
-        }
-
         while (_InterlockedCompareExchange8(&publicPeersLock, 1, 0))
         {
         }
@@ -3860,7 +3854,9 @@ static void requestProcessor(void* ProcedureArgument)
             ExchangePublicPeers* response = (ExchangePublicPeers*)((char*)processor->responseBuffer + sizeof(RequestResponseHeader));
             for (unsigned int i = 0; i < MIN_NUMBER_OF_PEERS; i++)
             {
-                *((int*)response->peers[i]) = *((int*)publicPeers[randoms[i] % numberOfPublicPeers].address);
+                unsigned int random;
+                _rdrand32_step(&random);
+                *((int*)response->peers[i]) = *((int*)publicPeers[random % numberOfPublicPeers].address);
             }
 
             responseHeader->size = sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers);
@@ -4326,7 +4322,7 @@ static void close(Peer* peer)
 {
     const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
 
-    if (peer->tcp4Protocol)
+    if (((unsigned long long)peer->tcp4Protocol) > 1)
     {
         bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, closeCallback, peer, &peer->closeToken.CompletionToken.Event);
         EFI_STATUS status;
@@ -4356,7 +4352,7 @@ static void receive(Peer* peer)
 {
     const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
 
-    if (peer->tcp4Protocol)
+    if (((unsigned long long)peer->tcp4Protocol) > 1)
     {
         if (((unsigned long long)peer->receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peer->receiveBuffer) >= BUFFER_SIZE)
         {
@@ -4390,7 +4386,7 @@ static void transmit(Peer* peer, unsigned int size)
 {
     const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
 
-    if (peer->tcp4Protocol)
+    if (((unsigned long long)peer->tcp4Protocol) > 1)
     {
         peer->isTransmitting = TRUE;
 
@@ -5076,7 +5072,7 @@ static BOOLEAN initialize()
 
             return FALSE;
         }
-        bs->SetMem(entities, (((unsigned long long)1) << 24) * 64, 0);
+        bs->SetMem(entities, 0x1000000 * sizeof(Entity), 0);
     }
 
     if ((status = bs->AllocatePool(EfiRuntimeServicesData, 536870912, (void**)&dejavu0))
@@ -5180,7 +5176,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.2.12 is launched.");
+    log(L"Qubic 0.2.13 is launched.");
 
     if (initialize())
     {
