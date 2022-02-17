@@ -4132,7 +4132,6 @@ static EFI_HANDLE getTcp4Protocol(const unsigned char* remoteAddress, EFI_TCP4_P
                 && status != EFI_NO_MAPPING)
             {
                 logStatus(L"EFI_TCP4_PROTOCOL.Configure() fails", status);
-                /**/if (remoteAddress) { CHAR16 msg[256]; setNumber(msg, remoteAddress[0], TRUE); appendText(msg, L"."); appendNumber(msg, remoteAddress[1], TRUE); appendText(msg, L"."); appendNumber(msg, remoteAddress[2], TRUE); appendText(msg, L"."); appendNumber(msg, remoteAddress[3], TRUE); appendText(msg, L"!!!"); }
 
                 return NULL;
             }
@@ -4394,6 +4393,10 @@ static void receive(Peer* peer)
             }
         }
     }
+    else
+    {
+        close(peer);
+    }
 
     bs->RestoreTPL(tpl);
 }
@@ -4458,6 +4461,10 @@ static void transmit(Peer* peer, unsigned int size)
             close(peer);
         }
     }
+    else
+    {
+        close(peer);
+    }
 
     bs->RestoreTPL(tpl);
 }
@@ -4469,7 +4476,13 @@ static void acceptCallback(EFI_EVENT Event, void* Context)
     bs->CloseEvent(Event);
 
     Peer* peer = (Peer*)Context;
-    if (!peer->acceptToken.CompletionToken.Status)
+    if (peer->acceptToken.CompletionToken.Status)
+    {
+        logStatus(L"!!! REPORT THIS !!! | acceptCallback() fails", peer->acceptToken.CompletionToken.Status);
+
+        peer->tcp4Protocol = NULL;
+    }
+    else
     {
         EFI_STATUS status;
         if (status = bs->OpenProtocol(peer->acceptToken.NewChildHandle, &tcp4ProtocolGuid, (void**)&peer->tcp4Protocol, ih, NULL, EFI_OPEN_PROTOCOL_GET_PROTOCOL))
@@ -5207,7 +5220,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.2.16 is launched.");
+    log(L"Qubic 0.2.17 is launched.");
 
     if (initialize())
     {
@@ -5457,10 +5470,21 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
                                 for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
                                 {
-                                    if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type > 0 && !peers[i].isTransmitting)
+                                    if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type > 0)
                                     {
-                                        bs->CopyMem(peers[i].transmitData.FragmentTable[0].FragmentBuffer, buffer, header->size);
-                                        transmit(&peers[i], header->size);
+                                        if (peers[i].isTransmitting)
+                                        {
+                                            if (peers[i].dataToTransmitSize + header->size <= BUFFER_SIZE - 10) // 10 bytes are required by WebSocket protocol
+                                            {
+                                                bs->CopyMem(&peers[i].dataToTransmit[peers[i].dataToTransmitSize], buffer, header->size);
+                                                peers[i].dataToTransmitSize += header->size;
+                                            }
+                                        }
+                                        else
+                                        {
+                                            bs->CopyMem(peers[i].transmitData.FragmentTable[0].FragmentBuffer, buffer, header->size);
+                                            transmit(&peers[i], header->size);
+                                        }
                                     }
                                 }
                                 bs->RestoreTPL(tpl);
