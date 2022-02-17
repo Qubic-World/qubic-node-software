@@ -4132,6 +4132,7 @@ static EFI_HANDLE getTcp4Protocol(const unsigned char* remoteAddress, EFI_TCP4_P
                 && status != EFI_NO_MAPPING)
             {
                 logStatus(L"EFI_TCP4_PROTOCOL.Configure() fails", status);
+                /**/if (remoteAddress) { CHAR16 msg[256]; setNumber(msg, remoteAddress[0], TRUE); appendText(msg, L"."); appendNumber(msg, remoteAddress[1], TRUE); appendText(msg, L"."); appendNumber(msg, remoteAddress[2], TRUE); appendText(msg, L"."); appendNumber(msg, remoteAddress[3], TRUE); appendText(msg, L"!!!"); }
 
                 return NULL;
             }
@@ -4430,10 +4431,10 @@ static void transmit(Peer* peer, unsigned int size)
                 {
                     bs->CopyMem(((char*)peer->transmitData.FragmentTable[0].FragmentBuffer) + 10, peer->transmitData.FragmentTable[0].FragmentBuffer, size);
                     ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[1] = 127;
-                    ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[2] = size >> 56;
-                    ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[3] = size >> 48;
-                    ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[4] = size >> 40;
-                    ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[5] = size >> 32;
+                    ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[2] = 0;
+                    ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[3] = 0;
+                    ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[4] = 0;
+                    ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[5] = 0;
                     ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[6] = size >> 24;
                     ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[7] = size >> 16;
                     ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[8] = size >> 8;
@@ -5206,7 +5207,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.2.15 is launched.");
+    log(L"Qubic 0.2.16 is launched.");
 
     if (initialize())
     {
