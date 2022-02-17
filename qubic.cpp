@@ -4131,7 +4131,7 @@ static EFI_HANDLE getTcp4Protocol(const unsigned char* remoteAddress, EFI_TCP4_P
             if ((status = (*tcp4Protocol)->Configure(*tcp4Protocol, &configData))
                 && status != EFI_NO_MAPPING)
             {
-                logStatus(L"EFI_TCP4_PROTOCOL.Configure()#1 fails", status);
+                logStatus(L"EFI_TCP4_PROTOCOL.Configure() fails", status);
 
                 return NULL;
             }
@@ -4149,7 +4149,7 @@ static EFI_HANDLE getTcp4Protocol(const unsigned char* remoteAddress, EFI_TCP4_P
                     {
                         if (status = (*tcp4Protocol)->Configure(*tcp4Protocol, &configData))
                         {
-                            logStatus(L"EFI_TCP4_PROTOCOL.Configure()#2 fails", status);
+                            logStatus(L"EFI_TCP4_PROTOCOL.Configure() fails", status);
 
                             return NULL;
                         }
@@ -4299,7 +4299,6 @@ static void connect(unsigned char* address)
             peers[freePeerSlot].prevNumberOfTransmittedBytes = peers[freePeerSlot].numberOfTransmittedBytes = 0;
             bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, connectCallback, &peers[freePeerSlot], &peers[freePeerSlot].connectToken.CompletionToken.Event);
             EFI_STATUS status;
-            /**/if (((unsigned long long)peers[freePeerSlot].tcp4Protocol) <= 1) { log(L"::1"); bs->Stall(1000000000); };
             if (status = peers[freePeerSlot].tcp4Protocol->Connect(peers[freePeerSlot].tcp4Protocol, &peers[freePeerSlot].connectToken))
             {
                 logStatus(L"EFI_TCP4_PROTOCOL.Connect() fails", status);
@@ -4326,7 +4325,6 @@ static void close(Peer* peer)
     {
         bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, closeCallback, peer, &peer->closeToken.CompletionToken.Event);
         EFI_STATUS status;
-        /**/if (((unsigned long long)peer->tcp4Protocol) <= 1) { log(L"::2"); bs->Stall(1000000000); };
         if (status = peer->tcp4Protocol->Close(peer->tcp4Protocol, &peer->closeToken))
         {
             logStatus(L"EFI_TCP4_PROTOCOL.Close() fails", status);
@@ -4338,6 +4336,24 @@ static void close(Peer* peer)
             }
             else
             {
+                bs->CloseProtocol(peer->connectChildHandle, &tcp4ProtocolGuid, ih, NULL);
+                tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peer->connectChildHandle);
+            }
+            peer->tcp4Protocol = NULL;
+        }
+    }
+    else
+    {
+        if (peer->tcp4Protocol)
+        {
+            if (peer->acceptToken.NewChildHandle)
+            {
+                /**/log(L"~~~ Inform about #1!");
+                bs->CloseProtocol(peer->acceptToken.NewChildHandle, &tcp4ProtocolGuid, ih, NULL);
+            }
+            else
+            {
+                /**/log(L"~~~ Inform about #2!");
                 bs->CloseProtocol(peer->connectChildHandle, &tcp4ProtocolGuid, ih, NULL);
                 tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peer->connectChildHandle);
             }
@@ -4364,7 +4380,6 @@ static void receive(Peer* peer)
             EFI_STATUS status;
             bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, receiveCallback, peer, &peer->receiveToken.CompletionToken.Event);
             peer->receiveData.DataLength = peer->receiveData.FragmentTable[0].FragmentLength = BUFFER_SIZE - (unsigned int)((unsigned long long)peer->receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peer->receiveBuffer);
-            /**/if (((unsigned long long)peer->tcp4Protocol) <= 1) { log(L"::3"); bs->Stall(1000000000); };
             if (status = peer->tcp4Protocol->Receive(peer->tcp4Protocol, &peer->receiveToken))
             {
                 if (status != EFI_ACCESS_DENIED)
@@ -4430,7 +4445,6 @@ static void transmit(Peer* peer, unsigned int size)
         }
 
         peer->transmitData.DataLength = peer->transmitData.FragmentTable[0].FragmentLength = size;
-        /**/if (((unsigned long long)peer->tcp4Protocol) <= 1) { log(L"::4"); bs->Stall(1000000000); };
         if (status = peer->tcp4Protocol->Transmit(peer->tcp4Protocol, &peer->transmitToken))
         {
             if (status != EFI_ACCESS_DENIED)
@@ -4894,7 +4908,6 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                     EFI_STATUS status;
                     bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, transmitCallback, peer, &peer->transmitToken.CompletionToken.Event);
                     peer->transmitData.DataLength = peer->transmitData.FragmentTable[0].FragmentLength = i;
-                    /**/if (((unsigned long long)peer->tcp4Protocol) <= 1) { log(L"::5"); bs->Stall(1000000000); };
                     if (status = peer->tcp4Protocol->Transmit(peer->tcp4Protocol, &peer->transmitToken))
                     {
                         if (status != EFI_ACCESS_DENIED)
@@ -5193,7 +5206,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.2.14 is launched.");
+    log(L"Qubic 0.2.15 is launched.");
 
     if (initialize())
     {
@@ -5288,7 +5301,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     }
                                     else
                                     {
-                                        /**/if (((unsigned long long)peers[i].tcp4Protocol) <= 1) { log(L"::6"); bs->Stall(1000000000); };
                                         peers[i].tcp4Protocol->Poll(peers[i].tcp4Protocol);
 
                                         if (!peers[i].acceptToken.NewChildHandle)
