@@ -4043,7 +4043,7 @@ static void responseCallback(EFI_EVENT Event, void* Context)
                 {
                     if (peers[i].isTransmitting)
                     {
-                        if (peers[i].dataToTransmitSize + responseHeader->size <= BUFFER_SIZE)
+                        if (peers[i].dataToTransmitSize + responseHeader->size <= BUFFER_SIZE - 10) // 10 bytes are required by WebSocket protocol
                         {
                             bs->CopyMem(&peers[i].dataToTransmit[peers[i].dataToTransmitSize], processor->responseBuffer, responseHeader->size);
                             peers[i].dataToTransmitSize += responseHeader->size;
@@ -4063,7 +4063,7 @@ static void responseCallback(EFI_EVENT Event, void* Context)
             {
                 if (processor->peer->isTransmitting)
                 {
-                    if (processor->peer->dataToTransmitSize + responseHeader->size <= BUFFER_SIZE)
+                    if (processor->peer->dataToTransmitSize + responseHeader->size <= BUFFER_SIZE - 10) // 10 bytes are required by WebSocket protocol
                     {
                         bs->CopyMem(&processor->peer->dataToTransmit[processor->peer->dataToTransmitSize], processor->responseBuffer, responseHeader->size);
                         processor->peer->dataToTransmitSize += responseHeader->size;
@@ -4131,7 +4131,7 @@ static EFI_HANDLE getTcp4Protocol(const unsigned char* remoteAddress, EFI_TCP4_P
             if ((status = (*tcp4Protocol)->Configure(*tcp4Protocol, &configData))
                 && status != EFI_NO_MAPPING)
             {
-                logStatus(L"EFI_TCP4_PROTOCOL.Configure() fails", status);
+                logStatus(L"EFI_TCP4_PROTOCOL.Configure()#1 fails", status);
 
                 return NULL;
             }
@@ -4149,7 +4149,7 @@ static EFI_HANDLE getTcp4Protocol(const unsigned char* remoteAddress, EFI_TCP4_P
                     {
                         if (status = (*tcp4Protocol)->Configure(*tcp4Protocol, &configData))
                         {
-                            logStatus(L"EFI_TCP4_PROTOCOL.Configure() fails", status);
+                            logStatus(L"EFI_TCP4_PROTOCOL.Configure()#2 fails", status);
 
                             return NULL;
                         }
@@ -4403,11 +4403,28 @@ static void transmit(Peer* peer, unsigned int size)
             }
             else
             {
-                bs->CopyMem(((char*)peer->transmitData.FragmentTable[0].FragmentBuffer) + 4, peer->transmitData.FragmentTable[0].FragmentBuffer, size);
-                ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[1] = 126;
-                ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[2] = size >> 8;
-                ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[3] = size;
-                size += 4;
+                if (size <= 0xFFFF)
+                {
+                    bs->CopyMem(((char*)peer->transmitData.FragmentTable[0].FragmentBuffer) + 4, peer->transmitData.FragmentTable[0].FragmentBuffer, size);
+                    ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[1] = 126;
+                    ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[2] = size >> 8;
+                    ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[3] = size;
+                    size += 4;
+                }
+                else
+                {
+                    bs->CopyMem(((char*)peer->transmitData.FragmentTable[0].FragmentBuffer) + 10, peer->transmitData.FragmentTable[0].FragmentBuffer, size);
+                    ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[1] = 127;
+                    ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[2] = size >> 56;
+                    ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[3] = size >> 48;
+                    ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[4] = size >> 40;
+                    ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[5] = size >> 32;
+                    ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[6] = size >> 24;
+                    ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[7] = size >> 16;
+                    ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[8] = size >> 8;
+                    ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[9] = size;
+                    size += 10;
+                }
             }
             ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[0] = 0x82;
         }
@@ -5176,7 +5193,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.2.13 is launched.");
+    log(L"Qubic 0.2.14 is launched.");
 
     if (initialize())
     {
