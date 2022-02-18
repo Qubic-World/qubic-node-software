@@ -3720,7 +3720,7 @@ iteration:
 
 static void addPublicPeer(unsigned char address[4])
 {
-    if (*((int*)address) != *((int*)ownPublicAddress))
+    if ((*((int*)address)) && *((int*)address) != *((int*)ownPublicAddress))
     {
         unsigned int i;
         for (i = 0; i < numberOfPublicPeers; i++)
@@ -4215,19 +4215,6 @@ static EFI_HANDLE getTcp4Protocol(const unsigned char* remoteAddress, EFI_TCP4_P
     }
 }
 
-static int getFreePeerSlot()
-{
-    for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
-    {
-        if (!peers[i].tcp4Protocol)
-        {
-            return i;
-        }
-    }
-
-    return -1;
-}
-
 static void connectToAnyPublicPeer()
 {
     unsigned int random;
@@ -4250,10 +4237,18 @@ static BOOLEAN accept()
 {
     const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
 
-    const int freePeerSlot = getFreePeerSlot();
-    if (freePeerSlot >= 0)
+    int freePeerSlot;
+    for (freePeerSlot = 0; freePeerSlot < MAX_NUMBER_OF_PEERS; freePeerSlot++)
+    {
+        if (!peers[freePeerSlot].tcp4Protocol)
+        {
+            break;
+        }
+    }
+    if (freePeerSlot != MAX_NUMBER_OF_PEERS)
     {
         peers[freePeerSlot].tcp4Protocol = (EFI_TCP4_PROTOCOL*)1;
+        *((int*)peers[freePeerSlot].address) = 0;
         peers[freePeerSlot].acceptToken.NewChildHandle = NULL;
         peers[freePeerSlot].prevNumberOfReceivedBytes = peers[freePeerSlot].numberOfReceivedBytes = 0;
         peers[freePeerSlot].prevNumberOfTransmittedBytes = peers[freePeerSlot].numberOfTransmittedBytes = 0;
@@ -4283,12 +4278,28 @@ static void connect(unsigned char* address)
 {
     const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
 
-    EFI_TCP4_PROTOCOL* tcp4Protocol;
-    EFI_HANDLE childHandle = getTcp4Protocol(address, &tcp4Protocol);
-    if (childHandle)
+    int freePeerSlot = -1;
+    unsigned int i;
+    for (i = 0; i < MAX_NUMBER_OF_PEERS; i++)
     {
-        const int freePeerSlot = getFreePeerSlot();
-        if (freePeerSlot >= 0)
+        if (freePeerSlot < 0 && !peers[i].tcp4Protocol)
+        {
+            freePeerSlot = i;
+        }
+        else
+        {
+            if (((unsigned long long)peers[i].tcp4Protocol) > 1 && *((int*)peers[i].address) == *((int*)address))
+            {
+                break;
+            }
+        }
+    }
+
+    if (freePeerSlot >= 0 && i == MAX_NUMBER_OF_PEERS)
+    {
+        EFI_TCP4_PROTOCOL* tcp4Protocol;
+        EFI_HANDLE childHandle = getTcp4Protocol(address, &tcp4Protocol);
+        if (childHandle)
         {
             peers[freePeerSlot].tcp4Protocol = tcp4Protocol;
             peers[freePeerSlot].acceptToken.NewChildHandle = NULL;
@@ -4306,11 +4317,6 @@ static void connect(unsigned char* address)
                 bs->CloseEvent(peers[freePeerSlot].connectToken.CompletionToken.Event);
                 peers[freePeerSlot].tcp4Protocol = NULL;
             }
-        }
-        else
-        {
-            bs->CloseProtocol(childHandle, &tcp4ProtocolGuid, ih, NULL);
-            tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, childHandle);
         }
     }
 
@@ -5220,7 +5226,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.2.17 is launched.");
+    log(L"Qubic 0.2.18 is launched.");
 
     if (initialize())
     {
@@ -5474,7 +5480,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     {
                                         if (peers[i].isTransmitting)
                                         {
-                                            if (peers[i].dataToTransmitSize + header->size <= BUFFER_SIZE - 10) // 10 bytes are required by WebSocket protocol
+                                            if (peers[i].dataToTransmitSize + header->size <= (BUFFER_SIZE >> 1))
                                             {
                                                 bs->CopyMem(&peers[i].dataToTransmit[peers[i].dataToTransmitSize], buffer, header->size);
                                                 peers[i].dataToTransmitSize += header->size;
