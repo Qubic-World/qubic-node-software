@@ -3572,15 +3572,6 @@ const unsigned short requestResponseMinSizes[] = {
     sizeof(RequestResponseHeader) + sizeof(BroadcastComputorState)
 };
 
-const unsigned char requestResponse1stStagePriorities[] = {
-    100,    // ProcessWebSocketClientRequest
-    100,    // ExchangePublicPeers
-    40,     // BroadcastMessage
-    60,     // BroadcastTransfer
-    80,     // BroadcastEffect
-    100     // BroadcastComputorState
-};
-
 static volatile int state = 0;
 
 static unsigned long long launchTime;
@@ -3607,7 +3598,6 @@ static unsigned long long numberOfBusyProcessorsSumOfValues = 0, numberOfBusyPro
 static Processor processors[MAX_NUMBER_OF_PROCESSORS];
 static unsigned int latestUsedProcessorIndex = (unsigned int)(-1);
 static volatile long long numberOfProcessedRequests = 0, prevNumberOfProcessedRequests = 0;
-static volatile long long numberOfSkippedRequests = 0, prevNumberOfSkippedRequests = 0;
 
 static EFI_GUID tcp4ServiceBindingProtocolGuid = EFI_TCP4_SERVICE_BINDING_PROTOCOL_GUID;
 static EFI_SERVICE_BINDING_PROTOCOL* tcp4ServiceBindingProtocol;
@@ -4315,6 +4305,8 @@ static void connect(unsigned char* address)
                 logStatus(L"EFI_TCP4_PROTOCOL.Connect() fails", status);
 
                 bs->CloseEvent(peers[freePeerSlot].connectToken.CompletionToken.Event);
+                bs->CloseProtocol(peers[freePeerSlot].connectChildHandle, &tcp4ProtocolGuid, ih, NULL);
+                tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peers[freePeerSlot].connectChildHandle);
                 peers[freePeerSlot].tcp4Protocol = NULL;
             }
         }
@@ -4674,14 +4666,6 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                             }
                         }
 
-                        if (requestResponse1stStagePriorities[requestResponseHeader->type] > numberOfBusyProcessors * 100 / numberOfProcessors)
-                        {
-                            bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + ptr + requestResponseHeader->size, receivedDataSize -= (ptr + requestResponseHeader->size));
-                            peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + receivedDataSize;
-
-                            _InterlockedIncrement64(&numberOfSkippedRequests);
-                        }
-
                         receive(peer);
                     }
                 }
@@ -5012,21 +4996,6 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                                     }
                                 }
                             }
-
-                            if (requestResponse1stStagePriorities[requestResponseHeader->type] > numberOfBusyProcessors * 100 / numberOfProcessors)
-                            {
-                                if (receivedDataSize == requestResponseHeader->size)
-                                {
-                                    peer->receiveData.FragmentTable[0].FragmentBuffer = peer->receiveBuffer;
-                                }
-                                else
-                                {
-                                    bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + requestResponseHeader->size, receivedDataSize -= requestResponseHeader->size);
-                                    peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + receivedDataSize;
-                                }
-
-                                _InterlockedIncrement64(&numberOfSkippedRequests);
-                            }
                         }
 
                         receive(peer);
@@ -5226,7 +5195,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.2.18 is launched.");
+    log(L"Qubic 0.2.19 is launched.");
 
     if (initialize())
     {
@@ -5441,11 +5410,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             {
                                 if (numberOfBusyProcessorsNumberOfValues)
                                 {
-                                    CHAR16 message[256]; setText(message, L"Reward = "); appendNumber(message, rewardPoints * 34100000000 / totalRewardPoints, TRUE); appendText(message, L" qus | ["); appendNumber(message, (numberOfBusyProcessorsSumOfValues * 100) / (numberOfBusyProcessorsNumberOfValues * numberOfProcessors), FALSE); appendText(message, L"% CPU / +"); appendNumber(message, numberOfProcessedRequests - prevNumberOfProcessedRequests, TRUE); appendText(message, L" / -"); appendNumber(message, numberOfSkippedRequests - prevNumberOfSkippedRequests, TRUE); appendText(message, L"] "); appendNumber(message, MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots - numberOfWebSocketClients, TRUE); appendText(message, L"/"); appendNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" peers ("); appendNumber(message, numberOfReceivedBytes - prevNumberOfReceivedBytes, TRUE); appendText(message, L" rx / "); appendNumber(message, numberOfTransmittedBytes - prevNumberOfTransmittedBytes, TRUE); appendText(message, L" tx)."); log(message);
+                                    CHAR16 message[256]; setText(message, L"Reward = "); appendNumber(message, rewardPoints * 34100000000 / totalRewardPoints, TRUE); appendText(message, L" qus | ["); appendNumber(message, (numberOfBusyProcessorsSumOfValues * 100) / (numberOfBusyProcessorsNumberOfValues * numberOfProcessors), FALSE); appendText(message, L"% CPU / "); appendNumber(message, numberOfProcessedRequests - prevNumberOfProcessedRequests, TRUE); appendText(message, L"] "); appendNumber(message, MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots - numberOfWebSocketClients, TRUE); appendText(message, L"/"); appendNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" peers ("); appendNumber(message, numberOfReceivedBytes - prevNumberOfReceivedBytes, TRUE); appendText(message, L" rx / "); appendNumber(message, numberOfTransmittedBytes - prevNumberOfTransmittedBytes, TRUE); appendText(message, L" tx)."); log(message);
                                     numberOfBusyProcessorsSumOfValues = 0;
                                     numberOfBusyProcessorsNumberOfValues = 0;
                                     prevNumberOfProcessedRequests = numberOfProcessedRequests;
-                                    prevNumberOfSkippedRequests = numberOfSkippedRequests;
                                     prevNumberOfReceivedBytes = numberOfReceivedBytes;
                                     prevNumberOfTransmittedBytes = numberOfTransmittedBytes;
                                 }
