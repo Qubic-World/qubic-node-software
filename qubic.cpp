@@ -4346,12 +4346,10 @@ static void close(Peer* peer)
         {
             if (peer->acceptToken.NewChildHandle)
             {
-                /**/log(L"~~~ Inform about #1!");
                 bs->CloseProtocol(peer->acceptToken.NewChildHandle, &tcp4ProtocolGuid, ih, NULL);
             }
             else
             {
-                /**/log(L"~~~ Inform about #2!");
                 bs->CloseProtocol(peer->connectChildHandle, &tcp4ProtocolGuid, ih, NULL);
                 tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peer->connectChildHandle);
             }
@@ -4592,6 +4590,7 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
     }
     else
     {
+        /**/if (!peer->receiveData.DataLength) log(L"receiveCallback 0!");
         numberOfReceivedBytes += peer->receiveData.DataLength;
         *((unsigned long long*)&peer->receiveData.FragmentTable[0].FragmentBuffer) += peer->receiveData.DataLength;
         peer->numberOfReceivedBytes += peer->receiveData.DataLength;
@@ -5021,6 +5020,7 @@ static void transmitCallback(EFI_EVENT Event, void* Context)
     }
     else
     {
+        /**/if (!peer->transmitData.DataLength) log(L"transmitCallback 0!");
         numberOfTransmittedBytes += peer->transmitData.DataLength;
         peer->numberOfTransmittedBytes += peer->transmitData.DataLength;
 
@@ -5195,7 +5195,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.2.19 is launched.");
+    log(L"Qubic 0.2.20 is launched.");
 
     if (initialize())
     {
