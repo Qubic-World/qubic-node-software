@@ -4205,24 +4205,6 @@ static EFI_HANDLE getTcp4Protocol(const unsigned char* remoteAddress, EFI_TCP4_P
     }
 }
 
-static void connectToAnyPublicPeer()
-{
-    unsigned int random;
-    _rdrand32_step(&random);
-
-    unsigned char address[4];
-
-    while (_InterlockedCompareExchange8(&publicPeersLock, 1, 0))
-    {
-    }
-
-    *((int*)address) = *((int*)publicPeers[random % numberOfPublicPeers].address);
-
-    publicPeersLock = 0;
-
-    connect(address);
-}
-
 static BOOLEAN accept()
 {
     const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
@@ -4328,22 +4310,6 @@ static void close(Peer* peer)
             logStatus(L"EFI_TCP4_PROTOCOL.Close() fails", status);
 
             bs->CloseEvent(peer->closeToken.CompletionToken.Event);
-            if (peer->acceptToken.NewChildHandle)
-            {
-                bs->CloseProtocol(peer->acceptToken.NewChildHandle, &tcp4ProtocolGuid, ih, NULL);
-            }
-            else
-            {
-                bs->CloseProtocol(peer->connectChildHandle, &tcp4ProtocolGuid, ih, NULL);
-                tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peer->connectChildHandle);
-            }
-            peer->tcp4Protocol = NULL;
-        }
-    }
-    else
-    {
-        if (peer->tcp4Protocol)
-        {
             if (peer->acceptToken.NewChildHandle)
             {
                 bs->CloseProtocol(peer->acceptToken.NewChildHandle, &tcp4ProtocolGuid, ih, NULL);
@@ -4584,13 +4550,12 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
     bs->CloseEvent(Event);
 
     Peer* peer = (Peer*)Context;
-    if (peer->receiveToken.CompletionToken.Status)
+    if (peer->receiveToken.CompletionToken.Status || !peer->receiveData.DataLength)
     {
         close(peer);
     }
     else
     {
-        /**/if (!peer->receiveData.DataLength) log(L"receiveCallback 0!");
         numberOfReceivedBytes += peer->receiveData.DataLength;
         *((unsigned long long*)&peer->receiveData.FragmentTable[0].FragmentBuffer) += peer->receiveData.DataLength;
         peer->numberOfReceivedBytes += peer->receiveData.DataLength;
@@ -5014,13 +4979,12 @@ static void transmitCallback(EFI_EVENT Event, void* Context)
     bs->CloseEvent(Event);
 
     Peer* peer = (Peer*)Context;
-    if (peer->transmitToken.CompletionToken.Status)
+    if (peer->transmitToken.CompletionToken.Status || !peer->transmitData.DataLength)
     {
         close(peer);
     }
     else
     {
-        /**/if (!peer->transmitData.DataLength) log(L"transmitCallback 0!");
         numberOfTransmittedBytes += peer->transmitData.DataLength;
         peer->numberOfTransmittedBytes += peer->transmitData.DataLength;
 
@@ -5195,7 +5159,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.2.20 is launched.");
+    log(L"Qubic 0.2.21 is launched.");
 
     if (initialize())
     {
@@ -5331,7 +5295,18 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                             if (MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots - numberOfWebSocketClients < MIN_NUMBER_OF_PEERS)
                             {
-                                connectToAnyPublicPeer();
+                                unsigned char address[4];
+
+                                unsigned int random;
+                                _rdrand32_step(&random);
+
+                                while (_InterlockedCompareExchange8(&publicPeersLock, 1, 0))
+                                {
+                                }
+                                *((int*)address) = *((int*)publicPeers[random % numberOfPublicPeers].address);
+                                publicPeersLock = 0;
+
+                                connect(address);
                             }
                             if (!numberOfAcceptingPeerSlots && numberOfFreePeerSlots)
                             {
@@ -5408,15 +5383,12 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                             if (__rdtsc() - prevRewardDisplayTick >= frequency)
                             {
-                                if (numberOfBusyProcessorsNumberOfValues)
-                                {
-                                    CHAR16 message[256]; setText(message, L"Reward = "); appendNumber(message, rewardPoints * 34100000000 / totalRewardPoints, TRUE); appendText(message, L" qus | ["); appendNumber(message, (numberOfBusyProcessorsSumOfValues * 100) / (numberOfBusyProcessorsNumberOfValues * numberOfProcessors), FALSE); appendText(message, L"% CPU / "); appendNumber(message, numberOfProcessedRequests - prevNumberOfProcessedRequests, TRUE); appendText(message, L"] "); appendNumber(message, MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots - numberOfWebSocketClients, TRUE); appendText(message, L"/"); appendNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" peers ("); appendNumber(message, numberOfReceivedBytes - prevNumberOfReceivedBytes, TRUE); appendText(message, L" rx / "); appendNumber(message, numberOfTransmittedBytes - prevNumberOfTransmittedBytes, TRUE); appendText(message, L" tx)."); log(message);
-                                    numberOfBusyProcessorsSumOfValues = 0;
-                                    numberOfBusyProcessorsNumberOfValues = 0;
-                                    prevNumberOfProcessedRequests = numberOfProcessedRequests;
-                                    prevNumberOfReceivedBytes = numberOfReceivedBytes;
-                                    prevNumberOfTransmittedBytes = numberOfTransmittedBytes;
-                                }
+                                CHAR16 message[256]; setText(message, L"Reward = "); appendNumber(message, rewardPoints * 34100000000 / totalRewardPoints, TRUE); appendText(message, L" qus | ["); appendNumber(message, !numberOfBusyProcessorsNumberOfValues ? 0 : ((numberOfBusyProcessorsSumOfValues * 100) / (numberOfBusyProcessorsNumberOfValues * numberOfProcessors)), FALSE); appendText(message, L"% CPU / "); appendNumber(message, numberOfProcessedRequests - prevNumberOfProcessedRequests, TRUE); appendText(message, L"] "); appendNumber(message, MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots - numberOfWebSocketClients, TRUE); appendText(message, L"/"); appendNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" peers ("); appendNumber(message, numberOfReceivedBytes - prevNumberOfReceivedBytes, TRUE); appendText(message, L" rx / "); appendNumber(message, numberOfTransmittedBytes - prevNumberOfTransmittedBytes, TRUE); appendText(message, L" tx)."); log(message);
+                                numberOfBusyProcessorsSumOfValues = 0;
+                                numberOfBusyProcessorsNumberOfValues = 0;
+                                prevNumberOfProcessedRequests = numberOfProcessedRequests;
+                                prevNumberOfReceivedBytes = numberOfReceivedBytes;
+                                prevNumberOfTransmittedBytes = numberOfTransmittedBytes;
 
                                 prevRewardDisplayTick = __rdtsc();
                             }
