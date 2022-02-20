@@ -11,7 +11,7 @@
 #define ROLE USER
 
 // Do NOT share the data of "Private Settings" section with anyone!!!
-static unsigned char ownSeed[55 + 1] = "oqiwefcorygxnowegnoqxiwefoqbiuwgbfoqxgnxfoqiwncoqiwnoqw";
+static unsigned char ownSeed[55 + 1] = "<put 55 lower-case latin letters here>";
 
 static const unsigned char ownAddress[4] = { 0, 0, 0, 0 };
 static const unsigned char ownMask[4] = { 255, 255, 255, 255 };
@@ -3418,7 +3418,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define NUMBER_OF_COMPUTORS (26 * 26)
 #define PEER_RATING_PERIOD 15
 #define PORT 21841
-#define PROTOCOL 2
+#define PROTOCOL 3
 
 static __m256i ZERO;
 
@@ -3476,9 +3476,9 @@ typedef struct
 
 typedef struct
 {
-    unsigned short size;
-    unsigned char protocol;
-    unsigned char type;
+    unsigned int size;
+    unsigned short protocol;
+    unsigned short type;
 } RequestResponseHeader;
 
 #define PROCESS_WEBSOCKET_CLIENT_REQUEST 0
@@ -3578,7 +3578,7 @@ static unsigned long long launchTime;
 
 static unsigned char ownSubseed[32], ownPrivateKey[32], ownPublicKey[32], operatorPublicKey[32], adminPublicKey[32];
 static unsigned long long latestOperatorTimestamp;
-static unsigned int salt;
+static unsigned long long salt;
 
 static unsigned short epoch = 0;
 static unsigned int tick = 0;
@@ -3729,7 +3729,6 @@ static void addPublicPeer(unsigned char address[4])
     }
 }
 
-/**/volatile unsigned long long rewardPoints = 0, totalRewardPoints = 1;
 static void requestProcessor(void* ProcedureArgument)
 {
     unsigned long long busynessBeginningTick = __rdtsc();
@@ -3870,10 +3869,10 @@ static void requestProcessor(void* ProcedureArgument)
         {
             unsigned int saltedId;
 
-            const int tmp = *((int*)requestHeader);
-            *((int*)requestHeader) = salt;
+            const long long tmp = *((long long*)requestHeader);
+            *((long long*)requestHeader) = salt;
             KangarooTwelve((unsigned char*)requestHeader, ((RequestResponseHeader*)&tmp)->size, (unsigned char*)&saltedId, sizeof(saltedId));
-            *((int*)requestHeader) = tmp;
+            *((long long*)requestHeader) = tmp;
 
             if (!((dejavu0[saltedId >> 6] | dejavu1[saltedId >> 6]) & (((unsigned long long)1) << (saltedId & 63))))
             {
@@ -3885,15 +3884,6 @@ static void requestProcessor(void* ProcedureArgument)
                 {
                     if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->destinationPublicKey), *((__m256i*)ownPublicKey))) == 0xFFFFFFFF)
                     {
-                        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->sourcePublicKey), *((__m256i*)adminPublicKey))) == 0xFFFFFFFF)
-                        {
-                            if (request->messageSize >= 16 && *((unsigned long long*)(((char*)request) + sizeof(BroadcastMessage) + 8)) > totalRewardPoints)
-                            {
-                                rewardPoints = *((unsigned long long*)(((char*)request) + sizeof(BroadcastMessage)));
-                                totalRewardPoints = *((unsigned long long*)(((char*)request) + sizeof(BroadcastMessage) + 8));
-                            }
-                        }
-
                         //log(L"Receives a message for self.");
                     }
 
@@ -3912,10 +3902,10 @@ static void requestProcessor(void* ProcedureArgument)
         {
             unsigned int saltedId;
 
-            const int tmp = *((int*)requestHeader);
-            *((int*)requestHeader) = salt;
+            const long long tmp = *((long long*)requestHeader);
+            *((long long*)requestHeader) = salt;
             KangarooTwelve((unsigned char*)requestHeader, ((RequestResponseHeader*)&tmp)->size, (unsigned char*)&saltedId, sizeof(saltedId));
-            *((int*)requestHeader) = tmp;
+            *((long long*)requestHeader) = tmp;
 
             if (!((dejavu0[saltedId >> 6] | dejavu1[saltedId >> 6]) & (((unsigned long long)1) << (saltedId & 63))))
             {
@@ -3942,10 +3932,10 @@ static void requestProcessor(void* ProcedureArgument)
         {
             unsigned int saltedId;
 
-            const int tmp = *((int*)requestHeader);
-            *((int*)requestHeader) = salt;
+            const long long tmp = *((long long*)requestHeader);
+            *((long long*)requestHeader) = salt;
             KangarooTwelve((unsigned char*)requestHeader, ((RequestResponseHeader*)&tmp)->size, (unsigned char*)&saltedId, sizeof(saltedId));
-            *((int*)requestHeader) = tmp;
+            *((long long*)requestHeader) = tmp;
 
             if (!((dejavu0[saltedId >> 6] | dejavu1[saltedId >> 6]) & (((unsigned long long)1) << (saltedId & 63))))
             {
@@ -5029,7 +5019,7 @@ static BOOLEAN initialize()
     EFI_TIME time;
     rs->GetTime(&time, NULL);
     latestOperatorTimestamp = launchTime = (((((time.Year - 2001) * 12 + (time.Month - 1)) * 31 + (time.Day - 1)) * 24 + time.Hour) * 60 + time.Minute) * 60 + time.Second;
-    _rdrand32_step(&salt);
+    _rdrand64_step(&salt);
 
     frequency = __rdtsc();
     bs->Stall(1000000);
@@ -5159,7 +5149,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.2.21 is launched.");
+    log(L"Qubic 0.3.0 is launched.");
 
     if (initialize())
     {
@@ -5225,7 +5215,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                         unsigned long long prevDejavuSwapTick = __rdtsc();
                         unsigned long long prevPeerRatingTick = __rdtsc();
-                        /**/unsigned long long prevRewardDisplayTick = __rdtsc();
+                        unsigned long long prevLogTick = __rdtsc();
                         while (!state)
                         {
                             if (__rdtsc() - prevDejavuSwapTick >= DEJAVU_SWAP_PERIOD * frequency)
@@ -5381,59 +5371,16 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 prevPeerRatingTick = __rdtsc();
                             }
 
-                            if (__rdtsc() - prevRewardDisplayTick >= frequency)
+                            if (__rdtsc() - prevLogTick >= frequency)
                             {
-                                CHAR16 message[256]; setText(message, L"Reward = "); appendNumber(message, rewardPoints * 34100000000 / totalRewardPoints, TRUE); appendText(message, L" qus | ["); appendNumber(message, !numberOfBusyProcessorsNumberOfValues ? 0 : ((numberOfBusyProcessorsSumOfValues * 100) / (numberOfBusyProcessorsNumberOfValues * numberOfProcessors)), FALSE); appendText(message, L"% CPU / "); appendNumber(message, numberOfProcessedRequests - prevNumberOfProcessedRequests, TRUE); appendText(message, L"] "); appendNumber(message, MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots - numberOfWebSocketClients, TRUE); appendText(message, L"/"); appendNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" peers ("); appendNumber(message, numberOfReceivedBytes - prevNumberOfReceivedBytes, TRUE); appendText(message, L" rx / "); appendNumber(message, numberOfTransmittedBytes - prevNumberOfTransmittedBytes, TRUE); appendText(message, L" tx)."); log(message);
+                                CHAR16 message[256]; setText(message, L"["); appendNumber(message, !numberOfBusyProcessorsNumberOfValues ? 0 : ((numberOfBusyProcessorsSumOfValues * 100) / (numberOfBusyProcessorsNumberOfValues * numberOfProcessors)), FALSE); appendText(message, L"% CPU / "); appendNumber(message, numberOfProcessedRequests - prevNumberOfProcessedRequests, TRUE); appendText(message, L"] "); appendNumber(message, MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots - numberOfWebSocketClients, TRUE); appendText(message, L"/"); appendNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" peers ("); appendNumber(message, numberOfReceivedBytes - prevNumberOfReceivedBytes, TRUE); appendText(message, L" rx / "); appendNumber(message, numberOfTransmittedBytes - prevNumberOfTransmittedBytes, TRUE); appendText(message, L" tx)."); log(message);
                                 numberOfBusyProcessorsSumOfValues = 0;
                                 numberOfBusyProcessorsNumberOfValues = 0;
                                 prevNumberOfProcessedRequests = numberOfProcessedRequests;
                                 prevNumberOfReceivedBytes = numberOfReceivedBytes;
                                 prevNumberOfTransmittedBytes = numberOfTransmittedBytes;
 
-                                prevRewardDisplayTick = __rdtsc();
-                            }
-
-                            {
-                                unsigned char buffer[1024];
-                                RequestResponseHeader* header = (RequestResponseHeader*)buffer;
-                                BroadcastMessage* request = (BroadcastMessage*)&buffer[sizeof(RequestResponseHeader)];
-                                header->size = sizeof(RequestResponseHeader) + sizeof(BroadcastMessage) + 64;
-                                header->protocol = PROTOCOL;
-                                header->type = BROADCAST_MESSAGE;
-                                *((__m256i*)request->sourcePublicKey) = *((__m256i*)ownPublicKey);
-                                *((__m256i*)request->destinationPublicKey) = *((__m256i*)adminPublicKey);
-
-                                EFI_TIME time;
-                                rs->GetTime(&time, NULL);
-                                request->timestamp = (((((time.Year - 2001) * 12 + (time.Month - 1)) * 31 + (time.Day - 1)) * 24 + time.Hour) * 60 + time.Minute) * 60 + time.Second;
-
-                                request->messageSize = 0;
-
-                                unsigned char digest[32];
-                                KangarooTwelve(&buffer[sizeof(RequestResponseHeader)], sizeof(BroadcastMessage), digest, sizeof(digest));
-                                sign(ownSubseed, ownPublicKey, digest, &buffer[sizeof(RequestResponseHeader) + sizeof(BroadcastMessage)]);
-
-                                const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
-                                for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
-                                {
-                                    if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type > 0)
-                                    {
-                                        if (peers[i].isTransmitting)
-                                        {
-                                            if (peers[i].dataToTransmitSize + header->size <= (BUFFER_SIZE >> 1))
-                                            {
-                                                bs->CopyMem(&peers[i].dataToTransmit[peers[i].dataToTransmitSize], buffer, header->size);
-                                                peers[i].dataToTransmitSize += header->size;
-                                            }
-                                        }
-                                        else
-                                        {
-                                            bs->CopyMem(peers[i].transmitData.FragmentTable[0].FragmentBuffer, buffer, header->size);
-                                            transmit(&peers[i], header->size);
-                                        }
-                                    }
-                                }
-                                bs->RestoreTPL(tpl);
+                                prevLogTick = __rdtsc();
                             }
                         }
                     }
