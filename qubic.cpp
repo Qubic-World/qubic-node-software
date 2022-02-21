@@ -11,7 +11,7 @@
 #define ROLE USER
 
 // Do NOT share the data of "Private Settings" section with anyone!!!
-static unsigned char ownSeed[55 + 1] = "<put 55 lower-case latin letters here>";
+static unsigned char ownSeed[55 + 1] = "<seed>";
 
 static const unsigned char ownAddress[4] = { 0, 0, 0, 0 };
 static const unsigned char ownMask[4] = { 255, 255, 255, 255 };
@@ -3476,6 +3476,16 @@ typedef struct
 
 typedef struct
 {
+    unsigned short computorIndex;
+    unsigned short epoch;
+    unsigned int tick;
+    unsigned long long timestamp;
+    unsigned char computorPublicKeys[NUMBER_OF_COMPUTORS][32];
+    unsigned char signature[64];
+} ComputorState;
+
+typedef struct
+{
     unsigned int size;
     unsigned short protocol;
     unsigned short type;
@@ -3487,6 +3497,19 @@ typedef struct
     char type;
     unsigned long long timestamp;
 } ProcessWebSocketClientRequest;
+
+#define PROCESS_WEBSOCKET_CLIENT_REQUEST_GET_COMPUTER_STATE 1
+typedef struct
+{
+    char type;
+    unsigned long long timestamp;
+} ProcessWebSocketClientRequest_GetComputerState_Request;
+typedef struct
+{
+    char type;
+    unsigned long long timestamp;
+    ComputorState computorState;
+} ProcessWebSocketClientRequest_GetComputerState_Response;
 
 #define PROCESS_WEBSOCKET_CLIENT_REQUEST_SHUT_NODE_DOWN (-1)
 typedef struct
@@ -3555,12 +3578,7 @@ typedef struct
 #define BROADCAST_COMPUTOR_STATE 5
 typedef struct
 {
-    unsigned short computorIndex;
-    unsigned short epoch;
-    unsigned int tick;
-    unsigned long long timestamp;
-    unsigned char computorPublicKeys[NUMBER_OF_COMPUTORS][32];
-    unsigned char signature[64];
+    ComputorState computorState;
 } BroadcastComputorState;
 
 const unsigned short requestResponseMinSizes[] = {
@@ -3580,12 +3598,10 @@ static unsigned char ownSubseed[32], ownPrivateKey[32], ownPublicKey[32], operat
 static unsigned long long latestOperatorTimestamp;
 static unsigned long long salt;
 
-static unsigned short epoch = 0;
-static unsigned int tick = 0;
 static Entity* entities = NULL;
 
 static volatile char latestComputorStatesLock = 0;
-static BroadcastComputorState latestComputorStates[NUMBER_OF_COMPUTORS + 1];
+static ComputorState latestComputorStates[NUMBER_OF_COMPUTORS + 1];
 
 static volatile unsigned long long* dejavu0 = NULL;
 static volatile unsigned long long* dejavu1 = NULL;
@@ -3654,7 +3670,7 @@ iteration:
         }
     }
 
-    entities[index].latestUpdateTick = tick;
+    entities[index].latestUpdateTick = latestComputorStates[NUMBER_OF_COMPUTORS].tick;
 
     entities[index].lock = 0;
 }
@@ -3683,7 +3699,7 @@ iteration:
                 {
                     entities[index].amount -= amount;
                 }
-                entities[index].latestUpdateTick = tick;
+                entities[index].latestUpdateTick = latestComputorStates[NUMBER_OF_COMPUTORS].tick;
 
                 entities[index].lock = 0;
 
@@ -3756,10 +3772,10 @@ static void requestProcessor(void* ProcedureArgument)
                 {
                 case PROCESS_WEBSOCKET_CLIENT_REQUEST_SHUT_NODE_DOWN:
                 {
-                    ProcessWebSocketClientRequest_ShutNodeDown_Request* shutNodeDownRequest = (ProcessWebSocketClientRequest_ShutNodeDown_Request*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
+                    ProcessWebSocketClientRequest_ShutNodeDown_Request* request = (ProcessWebSocketClientRequest_ShutNodeDown_Request*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
                     unsigned char digest[32];
-                    KangarooTwelve((unsigned char*)shutNodeDownRequest, sizeof(ProcessWebSocketClientRequest_ShutNodeDown_Request) - 64, digest, 32);
-                    if (verify(operatorPublicKey, digest, shutNodeDownRequest->signature))
+                    KangarooTwelve((unsigned char*)request, sizeof(ProcessWebSocketClientRequest_ShutNodeDown_Request) - 64, digest, 32);
+                    if (verify(operatorPublicKey, digest, request->signature))
                     {
                         latestOperatorTimestamp = request->timestamp;
 
@@ -3770,10 +3786,10 @@ static void requestProcessor(void* ProcedureArgument)
 
                 case PROCESS_WEBSOCKET_CLIENT_REQUEST_GET_NODE_INFO:
                 {
-                    ProcessWebSocketClientRequest_GetNodeInfo_Request* getNodeInfoRequest = (ProcessWebSocketClientRequest_GetNodeInfo_Request*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
+                    ProcessWebSocketClientRequest_GetNodeInfo_Request* request = (ProcessWebSocketClientRequest_GetNodeInfo_Request*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
                     unsigned char digest[32];
-                    KangarooTwelve((unsigned char*)getNodeInfoRequest, sizeof(ProcessWebSocketClientRequest_GetNodeInfo_Request) - 64, digest, 32);
-                    if (verify(operatorPublicKey, digest, getNodeInfoRequest->signature))
+                    KangarooTwelve((unsigned char*)request, sizeof(ProcessWebSocketClientRequest_GetNodeInfo_Request) - 64, digest, 32);
+                    if (verify(operatorPublicKey, digest, request->signature))
                     {
                         latestOperatorTimestamp = request->timestamp;
 
@@ -3824,7 +3840,16 @@ static void requestProcessor(void* ProcedureArgument)
         {
             switch (request->type)
             {
-                ///////
+            case PROCESS_WEBSOCKET_CLIENT_REQUEST_GET_COMPUTER_STATE:
+            {
+                ProcessWebSocketClientRequest_GetComputerState_Request* request = (ProcessWebSocketClientRequest_GetComputerState_Request*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
+                ProcessWebSocketClientRequest_GetComputerState_Response* response = (ProcessWebSocketClientRequest_GetComputerState_Response*)((char*)processor->responseBuffer + sizeof(RequestResponseHeader));
+                response->type = PROCESS_WEBSOCKET_CLIENT_REQUEST_GET_COMPUTER_STATE;
+                response->timestamp = request->timestamp;
+                bs->CopyMem(&response->computorState, &latestComputorStates[NUMBER_OF_COMPUTORS], sizeof(ComputorState));
+                responseHeader->size = sizeof(RequestResponseHeader) + sizeof(ProcessWebSocketClientRequest_GetComputerState_Response);
+            }
+            break;
             }
         }
     }
@@ -3963,15 +3988,15 @@ static void requestProcessor(void* ProcedureArgument)
         {
         }
 
-        if (request->computorIndex < NUMBER_OF_COMPUTORS)
+        if (request->computorState.computorIndex < NUMBER_OF_COMPUTORS)
         {
-            if (request->timestamp > latestComputorStates[request->computorIndex].timestamp && latestComputorStates[NUMBER_OF_COMPUTORS].timestamp)
+            if (request->computorState.timestamp > latestComputorStates[request->computorState.computorIndex].timestamp && latestComputorStates[NUMBER_OF_COMPUTORS].timestamp)
             {
                 unsigned char digest[32];
                 KangarooTwelve((unsigned char*)request, sizeof(BroadcastComputorState) - 64, digest, sizeof(digest));
-                if (verify(latestComputorStates[NUMBER_OF_COMPUTORS].computorPublicKeys[request->computorIndex], digest, request->signature))
+                if (verify(latestComputorStates[NUMBER_OF_COMPUTORS].computorPublicKeys[request->computorState.computorIndex], digest, request->computorState.signature))
                 {
-                    bs->CopyMem(&latestComputorStates[request->computorIndex], request, sizeof(BroadcastComputorState));
+                    bs->CopyMem(&latestComputorStates[request->computorState.computorIndex], request, sizeof(BroadcastComputorState));
 
                     bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
                     processor->responseTransmittingType = -1;
@@ -3980,11 +4005,11 @@ static void requestProcessor(void* ProcedureArgument)
         }
         else
         {
-            if (request->timestamp > latestComputorStates[NUMBER_OF_COMPUTORS].timestamp)
+            if (request->computorState.timestamp > latestComputorStates[NUMBER_OF_COMPUTORS].timestamp)
             {
                 unsigned char digest[32];
                 KangarooTwelve((unsigned char*)request, sizeof(BroadcastComputorState) - 64, digest, sizeof(digest));
-                if (verify(adminPublicKey, digest, request->signature))
+                if (verify(adminPublicKey, digest, request->computorState.signature))
                 {
                     bs->CopyMem(&latestComputorStates[NUMBER_OF_COMPUTORS], request, sizeof(BroadcastComputorState));
 
@@ -5149,7 +5174,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.3.0 is launched.");
+    log(L"Qubic 0.3.1 is launched.");
 
     if (initialize())
     {
@@ -5244,8 +5269,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     }
                                     else
                                     {
-                                        peers[i].tcp4Protocol->Poll(peers[i].tcp4Protocol);
-
                                         if (!peers[i].acceptToken.NewChildHandle)
                                         {
                                             if ((!peers[i].numberOfReceivedBytes || !peers[i].numberOfTransmittedBytes)
@@ -5282,6 +5305,14 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 }
                             }
                             bs->RestoreTPL(tpl);
+
+                            for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
+                            {
+                                if (((unsigned long long)peers[i].tcp4Protocol) > 1)
+                                {
+                                    peers[i].tcp4Protocol->Poll(peers[i].tcp4Protocol);
+                                }
+                            }
 
                             if (MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots - numberOfWebSocketClients < MIN_NUMBER_OF_PEERS)
                             {
