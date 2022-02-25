@@ -3486,6 +3486,37 @@ typedef struct
 
 typedef struct
 {
+    unsigned char sourcePublicKey[32];
+    unsigned char destinationPublicKey[32];
+    unsigned long long timestamp;
+    unsigned long long amount;
+    unsigned char signature[64];
+} Transfer;
+
+typedef struct
+{
+    unsigned char digest[32];
+    unsigned char status[(NUMBER_OF_COMPUTORS * 2) / 8];
+    char padding[3];
+    unsigned short computorIndex;
+    unsigned short epoch;
+    unsigned int tick;
+    unsigned char signature[64];
+} TransferStatus;
+
+typedef struct
+{
+    unsigned char digest[32];
+    unsigned char statuses[NUMBER_OF_COMPUTORS][(NUMBER_OF_COMPUTORS * 2) / 8];
+    unsigned short epochs[NUMBER_OF_COMPUTORS];
+    unsigned int ticks[NUMBER_OF_COMPUTORS];
+    unsigned char signatures[NUMBER_OF_COMPUTORS][64];
+    unsigned int mostRecentTick;
+    volatile char lock;
+} TransferSuperstatus;
+
+typedef struct
+{
     unsigned int size;
     unsigned short protocol;
     unsigned short type;
@@ -3510,6 +3541,21 @@ typedef struct
     unsigned long long timestamp;
     ComputorState computorState;
 } ProcessWebSocketClientRequest_GetComputerState_Response;
+
+#define PROCESS_WEBSOCKET_CLIENT_REQUEST_GET_TRANSFER_STATUS 3
+typedef struct
+{
+    char type;
+    unsigned long long timestamp;
+    unsigned char digest[32];
+    unsigned short computorIndex;
+} ProcessWebSocketClientRequest_GetTransferStatus_Request;
+typedef struct
+{
+    char type;
+    unsigned long long timestamp;
+    TransferStatus status;
+} ProcessWebSocketClientRequest_GetTransferStatus_Response;
 
 #define PROCESS_WEBSOCKET_CLIENT_REQUEST_SHUT_NODE_DOWN (-1)
 typedef struct
@@ -3559,11 +3605,7 @@ typedef struct
 #define BROADCAST_TRANSFER 3
 typedef struct
 {
-    unsigned char sourcePublicKey[32];
-    unsigned char destinationPublicKey[32];
-    unsigned long long timestamp;
-    unsigned long long amount;
-    unsigned char signature[64];
+    Transfer transfer;
 } BroadcastTransfer;
 
 #define BROADCAST_EFFECT 4
@@ -3580,6 +3622,12 @@ typedef struct
 {
     ComputorState computorState;
 } BroadcastComputorState;
+
+#define BROADCAST_TRANSFER_STATUS 6
+typedef struct
+{
+    TransferStatus status;
+} BroadcastTransferStatus;
 
 const unsigned short requestResponseMinSizes[] = {
     sizeof(RequestResponseHeader) + sizeof(ProcessWebSocketClientRequest),
@@ -3599,6 +3647,7 @@ static unsigned long long latestOperatorTimestamp;
 static unsigned long long salt;
 
 static Entity* entities = NULL;
+static TransferSuperstatus* transferSuperstatuses = NULL;
 
 static volatile char latestComputorStatesLock = 0;
 static ComputorState latestComputorStates[NUMBER_OF_COMPUTORS + 1];
@@ -3722,6 +3771,100 @@ iteration:
     entities[index].lock = 0;
 
     return FALSE;
+}
+
+static void getTransferStatus(TransferStatus* status)
+{
+    unsigned short index;
+
+    *((long long*)status->digest) ^= salt;
+    KangarooTwelve(status->digest, sizeof(status->digest), (unsigned char*)&index, sizeof(index));
+    *((long long*)status->digest) ^= salt;
+
+    while (_InterlockedCompareExchange8(&transferSuperstatuses[index].lock, 1, 0))
+    {
+    }
+
+    if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)transferSuperstatuses[index].digest), *((__m256i*)status->digest))) == 0xFFFFFFFF)
+    {
+        bs->CopyMem(status->status, transferSuperstatuses[index].statuses[status->computorIndex], sizeof(status->status));
+        status->epoch = transferSuperstatuses[index].epochs[status->computorIndex];
+        status->tick = transferSuperstatuses[index].ticks[status->computorIndex];
+        *((__m256i*)&status->signature[0]) = *((__m256i*)&transferSuperstatuses[index].signatures[status->computorIndex][0]);
+        *((__m256i*)&status->signature[32]) = *((__m256i*)&transferSuperstatuses[index].signatures[status->computorIndex][32]);
+    }
+    else
+    {
+        bs->SetMem(status->status, sizeof(status->status), 0);
+        status->epoch = 0;
+        status->tick = 0;
+        *((__m256i*)&status->signature[0]) = ZERO;
+        *((__m256i*)&status->signature[32]) = ZERO;
+    }
+    status->padding[0] = 0;
+    *((short*)&status->padding[1]) = 0;
+
+    transferSuperstatuses[index].lock = 0;
+}
+
+static void updateTransferStatus(TransferStatus* status)
+{
+    unsigned short index;
+
+    *((long long*)status->digest) ^= salt;
+    KangarooTwelve(status->digest, sizeof(status->digest), (unsigned char*)&index, sizeof(index));
+    *((long long*)status->digest) ^= salt;
+
+    while (_InterlockedCompareExchange8(&transferSuperstatuses[index].lock, 1, 0))
+    {
+    }
+
+    if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)transferSuperstatuses[index].digest), *((__m256i*)status->digest))) == 0xFFFFFFFF)
+    {
+        if (status->tick > transferSuperstatuses[index].ticks[status->computorIndex])
+        {
+            bs->CopyMem(transferSuperstatuses[index].statuses[status->computorIndex], status->status, sizeof(status->status));
+            transferSuperstatuses[index].epochs[status->computorIndex] = status->epoch;
+            transferSuperstatuses[index].ticks[status->computorIndex] = status->tick;
+            *((__m256i*)&transferSuperstatuses[index].signatures[status->computorIndex][0]) = *((__m256i*)&status->signature[0]);
+            *((__m256i*)&transferSuperstatuses[index].signatures[status->computorIndex][32]) = *((__m256i*)&status->signature[32]);
+
+            if (status->tick > transferSuperstatuses[index].mostRecentTick)
+            {
+                transferSuperstatuses[index].mostRecentTick = status->tick;
+            }
+        }
+    }
+    else
+    {
+        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)transferSuperstatuses[index].digest), ZERO)) == 0xFFFFFFFF)
+        {
+            *((__m256i*)transferSuperstatuses[index].digest) = *((__m256i*)status->digest);
+            bs->CopyMem(transferSuperstatuses[index].statuses[status->computorIndex], status->status, sizeof(status->status));
+            transferSuperstatuses[index].epochs[status->computorIndex] = status->epoch;
+            transferSuperstatuses[index].ticks[status->computorIndex] = status->tick;
+            *((__m256i*)&transferSuperstatuses[index].signatures[status->computorIndex][0]) = *((__m256i*)&status->signature[0]);
+            *((__m256i*)&transferSuperstatuses[index].signatures[status->computorIndex][32]) = *((__m256i*)&status->signature[32]);
+            transferSuperstatuses[index].mostRecentTick = status->tick;
+        }
+        else
+        {
+            if (status->tick > transferSuperstatuses[index].mostRecentTick)
+            {
+                bs->SetMem(&transferSuperstatuses[index], sizeof(TransferSuperstatus), 0);
+
+                *((__m256i*)transferSuperstatuses[index].digest) = *((__m256i*)status->digest);
+                bs->CopyMem(transferSuperstatuses[index].statuses[status->computorIndex], status->status, sizeof(status->status));
+                transferSuperstatuses[index].epochs[status->computorIndex] = status->epoch;
+                transferSuperstatuses[index].ticks[status->computorIndex] = status->tick;
+                *((__m256i*)&transferSuperstatuses[index].signatures[status->computorIndex][0]) = *((__m256i*)&status->signature[0]);
+                *((__m256i*)&transferSuperstatuses[index].signatures[status->computorIndex][32]) = *((__m256i*)&status->signature[32]);
+                transferSuperstatuses[index].mostRecentTick = status->tick;
+            }
+        }
+    }
+
+    transferSuperstatuses[index].lock = 0;
 }
 
 static void addPublicPeer(unsigned char address[4])
@@ -3850,6 +3993,19 @@ static void requestProcessor(void* ProcedureArgument)
                 responseHeader->size = sizeof(RequestResponseHeader) + sizeof(ProcessWebSocketClientRequest_GetComputerState_Response);
             }
             break;
+
+            case PROCESS_WEBSOCKET_CLIENT_REQUEST_GET_TRANSFER_STATUS:
+            {
+                ProcessWebSocketClientRequest_GetTransferStatus_Request* request = (ProcessWebSocketClientRequest_GetTransferStatus_Request*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
+                ProcessWebSocketClientRequest_GetTransferStatus_Response* response = (ProcessWebSocketClientRequest_GetTransferStatus_Response*)((char*)processor->responseBuffer + sizeof(RequestResponseHeader));
+                response->type = PROCESS_WEBSOCKET_CLIENT_REQUEST_GET_TRANSFER_STATUS;
+                response->timestamp = request->timestamp;
+                *((__m256i*)response->status.digest) = *((__m256i*)request->digest);
+                response->status.computorIndex = request->computorIndex;
+                getTransferStatus(&response->status);
+                responseHeader->size = sizeof(RequestResponseHeader) + sizeof(ProcessWebSocketClientRequest_GetTransferStatus_Response);
+            }
+            break;
             }
         }
     }
@@ -3923,7 +4079,7 @@ static void requestProcessor(void* ProcedureArgument)
     case BROADCAST_TRANSFER:
     {
         BroadcastTransfer* request = (BroadcastTransfer*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
-        if (request->timestamp >= launchTime && request->amount >= MIN_ENERGY_AMOUNT)
+        if (request->transfer.timestamp >= launchTime && request->transfer.amount >= MIN_ENERGY_AMOUNT)
         {
             unsigned int saltedId;
 
@@ -3937,10 +4093,10 @@ static void requestProcessor(void* ProcedureArgument)
                 dejavu0[saltedId >> 6] |= (((unsigned long long)1) << (saltedId & 63));
 
                 unsigned char digest[32];
-                request->sourcePublicKey[0] ^= 1;
+                request->transfer.sourcePublicKey[0] ^= 1;
                 KangarooTwelve((unsigned char*)request, sizeof(BroadcastTransfer) - 64, digest, sizeof(digest));
-                request->sourcePublicKey[0] ^= 1;
-                if (verify(request->sourcePublicKey, digest, request->signature))
+                request->transfer.sourcePublicKey[0] ^= 1;
+                if (verify(request->transfer.sourcePublicKey, digest, request->transfer.signature))
                 {
                     bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
                     processor->responseTransmittingType = -1;
@@ -4020,6 +4176,60 @@ static void requestProcessor(void* ProcedureArgument)
         }
 
         latestComputorStatesLock = 0;
+    }
+    break;
+
+    case BROADCAST_TRANSFER_STATUS:
+    {
+        BroadcastTransferStatus* request = (BroadcastTransferStatus*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
+
+        unsigned int saltedId;
+
+        const long long tmp = *((long long*)requestHeader);
+        *((long long*)requestHeader) = salt;
+        KangarooTwelve((unsigned char*)requestHeader, ((RequestResponseHeader*)&tmp)->size, (unsigned char*)&saltedId, sizeof(saltedId));
+        *((long long*)requestHeader) = tmp;
+
+        if (!((dejavu0[saltedId >> 6] | dejavu1[saltedId >> 6]) & (((unsigned long long)1) << (saltedId & 63))))
+        {
+            dejavu0[saltedId >> 6] |= (((unsigned long long)1) << (saltedId & 63));
+
+            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->status.digest), ZERO)) != 0xFFFFFFFF
+                && !request->status.padding[0] && !(*((short*)&request->status.padding[1]))
+                && request->status.computorIndex < NUMBER_OF_COMPUTORS)
+            {
+                unsigned int i;
+                for (i = 0; i < sizeof(request->status.status); i++)
+                {
+                    if ((request->status.status[i] & 3) == 3 || (request->status.status[i] & (3 << 2)) == (3 << 2) || (request->status.status[i] & (3 << 4)) == (3 << 4) || (request->status.status[i] & (3 << 6)) == (3 << 6))
+                    {
+                        break;
+                    }
+                }
+                if (i == sizeof(request->status.status))
+                {
+                    if (latestComputorStates[NUMBER_OF_COMPUTORS].timestamp && request->status.epoch == latestComputorStates[NUMBER_OF_COMPUTORS].epoch)
+                    {
+                        unsigned char digest[32];
+                        request->status.digest[0] ^= 3;
+                        KangarooTwelve((unsigned char*)request, sizeof(BroadcastTransferStatus), digest, sizeof(digest));
+                        request->status.digest[0] ^= 3;
+                        if (verify(latestComputorStates[NUMBER_OF_COMPUTORS].computorPublicKeys[request->status.computorIndex], digest, request->status.signature))
+                        {
+                            updateTransferStatus(&request->status);
+
+                            bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
+                            processor->responseTransmittingType = -1;
+                        }
+                    }
+                    else
+                    {
+                        bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
+                        processor->responseTransmittingType = -1;
+                    }
+                }
+            }
+        }
     }
     break;
     }
@@ -4656,258 +4866,266 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                 && receivedDataSize >= 20 && *((unsigned long long*)peer->receiveBuffer) == 0x5448202F20544547 // "GET / HT"
                 && receivedDataSize <= BUFFER_SIZE - 1024)
             {
-                unsigned int i = 20;
-                while (i < receivedDataSize
-                    && (((char*)peer->receiveBuffer)[i - 20] != '\r'
-                        || ((char*)peer->receiveBuffer)[i - 19] != '\n'
-                        || ((char*)peer->receiveBuffer)[i - 18] != 'S'
-                        || ((char*)peer->receiveBuffer)[i - 17] != 'e'
-                        || ((char*)peer->receiveBuffer)[i - 16] != 'c'
-                        || ((char*)peer->receiveBuffer)[i - 15] != '-'
-                        || ((char*)peer->receiveBuffer)[i - 14] != 'W'
-                        || ((char*)peer->receiveBuffer)[i - 13] != 'e'
-                        || ((char*)peer->receiveBuffer)[i - 12] != 'b'
-                        || ((char*)peer->receiveBuffer)[i - 11] != 'S'
-                        || ((char*)peer->receiveBuffer)[i - 10] != 'o'
-                        || ((char*)peer->receiveBuffer)[i - 9] != 'c'
-                        || ((char*)peer->receiveBuffer)[i - 8] != 'k'
-                        || ((char*)peer->receiveBuffer)[i - 7] != 'e'
-                        || ((char*)peer->receiveBuffer)[i - 6] != 't'
-                        || ((char*)peer->receiveBuffer)[i - 5] != '-'
-                        || ((char*)peer->receiveBuffer)[i - 4] != 'K'
-                        || ((char*)peer->receiveBuffer)[i - 3] != 'e'
-                        || ((char*)peer->receiveBuffer)[i - 2] != 'y'
-                        || ((char*)peer->receiveBuffer)[i - 1] != ':'))
+                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)operatorPublicKey), ZERO)) == 0xFFFFFFFF)
                 {
-                    i++;
-                }
-                while (i < receivedDataSize
-                    && ((char*)peer->receiveBuffer)[i] == ' ')
-                {
-                    i++;
-                }
-                unsigned int j = i;
-                while (j < receivedDataSize
-                    && ((char*)peer->receiveBuffer)[j] != ' ' && ((char*)peer->receiveBuffer)[j] != '\r')
-                {
-                    j++;
-                }
-
-                if (j < receivedDataSize)
-                {
-                    peer->type = -1;
-
-                    bs->CopyMem(peer->transmitData.FragmentTable[0].FragmentBuffer, (void*)"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ", 97);
-
-                    bs->CopyMem(&((char*)peer->receiveBuffer)[j], (void*)"258EAFA5-E914-47DA-95CA-C5AB0DC85B11", 36);
-                    j += 36;
-                    const int size = j - i;
-                    ((char*)peer->receiveBuffer)[j++] = -128;
-                    while (((j - i) & 63) != 56)
-                    {
-                        ((char*)peer->receiveBuffer)[j++] = 0;
-                    }
-                    ((char*)peer->receiveBuffer)[j++] = 0;
-                    ((char*)peer->receiveBuffer)[j++] = 0;
-                    ((char*)peer->receiveBuffer)[j++] = 0;
-                    ((char*)peer->receiveBuffer)[j++] = 0;
-                    ((char*)peer->receiveBuffer)[j++] = 0;
-                    ((char*)peer->receiveBuffer)[j++] = 0;
-                    ((char*)peer->receiveBuffer)[j++] = size >> 5;
-                    ((char*)peer->receiveBuffer)[j++] = size << 3;
-
-                    unsigned char acceptBytes[21] = { 0x76, 0x54, 0x32, 0x10, 0xFE, 0xDC, 0xBA, 0x98, 0x89, 0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0xF0, 0xE1, 0xD2, 0xC3, 0 };
-
-                    __m128i ABCD_SAVE, MASK, E0, E0_SAVE, E1, MSG0, MSG1, MSG2, MSG3;
-                    MASK = _mm_set_epi8(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
-                    E0 = _mm_set_epi32(*((int*)&acceptBytes[16]), 0, 0, 0);
-                    int ptr = -16;
-                    while ((j -= 64) >= i)
-                    {
-                        ABCD_SAVE = *((__m128i*)acceptBytes);
-                        E0_SAVE = E0;
-
-                        MSG0 = _mm_shuffle_epi8(*((__m128i*)&((char*)peer->receiveBuffer)[i + (ptr += 16)]), MASK);
-                        E0 = _mm_add_epi32(E0, MSG0);
-                        E1 = *((__m128i*)acceptBytes);
-                        *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 0);
-
-                        MSG1 = _mm_shuffle_epi8(*((__m128i*)&((char*)peer->receiveBuffer)[i + (ptr += 16)]), MASK);
-                        E1 = _mm_sha1nexte_epu32(E1, MSG1);
-                        E0 = *((__m128i*)acceptBytes);
-                        *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 0);
-                        MSG0 = _mm_sha1msg1_epu32(MSG0, MSG1);
-
-                        MSG2 = _mm_shuffle_epi8(*((__m128i*)&((char*)peer->receiveBuffer)[i + (ptr += 16)]), MASK);
-                        E0 = _mm_sha1nexte_epu32(E0, MSG2);
-                        E1 = *((__m128i*)acceptBytes);
-                        *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 0);
-                        MSG1 = _mm_sha1msg1_epu32(MSG1, MSG2);
-                        MSG0 = _mm_xor_si128(MSG0, MSG2);
-
-                        MSG3 = _mm_shuffle_epi8(*((__m128i*)&((char*)peer->receiveBuffer)[i + (ptr += 16)]), MASK);
-                        E1 = _mm_sha1nexte_epu32(E1, MSG3);
-                        E0 = *((__m128i*)acceptBytes);
-                        MSG0 = _mm_sha1msg2_epu32(MSG0, MSG3);
-                        *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 0);
-                        MSG2 = _mm_sha1msg1_epu32(MSG2, MSG3);
-                        MSG1 = _mm_xor_si128(MSG1, MSG3);
-
-                        E0 = _mm_sha1nexte_epu32(E0, MSG0);
-                        E1 = *((__m128i*)acceptBytes);
-                        MSG1 = _mm_sha1msg2_epu32(MSG1, MSG0);
-                        *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 0);
-                        MSG3 = _mm_sha1msg1_epu32(MSG3, MSG0);
-                        MSG2 = _mm_xor_si128(MSG2, MSG0);
-
-                        E1 = _mm_sha1nexte_epu32(E1, MSG1);
-                        E0 = *((__m128i*)acceptBytes);
-                        MSG2 = _mm_sha1msg2_epu32(MSG2, MSG1);
-                        *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 1);
-                        MSG0 = _mm_sha1msg1_epu32(MSG0, MSG1);
-                        MSG3 = _mm_xor_si128(MSG3, MSG1);
-
-                        E0 = _mm_sha1nexte_epu32(E0, MSG2);
-                        E1 = *((__m128i*)acceptBytes);
-                        MSG3 = _mm_sha1msg2_epu32(MSG3, MSG2);
-                        *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 1);
-                        MSG1 = _mm_sha1msg1_epu32(MSG1, MSG2);
-                        MSG0 = _mm_xor_si128(MSG0, MSG2);
-
-                        E1 = _mm_sha1nexte_epu32(E1, MSG3);
-                        E0 = *((__m128i*)acceptBytes);
-                        MSG0 = _mm_sha1msg2_epu32(MSG0, MSG3);
-                        *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 1);
-                        MSG2 = _mm_sha1msg1_epu32(MSG2, MSG3);
-                        MSG1 = _mm_xor_si128(MSG1, MSG3);
-
-                        E0 = _mm_sha1nexte_epu32(E0, MSG0);
-                        E1 = *((__m128i*)acceptBytes);
-                        MSG1 = _mm_sha1msg2_epu32(MSG1, MSG0);
-                        *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 1);
-                        MSG3 = _mm_sha1msg1_epu32(MSG3, MSG0);
-                        MSG2 = _mm_xor_si128(MSG2, MSG0);
-
-                        E1 = _mm_sha1nexte_epu32(E1, MSG1);
-                        E0 = *((__m128i*)acceptBytes);
-                        MSG2 = _mm_sha1msg2_epu32(MSG2, MSG1);
-                        *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 1);
-                        MSG0 = _mm_sha1msg1_epu32(MSG0, MSG1);
-                        MSG3 = _mm_xor_si128(MSG3, MSG1);
-
-                        E0 = _mm_sha1nexte_epu32(E0, MSG2);
-                        E1 = *((__m128i*)acceptBytes);
-                        MSG3 = _mm_sha1msg2_epu32(MSG3, MSG2);
-                        *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 2);
-                        MSG1 = _mm_sha1msg1_epu32(MSG1, MSG2);
-                        MSG0 = _mm_xor_si128(MSG0, MSG2);
-
-                        E1 = _mm_sha1nexte_epu32(E1, MSG3);
-                        E0 = *((__m128i*)acceptBytes);
-                        MSG0 = _mm_sha1msg2_epu32(MSG0, MSG3);
-                        *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 2);
-                        MSG2 = _mm_sha1msg1_epu32(MSG2, MSG3);
-                        MSG1 = _mm_xor_si128(MSG1, MSG3);
-
-                        E0 = _mm_sha1nexte_epu32(E0, MSG0);
-                        E1 = *((__m128i*)acceptBytes);
-                        MSG1 = _mm_sha1msg2_epu32(MSG1, MSG0);
-                        *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 2);
-                        MSG3 = _mm_sha1msg1_epu32(MSG3, MSG0);
-                        MSG2 = _mm_xor_si128(MSG2, MSG0);
-
-                        E1 = _mm_sha1nexte_epu32(E1, MSG1);
-                        E0 = *((__m128i*)acceptBytes);
-                        MSG2 = _mm_sha1msg2_epu32(MSG2, MSG1);
-                        *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 2);
-                        MSG0 = _mm_sha1msg1_epu32(MSG0, MSG1);
-                        MSG3 = _mm_xor_si128(MSG3, MSG1);
-
-                        E0 = _mm_sha1nexte_epu32(E0, MSG2);
-                        E1 = *((__m128i*)acceptBytes);
-                        MSG3 = _mm_sha1msg2_epu32(MSG3, MSG2);
-                        *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 2);
-                        MSG1 = _mm_sha1msg1_epu32(MSG1, MSG2);
-                        MSG0 = _mm_xor_si128(MSG0, MSG2);
-
-                        E1 = _mm_sha1nexte_epu32(E1, MSG3);
-                        E0 = *((__m128i*)acceptBytes);
-                        MSG0 = _mm_sha1msg2_epu32(MSG0, MSG3);
-                        *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 3);
-                        MSG2 = _mm_sha1msg1_epu32(MSG2, MSG3);
-                        MSG1 = _mm_xor_si128(MSG1, MSG3);
-
-                        E0 = _mm_sha1nexte_epu32(E0, MSG0);
-                        E1 = *((__m128i*)acceptBytes);
-                        MSG1 = _mm_sha1msg2_epu32(MSG1, MSG0);
-                        *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 3);
-                        MSG3 = _mm_sha1msg1_epu32(MSG3, MSG0);
-                        MSG2 = _mm_xor_si128(MSG2, MSG0);
-
-                        E1 = _mm_sha1nexte_epu32(E1, MSG1);
-                        E0 = *((__m128i*)acceptBytes);
-                        MSG2 = _mm_sha1msg2_epu32(MSG2, MSG1);
-                        *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 3);
-                        MSG3 = _mm_xor_si128(MSG3, MSG1);
-
-                        E0 = _mm_sha1nexte_epu32(E0, MSG2);
-                        E1 = *((__m128i*)acceptBytes);
-                        MSG3 = _mm_sha1msg2_epu32(MSG3, MSG2);
-                        *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 3);
-
-                        E1 = _mm_sha1nexte_epu32(E1, MSG3);
-                        E0 = *((__m128i*)acceptBytes);
-                        *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 3);
-
-                        E0 = _mm_sha1nexte_epu32(E0, E0_SAVE);
-                        *((__m128i*)acceptBytes) = _mm_add_epi32(*((__m128i*)acceptBytes), ABCD_SAVE);
-                    }
-                    *((__m128i*)acceptBytes) = _mm_shuffle_epi8(*((__m128i*)acceptBytes), _mm_setr_epi8(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0));
-                    *((int*)&acceptBytes[16]) = _byteswap_ulong(*(((int*)&E0) + 3));
-
-                    const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-                    i = 97;
-                    for (j = 0; j < 21; j += 3)
-                    {
-                        unsigned int word = (acceptBytes[j] << 16) | (acceptBytes[j + 1] << 8) | acceptBytes[j + 2];
-                        ((char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[i++] = alphabet[word >> 18];
-                        ((char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[i++] = alphabet[(word >> 12) & 63];
-                        ((char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[i++] = alphabet[(word >> 6) & 63];
-                        ((char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[i++] = alphabet[word & 63];
-                    }
-                    ((char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[i - 1] = '=';
-                    ((char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[i++] = '\r';
-                    ((char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[i++] = '\n';
-                    ((char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[i++] = '\r';
-                    ((char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[i++] = '\n';
-
-                    peer->receiveData.FragmentTable[0].FragmentBuffer = peer->receiveBuffer;
-                    receive(peer);
-
-                    const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
-
-                    peer->isTransmitting = TRUE;
-
-                    EFI_STATUS status;
-                    bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, transmitCallback, peer, &peer->transmitToken.CompletionToken.Event);
-                    peer->transmitData.DataLength = peer->transmitData.FragmentTable[0].FragmentLength = i;
-                    if (status = peer->tcp4Protocol->Transmit(peer->tcp4Protocol, &peer->transmitToken))
-                    {
-                        if (status != EFI_ACCESS_DENIED)
-                        {
-                            logStatus(L"EFI_TCP4_PROTOCOL.Transmit() fails", status);
-                        }
-
-                        bs->CloseEvent(peer->transmitToken.CompletionToken.Event);
-
-                        close(peer);
-                    }
-
-                    bs->RestoreTPL(tpl);
+                    bs->CopyMem(peer->transmitData.FragmentTable[0].FragmentBuffer, (void*)"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n", 45);
+                    transmit(peer, 45);
                 }
                 else
                 {
-                    close(peer);
+                    unsigned int i = 20;
+                    while (i < receivedDataSize
+                        && (((char*)peer->receiveBuffer)[i - 20] != '\r'
+                            || ((char*)peer->receiveBuffer)[i - 19] != '\n'
+                            || ((char*)peer->receiveBuffer)[i - 18] != 'S'
+                            || ((char*)peer->receiveBuffer)[i - 17] != 'e'
+                            || ((char*)peer->receiveBuffer)[i - 16] != 'c'
+                            || ((char*)peer->receiveBuffer)[i - 15] != '-'
+                            || ((char*)peer->receiveBuffer)[i - 14] != 'W'
+                            || ((char*)peer->receiveBuffer)[i - 13] != 'e'
+                            || ((char*)peer->receiveBuffer)[i - 12] != 'b'
+                            || ((char*)peer->receiveBuffer)[i - 11] != 'S'
+                            || ((char*)peer->receiveBuffer)[i - 10] != 'o'
+                            || ((char*)peer->receiveBuffer)[i - 9] != 'c'
+                            || ((char*)peer->receiveBuffer)[i - 8] != 'k'
+                            || ((char*)peer->receiveBuffer)[i - 7] != 'e'
+                            || ((char*)peer->receiveBuffer)[i - 6] != 't'
+                            || ((char*)peer->receiveBuffer)[i - 5] != '-'
+                            || ((char*)peer->receiveBuffer)[i - 4] != 'K'
+                            || ((char*)peer->receiveBuffer)[i - 3] != 'e'
+                            || ((char*)peer->receiveBuffer)[i - 2] != 'y'
+                            || ((char*)peer->receiveBuffer)[i - 1] != ':'))
+                    {
+                        i++;
+                    }
+                    while (i < receivedDataSize
+                        && ((char*)peer->receiveBuffer)[i] == ' ')
+                    {
+                        i++;
+                    }
+                    unsigned int j = i;
+                    while (j < receivedDataSize
+                        && ((char*)peer->receiveBuffer)[j] != ' ' && ((char*)peer->receiveBuffer)[j] != '\r')
+                    {
+                        j++;
+                    }
+
+                    if (j < receivedDataSize)
+                    {
+                        peer->type = -1;
+
+                        bs->CopyMem(peer->transmitData.FragmentTable[0].FragmentBuffer, (void*)"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ", 97);
+
+                        bs->CopyMem(&((char*)peer->receiveBuffer)[j], (void*)"258EAFA5-E914-47DA-95CA-C5AB0DC85B11", 36);
+                        j += 36;
+                        const int size = j - i;
+                        ((char*)peer->receiveBuffer)[j++] = -128;
+                        while (((j - i) & 63) != 56)
+                        {
+                            ((char*)peer->receiveBuffer)[j++] = 0;
+                        }
+                        ((char*)peer->receiveBuffer)[j++] = 0;
+                        ((char*)peer->receiveBuffer)[j++] = 0;
+                        ((char*)peer->receiveBuffer)[j++] = 0;
+                        ((char*)peer->receiveBuffer)[j++] = 0;
+                        ((char*)peer->receiveBuffer)[j++] = 0;
+                        ((char*)peer->receiveBuffer)[j++] = 0;
+                        ((char*)peer->receiveBuffer)[j++] = size >> 5;
+                        ((char*)peer->receiveBuffer)[j++] = size << 3;
+
+                        unsigned char acceptBytes[21] = { 0x76, 0x54, 0x32, 0x10, 0xFE, 0xDC, 0xBA, 0x98, 0x89, 0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0xF0, 0xE1, 0xD2, 0xC3, 0 };
+
+                        __m128i ABCD_SAVE, MASK, E0, E0_SAVE, E1, MSG0, MSG1, MSG2, MSG3;
+                        MASK = _mm_set_epi8(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
+                        E0 = _mm_set_epi32(*((int*)&acceptBytes[16]), 0, 0, 0);
+                        int ptr = -16;
+                        while ((j -= 64) >= i)
+                        {
+                            ABCD_SAVE = *((__m128i*)acceptBytes);
+                            E0_SAVE = E0;
+
+                            MSG0 = _mm_shuffle_epi8(*((__m128i*) & ((char*)peer->receiveBuffer)[i + (ptr += 16)]), MASK);
+                            E0 = _mm_add_epi32(E0, MSG0);
+                            E1 = *((__m128i*)acceptBytes);
+                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 0);
+
+                            MSG1 = _mm_shuffle_epi8(*((__m128i*) & ((char*)peer->receiveBuffer)[i + (ptr += 16)]), MASK);
+                            E1 = _mm_sha1nexte_epu32(E1, MSG1);
+                            E0 = *((__m128i*)acceptBytes);
+                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 0);
+                            MSG0 = _mm_sha1msg1_epu32(MSG0, MSG1);
+
+                            MSG2 = _mm_shuffle_epi8(*((__m128i*) & ((char*)peer->receiveBuffer)[i + (ptr += 16)]), MASK);
+                            E0 = _mm_sha1nexte_epu32(E0, MSG2);
+                            E1 = *((__m128i*)acceptBytes);
+                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 0);
+                            MSG1 = _mm_sha1msg1_epu32(MSG1, MSG2);
+                            MSG0 = _mm_xor_si128(MSG0, MSG2);
+
+                            MSG3 = _mm_shuffle_epi8(*((__m128i*) & ((char*)peer->receiveBuffer)[i + (ptr += 16)]), MASK);
+                            E1 = _mm_sha1nexte_epu32(E1, MSG3);
+                            E0 = *((__m128i*)acceptBytes);
+                            MSG0 = _mm_sha1msg2_epu32(MSG0, MSG3);
+                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 0);
+                            MSG2 = _mm_sha1msg1_epu32(MSG2, MSG3);
+                            MSG1 = _mm_xor_si128(MSG1, MSG3);
+
+                            E0 = _mm_sha1nexte_epu32(E0, MSG0);
+                            E1 = *((__m128i*)acceptBytes);
+                            MSG1 = _mm_sha1msg2_epu32(MSG1, MSG0);
+                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 0);
+                            MSG3 = _mm_sha1msg1_epu32(MSG3, MSG0);
+                            MSG2 = _mm_xor_si128(MSG2, MSG0);
+
+                            E1 = _mm_sha1nexte_epu32(E1, MSG1);
+                            E0 = *((__m128i*)acceptBytes);
+                            MSG2 = _mm_sha1msg2_epu32(MSG2, MSG1);
+                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 1);
+                            MSG0 = _mm_sha1msg1_epu32(MSG0, MSG1);
+                            MSG3 = _mm_xor_si128(MSG3, MSG1);
+
+                            E0 = _mm_sha1nexte_epu32(E0, MSG2);
+                            E1 = *((__m128i*)acceptBytes);
+                            MSG3 = _mm_sha1msg2_epu32(MSG3, MSG2);
+                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 1);
+                            MSG1 = _mm_sha1msg1_epu32(MSG1, MSG2);
+                            MSG0 = _mm_xor_si128(MSG0, MSG2);
+
+                            E1 = _mm_sha1nexte_epu32(E1, MSG3);
+                            E0 = *((__m128i*)acceptBytes);
+                            MSG0 = _mm_sha1msg2_epu32(MSG0, MSG3);
+                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 1);
+                            MSG2 = _mm_sha1msg1_epu32(MSG2, MSG3);
+                            MSG1 = _mm_xor_si128(MSG1, MSG3);
+
+                            E0 = _mm_sha1nexte_epu32(E0, MSG0);
+                            E1 = *((__m128i*)acceptBytes);
+                            MSG1 = _mm_sha1msg2_epu32(MSG1, MSG0);
+                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 1);
+                            MSG3 = _mm_sha1msg1_epu32(MSG3, MSG0);
+                            MSG2 = _mm_xor_si128(MSG2, MSG0);
+
+                            E1 = _mm_sha1nexte_epu32(E1, MSG1);
+                            E0 = *((__m128i*)acceptBytes);
+                            MSG2 = _mm_sha1msg2_epu32(MSG2, MSG1);
+                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 1);
+                            MSG0 = _mm_sha1msg1_epu32(MSG0, MSG1);
+                            MSG3 = _mm_xor_si128(MSG3, MSG1);
+
+                            E0 = _mm_sha1nexte_epu32(E0, MSG2);
+                            E1 = *((__m128i*)acceptBytes);
+                            MSG3 = _mm_sha1msg2_epu32(MSG3, MSG2);
+                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 2);
+                            MSG1 = _mm_sha1msg1_epu32(MSG1, MSG2);
+                            MSG0 = _mm_xor_si128(MSG0, MSG2);
+
+                            E1 = _mm_sha1nexte_epu32(E1, MSG3);
+                            E0 = *((__m128i*)acceptBytes);
+                            MSG0 = _mm_sha1msg2_epu32(MSG0, MSG3);
+                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 2);
+                            MSG2 = _mm_sha1msg1_epu32(MSG2, MSG3);
+                            MSG1 = _mm_xor_si128(MSG1, MSG3);
+
+                            E0 = _mm_sha1nexte_epu32(E0, MSG0);
+                            E1 = *((__m128i*)acceptBytes);
+                            MSG1 = _mm_sha1msg2_epu32(MSG1, MSG0);
+                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 2);
+                            MSG3 = _mm_sha1msg1_epu32(MSG3, MSG0);
+                            MSG2 = _mm_xor_si128(MSG2, MSG0);
+
+                            E1 = _mm_sha1nexte_epu32(E1, MSG1);
+                            E0 = *((__m128i*)acceptBytes);
+                            MSG2 = _mm_sha1msg2_epu32(MSG2, MSG1);
+                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 2);
+                            MSG0 = _mm_sha1msg1_epu32(MSG0, MSG1);
+                            MSG3 = _mm_xor_si128(MSG3, MSG1);
+
+                            E0 = _mm_sha1nexte_epu32(E0, MSG2);
+                            E1 = *((__m128i*)acceptBytes);
+                            MSG3 = _mm_sha1msg2_epu32(MSG3, MSG2);
+                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 2);
+                            MSG1 = _mm_sha1msg1_epu32(MSG1, MSG2);
+                            MSG0 = _mm_xor_si128(MSG0, MSG2);
+
+                            E1 = _mm_sha1nexte_epu32(E1, MSG3);
+                            E0 = *((__m128i*)acceptBytes);
+                            MSG0 = _mm_sha1msg2_epu32(MSG0, MSG3);
+                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 3);
+                            MSG2 = _mm_sha1msg1_epu32(MSG2, MSG3);
+                            MSG1 = _mm_xor_si128(MSG1, MSG3);
+
+                            E0 = _mm_sha1nexte_epu32(E0, MSG0);
+                            E1 = *((__m128i*)acceptBytes);
+                            MSG1 = _mm_sha1msg2_epu32(MSG1, MSG0);
+                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 3);
+                            MSG3 = _mm_sha1msg1_epu32(MSG3, MSG0);
+                            MSG2 = _mm_xor_si128(MSG2, MSG0);
+
+                            E1 = _mm_sha1nexte_epu32(E1, MSG1);
+                            E0 = *((__m128i*)acceptBytes);
+                            MSG2 = _mm_sha1msg2_epu32(MSG2, MSG1);
+                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 3);
+                            MSG3 = _mm_xor_si128(MSG3, MSG1);
+
+                            E0 = _mm_sha1nexte_epu32(E0, MSG2);
+                            E1 = *((__m128i*)acceptBytes);
+                            MSG3 = _mm_sha1msg2_epu32(MSG3, MSG2);
+                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 3);
+
+                            E1 = _mm_sha1nexte_epu32(E1, MSG3);
+                            E0 = *((__m128i*)acceptBytes);
+                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 3);
+
+                            E0 = _mm_sha1nexte_epu32(E0, E0_SAVE);
+                            *((__m128i*)acceptBytes) = _mm_add_epi32(*((__m128i*)acceptBytes), ABCD_SAVE);
+                        }
+                        *((__m128i*)acceptBytes) = _mm_shuffle_epi8(*((__m128i*)acceptBytes), _mm_setr_epi8(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0));
+                        *((int*)&acceptBytes[16]) = _byteswap_ulong(*(((int*)&E0) + 3));
+
+                        const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+                        i = 97;
+                        for (j = 0; j < 21; j += 3)
+                        {
+                            unsigned int word = (acceptBytes[j] << 16) | (acceptBytes[j + 1] << 8) | acceptBytes[j + 2];
+                            ((char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[i++] = alphabet[word >> 18];
+                            ((char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[i++] = alphabet[(word >> 12) & 63];
+                            ((char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[i++] = alphabet[(word >> 6) & 63];
+                            ((char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[i++] = alphabet[word & 63];
+                        }
+                        ((char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[i - 1] = '=';
+                        ((char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[i++] = '\r';
+                        ((char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[i++] = '\n';
+                        ((char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[i++] = '\r';
+                        ((char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[i++] = '\n';
+
+                        peer->receiveData.FragmentTable[0].FragmentBuffer = peer->receiveBuffer;
+                        receive(peer);
+
+                        const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
+
+                        peer->isTransmitting = TRUE;
+
+                        EFI_STATUS status;
+                        bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, transmitCallback, peer, &peer->transmitToken.CompletionToken.Event);
+                        peer->transmitData.DataLength = peer->transmitData.FragmentTable[0].FragmentLength = i;
+                        if (status = peer->tcp4Protocol->Transmit(peer->tcp4Protocol, &peer->transmitToken))
+                        {
+                            if (status != EFI_ACCESS_DENIED)
+                            {
+                                logStatus(L"EFI_TCP4_PROTOCOL.Transmit() fails", status);
+                            }
+
+                            bs->CloseEvent(peer->transmitToken.CompletionToken.Event);
+
+                            close(peer);
+                        }
+
+                        bs->RestoreTPL(tpl);
+                    }
+                    else
+                    {
+                        close(peer);
+                    }
                 }
             }
             else
@@ -5056,6 +5274,11 @@ static BOOLEAN initialize()
     log(message);
 
     bs->SetMem(latestComputorStates, sizeof(latestComputorStates), 0);
+    for (unsigned int i = 0; i < sizeof(latestComputorStates) / sizeof(latestComputorStates[0]); i++)
+    {
+        latestComputorStates[i].computorIndex = i;
+    }
+
     bs->SetMem(processors, sizeof(processors), 0);
     bs->SetMem(peers, sizeof(peers), 0);
     bs->SetMem(publicPeers, sizeof(publicPeers), 0);
@@ -5072,6 +5295,13 @@ static BOOLEAN initialize()
         }
         bs->SetMem(entities, 0x1000000 * sizeof(Entity), 0);
     }
+    if (status = bs->AllocatePool(EfiRuntimeServicesData, 0x10000 * sizeof(TransferSuperstatus), (void**)&transferSuperstatuses))
+    {
+        logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status);
+
+        return FALSE;
+    }
+    bs->SetMem(transferSuperstatuses, 0x10000 * sizeof(TransferSuperstatus), 0);
 
     if ((status = bs->AllocatePool(EfiRuntimeServicesData, 536870912, (void**)&dejavu0))
         || (status = bs->AllocatePool(EfiRuntimeServicesData, 536870912, (void**)&dejavu1)))
@@ -5125,6 +5355,10 @@ static void deinitialize()
             bs->FreePool(entities);
         }
     }
+    if (transferSuperstatuses)
+    {
+        bs->FreePool(transferSuperstatuses);
+    }
 
     if (dejavu0)
     {
@@ -5174,7 +5408,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.3.1 is launched.");
+    log(L"Qubic 0.3.2 is launched.");
 
     if (initialize())
     {
