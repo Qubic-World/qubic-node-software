@@ -5329,6 +5329,7 @@ static BOOLEAN initialize()
         peers[peerIndex].receiveToken.Packet.RxData = &peers[peerIndex].receiveData;
         peers[peerIndex].transmitToken.Packet.TxData = &peers[peerIndex].transmitData;
         peers[peerIndex].closeToken.AbortOnClose = TRUE;
+        ((RequestResponseHeader*)peers[peerIndex].dataToTransmit)->protocol = PROTOCOL;
     }
 
     while (numberOfPublicPeers < MIN_NUMBER_OF_PEERS)
@@ -5408,7 +5409,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.3.2 is launched.");
+    log(L"Qubic 0.3.3 is launched.");
 
     if (initialize())
     {
