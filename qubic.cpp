@@ -3418,7 +3418,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define NUMBER_OF_COMPUTORS (26 * 26)
 #define PEER_RATING_PERIOD 15
 #define PORT 21841
-#define PROTOCOL 3
+#define PROTOCOL 4
 
 static __m256i ZERO;
 
@@ -4248,6 +4248,8 @@ static void responseCallback(EFI_EVENT Event, void* Context)
     RequestResponseHeader* responseHeader = (RequestResponseHeader*)processor->responseBuffer;
     if (responseHeader->size)
     {
+        responseHeader->protocol = PROTOCOL;
+
         const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
 
         if (processor->responseTransmittingType)
@@ -5326,11 +5328,9 @@ static BOOLEAN initialize()
 
             return FALSE;
         }
-        ((RequestResponseHeader*)peers[peerIndex].transmitData.FragmentTable[0].FragmentBuffer)->protocol = PROTOCOL;
         peers[peerIndex].receiveToken.Packet.RxData = &peers[peerIndex].receiveData;
         peers[peerIndex].transmitToken.Packet.TxData = &peers[peerIndex].transmitData;
         peers[peerIndex].closeToken.AbortOnClose = TRUE;
-        ((RequestResponseHeader*)peers[peerIndex].dataToTransmit)->protocol = PROTOCOL;
     }
 
     while (numberOfPublicPeers < MIN_NUMBER_OF_PEERS)
@@ -5410,7 +5410,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.3.5 is launched.");
+    log(L"Qubic 0.4.0 is launched.");
 
     if (initialize())
     {
@@ -5441,7 +5441,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                     break;
                 }
-                ((RequestResponseHeader*)processors[numberOfProcessors].responseBuffer)->protocol = PROTOCOL;
                 processors[numberOfProcessors++].number = i;
             }
         }
