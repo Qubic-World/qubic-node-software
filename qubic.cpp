@@ -3669,6 +3669,7 @@ static EFI_SERVICE_BINDING_PROTOCOL* tcp4ServiceBindingProtocol;
 static EFI_GUID tcp4ProtocolGuid = EFI_TCP4_PROTOCOL_GUID;
 static EFI_TCP4_PROTOCOL* tcp4Protocol;
 static Peer peers[MAX_NUMBER_OF_PEERS];
+static int latestPeerIndex = -1;
 static unsigned int latestPeerId; // Initial value doesn't matter
 static volatile long long numberOfReceivedBytes = 0, prevNumberOfReceivedBytes = 0;
 static volatile long long numberOfTransmittedBytes = 0, prevNumberOfTransmittedBytes = 0;
@@ -4247,8 +4248,6 @@ static void responseCallback(EFI_EVENT Event, void* Context)
     RequestResponseHeader* responseHeader = (RequestResponseHeader*)processor->responseBuffer;
     if (responseHeader->size)
     {
-        responseHeader->protocol = PROTOCOL;
-
         const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
 
         if (processor->responseTransmittingType)
@@ -4436,29 +4435,30 @@ static BOOLEAN accept()
 {
     const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
 
-    int freePeerSlot;
-    for (freePeerSlot = 0; freePeerSlot < MAX_NUMBER_OF_PEERS; freePeerSlot++)
+    unsigned int i;
+    for (i = 0; i < MAX_NUMBER_OF_PEERS; i++)
     {
-        if (!peers[freePeerSlot].tcp4Protocol)
+        latestPeerIndex = (latestPeerIndex + 1) % MAX_NUMBER_OF_PEERS;
+        if (!peers[latestPeerIndex].tcp4Protocol)
         {
             break;
         }
     }
-    if (freePeerSlot != MAX_NUMBER_OF_PEERS)
+    if (i != MAX_NUMBER_OF_PEERS)
     {
-        peers[freePeerSlot].tcp4Protocol = (EFI_TCP4_PROTOCOL*)1;
-        *((int*)peers[freePeerSlot].address) = 0;
-        peers[freePeerSlot].acceptToken.NewChildHandle = NULL;
-        peers[freePeerSlot].prevNumberOfReceivedBytes = peers[freePeerSlot].numberOfReceivedBytes = 0;
-        peers[freePeerSlot].prevNumberOfTransmittedBytes = peers[freePeerSlot].numberOfTransmittedBytes = 0;
-        bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, acceptCallback, &peers[freePeerSlot], &peers[freePeerSlot].acceptToken.CompletionToken.Event);
+        peers[latestPeerIndex].tcp4Protocol = (EFI_TCP4_PROTOCOL*)1;
+        *((int*)peers[latestPeerIndex].address) = 0;
+        peers[latestPeerIndex].acceptToken.NewChildHandle = NULL;
+        peers[latestPeerIndex].prevNumberOfReceivedBytes = peers[latestPeerIndex].numberOfReceivedBytes = 0;
+        peers[latestPeerIndex].prevNumberOfTransmittedBytes = peers[latestPeerIndex].numberOfTransmittedBytes = 0;
+        bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, acceptCallback, &peers[latestPeerIndex], &peers[latestPeerIndex].acceptToken.CompletionToken.Event);
         EFI_STATUS status;
-        if (status = tcp4Protocol->Accept(tcp4Protocol, &peers[freePeerSlot].acceptToken))
+        if (status = tcp4Protocol->Accept(tcp4Protocol, &peers[latestPeerIndex].acceptToken))
         {
             logStatus(L"EFI_TCP4_PROTOCOL.Accept() fails", status);
 
-            bs->CloseEvent(peers[freePeerSlot].acceptToken.CompletionToken.Event);
-            peers[freePeerSlot].tcp4Protocol = NULL;
+            bs->CloseEvent(peers[latestPeerIndex].acceptToken.CompletionToken.Event);
+            peers[latestPeerIndex].tcp4Protocol = NULL;
         }
         else
         {
@@ -4481,19 +4481,20 @@ static void connect(unsigned char* address)
     unsigned int i;
     for (i = 0; i < MAX_NUMBER_OF_PEERS; i++)
     {
-        if (freePeerSlot < 0 && !peers[i].tcp4Protocol)
+        if (freePeerSlot < 0)
         {
-            freePeerSlot = i;
-        }
-        else
-        {
-            if (((unsigned long long)peers[i].tcp4Protocol) > 1 && *((int*)peers[i].address) == *((int*)address))
+            latestPeerIndex = (latestPeerIndex + 1) % MAX_NUMBER_OF_PEERS;
+            if (!peers[latestPeerIndex].tcp4Protocol)
             {
-                break;
+                freePeerSlot = latestPeerIndex;
             }
         }
-    }
 
+        if (((unsigned long long)peers[i].tcp4Protocol) > 1 && *((int*)peers[i].address) == *((int*)address))
+        {
+            break;
+        }
+    }
     if (freePeerSlot >= 0 && i == MAX_NUMBER_OF_PEERS)
     {
         EFI_TCP4_PROTOCOL* tcp4Protocol;
@@ -4667,8 +4668,6 @@ static void acceptCallback(EFI_EVENT Event, void* Context)
     Peer* peer = (Peer*)Context;
     if (peer->acceptToken.CompletionToken.Status)
     {
-        logStatus(L"!!! REPORT THIS !!! | acceptCallback() fails", peer->acceptToken.CompletionToken.Status);
-
         peer->tcp4Protocol = NULL;
     }
     else
@@ -5327,9 +5326,11 @@ static BOOLEAN initialize()
 
             return FALSE;
         }
+        ((RequestResponseHeader*)peers[peerIndex].transmitData.FragmentTable[0].FragmentBuffer)->protocol = PROTOCOL;
         peers[peerIndex].receiveToken.Packet.RxData = &peers[peerIndex].receiveData;
         peers[peerIndex].transmitToken.Packet.TxData = &peers[peerIndex].transmitData;
         peers[peerIndex].closeToken.AbortOnClose = TRUE;
+        ((RequestResponseHeader*)peers[peerIndex].dataToTransmit)->protocol = PROTOCOL;
     }
 
     while (numberOfPublicPeers < MIN_NUMBER_OF_PEERS)
@@ -5409,7 +5410,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.3.4 is launched.");
+    log(L"Qubic 0.3.5 is launched.");
 
     if (initialize())
     {
@@ -5440,6 +5441,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                     break;
                 }
+                ((RequestResponseHeader*)processors[numberOfProcessors].responseBuffer)->protocol = PROTOCOL;
                 processors[numberOfProcessors++].number = i;
             }
         }
