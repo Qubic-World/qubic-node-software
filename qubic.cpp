@@ -77,17 +77,32 @@ static const unsigned char knownPublicPeers[][4] = {
 #define EFI_HTTP_ERROR (35 | 0x8000000000000000)
 
 #define EFI_MP_SERVICES_PROTOCOL_GUID {0x3fdda605, 0xa76e, 0x4f46, {0xad, 0x29, 0x12, 0xf4, 0x53, 0x1b, 0x3d, 0x08}}
+#define EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID {0x0964e5b22, 0x6459, 0x11d2, {0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b}}
 #define EFI_TCP4_PROTOCOL_GUID {0x65530BC7, 0xA359, 0x410f, {0xB0, 0x10, 0x5A, 0xAD, 0xC7, 0xEC, 0x2B, 0x62}}
 #define EFI_TCP4_SERVICE_BINDING_PROTOCOL_GUID {0x00720665, 0x67EB, 0x4a99, {0xBA, 0xF7, 0xD3, 0xC3, 0x3A, 0x1C, 0x7C, 0xC9}}
 #define EFI_UDP4_PROTOCOL_GUID {0x3ad9df29, 0x4501, 0x478d, {0xb1, 0xf8, 0x7f, 0x7f, 0xe7, 0x0e, 0x50, 0xf3}}
 #define EFI_UDP4_SERVICE_BINDING_PROTOCOL_GUID {0x83f01464, 0x99bd, 0x45e5, {0xb3, 0x83, 0xaf, 0x63, 0x05, 0xd8, 0xe9, 0xe6}}
 
+#define EFI_FILE_MODE_READ 0x0000000000000001
+#define EFI_FILE_MODE_WRITE 0x0000000000000002
+#define EFI_FILE_MODE_CREATE 0x8000000000000000
+#define EFI_FILE_READ_ONLY 0x0000000000000001
+#define EFI_FILE_HIDDEN 0x0000000000000002
+#define EFI_FILE_SYSTEM 0x0000000000000004
+#define EFI_FILE_RESERVED 0x0000000000000008
+#define EFI_FILE_DIRECTORY 0x0000000000000010
+#define EFI_FILE_ARCHIVE 0x0000000000000020
+#define EFI_FILE_VALID_ATTR 0x0000000000000037
+#define EFI_FILE_PROTOCOL_REVISION 0x00010000
+#define EFI_FILE_PROTOCOL_REVISION2 0x00020000
+#define EFI_FILE_PROTOCOL_LATEST_REVISION EFI_FILE_PROTOCOL_REVISION2
 #define EFI_OPEN_PROTOCOL_BY_CHILD_CONTROLLER 0x00000008
 #define EFI_OPEN_PROTOCOL_BY_DRIVER 0x00000010
 #define EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL 0x00000001
 #define EFI_OPEN_PROTOCOL_EXCLUSIVE 0x00000020
 #define EFI_OPEN_PROTOCOL_GET_PROTOCOL 0x00000002
 #define EFI_OPEN_PROTOCOL_TEST_PROTOCOL 0x00000004
+#define EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_REVISION 0x00010000
 #define EFI_UNSPECIFIED_TIMEZONE 0x07FF
 #define END_OF_CPU_LIST 0xFFFFFFFF
 #define EVT_NOTIFY_SIGNAL 0x00000200
@@ -214,6 +229,14 @@ typedef struct
 	unsigned char SubType;
 	unsigned char Length[2];
 } EFI_DEVICE_PATH_PROTOCOL;
+
+typedef struct 
+{
+    EFI_EVENT Event;
+    EFI_STATUS Status;
+    unsigned long long BufferSize;
+    void* Buffer;
+} EFI_FILE_IO_TOKEN;
 
 typedef struct
 {
@@ -551,6 +574,20 @@ typedef EFI_STATUS(__cdecl *EFI_DISCONNECT_CONTROLLER) (IN EFI_HANDLE Controller
 typedef void(__cdecl *EFI_EVENT_NOTIFY) (IN EFI_EVENT Event, IN void* Context);
 typedef EFI_STATUS(__cdecl *EFI_EXIT) (IN EFI_HANDLE ImageHandle, IN EFI_STATUS ExitStatus, IN unsigned long long ExitDataSize, IN CHAR16* ExitData OPTIONAL);
 typedef EFI_STATUS(__cdecl *EFI_EXIT_BOOT_SERVICES) (IN EFI_HANDLE ImageHandle, IN unsigned long long MapKey);
+typedef EFI_STATUS(__cdecl* EFI_FILE_CLOSE) (IN void* This);
+typedef EFI_STATUS(__cdecl* EFI_FILE_DELETE) (IN void* This);
+typedef EFI_STATUS(__cdecl* EFI_FILE_FLUSH) (IN void* This);
+typedef EFI_STATUS(__cdecl* EFI_FILE_FLUSH_EX) (IN void* This, IN OUT EFI_FILE_IO_TOKEN* Token);
+typedef EFI_STATUS(__cdecl* EFI_FILE_GET_INFO) (IN void* This, IN EFI_GUID* InformationType, IN OUT unsigned long long* BufferSize, OUT void* Buffer);
+typedef EFI_STATUS(__cdecl* EFI_FILE_GET_POSITION) (IN void* This, OUT unsigned long long* Position);
+typedef EFI_STATUS(__cdecl* EFI_FILE_OPEN) (IN void* This, OUT void** NewHandle, IN CHAR16* FileName, IN unsigned long long OpenMode, IN unsigned long long Attributes);
+typedef EFI_STATUS(__cdecl* EFI_FILE_OPEN_EX) (IN void* This, OUT void** NewHandle, IN CHAR16* FileName, IN unsigned long long OpenMode, IN unsigned long long Attributes, IN OUT EFI_FILE_IO_TOKEN* Token);
+typedef EFI_STATUS(__cdecl* EFI_FILE_READ) (IN void* This, IN OUT unsigned long long* BufferSize, OUT void* Buffer);
+typedef EFI_STATUS(__cdecl* EFI_FILE_READ_EX) (IN void* This, IN OUT EFI_FILE_IO_TOKEN* Token);
+typedef EFI_STATUS(__cdecl* EFI_FILE_SET_INFO) (IN void* This, IN EFI_GUID* InformationType, IN unsigned long long BufferSize, IN void* Buffer);
+typedef EFI_STATUS(__cdecl* EFI_FILE_SET_POSITION) (IN void* This, IN unsigned long long Position);
+typedef EFI_STATUS(__cdecl* EFI_FILE_WRITE) (IN void* This, IN OUT unsigned long long* BufferSize, IN void* Buffer);
+typedef EFI_STATUS(__cdecl* EFI_FILE_WRITE_EX) (IN void* This, IN OUT EFI_FILE_IO_TOKEN* Token);
 typedef EFI_STATUS(__cdecl *EFI_FREE_PAGES) (IN EFI_PHYSICAL_ADDRESS Memory, IN unsigned long long Pages);
 typedef EFI_STATUS(__cdecl *EFI_FREE_POOL) (IN void* Buffer);
 typedef EFI_STATUS(__cdecl *EFI_GET_MEMORY_MAP) (IN OUT unsigned long long* MemoryMapSize, OUT EFI_MEMORY_DESCRIPTOR* MemoryMap, OUT unsigned long long* MapKey, OUT unsigned long long* DescriptorSize, OUT unsigned int* DescriptorVersion);
@@ -600,6 +637,7 @@ typedef EFI_STATUS(__cdecl *EFI_SET_VIRTUAL_ADDRESS_MAP) (IN unsigned long long 
 typedef EFI_STATUS(__cdecl *EFI_SET_WAKEUP_TIME) (IN BOOLEAN Enable, IN EFI_TIME* Time OPTIONAL);
 typedef EFI_STATUS(__cdecl *EFI_SET_WATCHDOG_TIMER) (IN unsigned long long Timeout, IN unsigned long long WatchdogCode, IN unsigned long long DataSize, IN CHAR16* WatchdogData OPTIONAL);
 typedef EFI_STATUS(__cdecl *EFI_SIGNAL_EVENT) (IN EFI_EVENT Event);
+typedef EFI_STATUS(__cdecl* EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_OPEN_VOLUME) (IN void* This, OUT void** Root);
 typedef EFI_STATUS(__cdecl *EFI_STALL) (IN unsigned long long Microseconds);
 typedef EFI_STATUS(__cdecl *EFI_TCP4_ACCEPT) (IN void* This, IN EFI_TCP4_LISTEN_TOKEN* ListenToken);
 typedef EFI_STATUS(__cdecl *EFI_TCP4_CANCEL)(IN void* This, IN EFI_TCP4_COMPLETION_TOKEN* Token OPTIONAL);
@@ -690,6 +728,25 @@ typedef struct
 
 typedef struct
 {
+    unsigned long long Revision;
+    EFI_FILE_OPEN Open;
+    EFI_FILE_CLOSE Close;
+    EFI_FILE_DELETE Delete;
+    EFI_FILE_READ Read;
+    EFI_FILE_WRITE Write;
+    EFI_FILE_GET_POSITION GetPosition;
+    EFI_FILE_SET_POSITION SetPosition;
+    EFI_FILE_GET_INFO GetInfo;
+    EFI_FILE_SET_INFO SetInfo;
+    EFI_FILE_FLUSH Flush;
+    EFI_FILE_OPEN_EX OpenEx;
+    EFI_FILE_READ_EX ReadEx;
+    EFI_FILE_WRITE_EX WriteEx;
+    EFI_FILE_FLUSH_EX FlushEx;
+} EFI_FILE_PROTOCOL;
+
+typedef struct
+{
 	EFI_MP_SERVICES_GET_NUMBER_OF_PROCESSORS GetNumberOfProcessors;
 	EFI_MP_SERVICES_GET_PROCESSOR_INFO GetProcessorInfo;
 	EFI_MP_SERVICES_STARTUP_ALL_APS StartupAllAPs;
@@ -723,6 +780,12 @@ typedef struct
 	EFI_SERVICE_BINDING_CREATE_CHILD CreateChild;
 	EFI_SERVICE_BINDING_DESTROY_CHILD DestroyChild;
 } EFI_SERVICE_BINDING_PROTOCOL;
+
+typedef struct
+{
+    unsigned long long Revision;
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_OPEN_VOLUME OpenVolume;
+} EFI_SIMPLE_FILE_SYSTEM_PROTOCOL;
 
 typedef struct
 {
@@ -3407,18 +3470,21 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 
 ////////// Qubic \\\\\\\\\\
 
-#define BUFFER_SIZE 1048576
+#define BUFFER_SIZE 4194304
 #define DEJAVU_SWAP_PERIOD 30
 #define MAX_CONNECTION_DELAY 5
-#define MAX_NUMBER_OF_PEERS 64
+#define MAX_NUMBER_OF_PEERS 16
 #define MAX_NUMBER_OF_PROCESSORS 1024
-#define MAX_NUMBER_OF_PUBLIC_PEERS 16
+#define MAX_NUMBER_OF_PUBLIC_PEERS 64
 #define MIN_ENERGY_AMOUNT 1000000
 #define MIN_NUMBER_OF_PEERS 4
 #define NUMBER_OF_COMPUTORS (26 * 26)
 #define PEER_RATING_PERIOD 15
 #define PORT 21841
-#define PROTOCOL 4
+#define PROTOCOL 5
+#define VERSION_A 0
+#define VERSION_B 5
+#define VERSION_C 0
 
 static __m256i ZERO;
 
@@ -3483,6 +3549,25 @@ typedef struct
     unsigned char computorPublicKeys[NUMBER_OF_COMPUTORS][32];
     unsigned char signature[64];
 } ComputorState;
+
+typedef struct
+{
+    unsigned char sourcePublicKey[32];
+    unsigned char environment[32];
+    unsigned long long timestamp;
+    unsigned long long effectSize;
+} Effect;
+
+typedef struct
+{
+    unsigned short epoch;
+    unsigned short numberOfFragments;
+    unsigned short fragmentIndex;
+    unsigned short structureType;
+    unsigned short inputLength;
+    unsigned short outputLength;
+    unsigned int numberOfInputOutputPairs;
+} ResourceTestingProblem;
 
 typedef struct
 {
@@ -3611,10 +3696,7 @@ typedef struct
 #define BROADCAST_EFFECT 4
 typedef struct
 {
-    unsigned char sourcePublicKey[32];
-    unsigned char environment[32];
-    unsigned long long timestamp;
-    unsigned long long effectSize;
+    Effect effect;
 } BroadcastEffect;
 
 #define BROADCAST_COMPUTOR_STATE 5
@@ -3629,13 +3711,21 @@ typedef struct
     TransferStatus status;
 } BroadcastTransferStatus;
 
+#define BROADCAST_RESOURCE_TESTING_PROBLEM 7
+typedef struct
+{
+    ResourceTestingProblem resourceTestingProblem;
+} BroadcastResourceTestingProblem;
+
 const unsigned short requestResponseMinSizes[] = {
     sizeof(RequestResponseHeader) + sizeof(ProcessWebSocketClientRequest),
     sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers),
     sizeof(RequestResponseHeader) + sizeof(BroadcastMessage) + 64,
     sizeof(RequestResponseHeader) + sizeof(BroadcastTransfer),
     sizeof(RequestResponseHeader) + sizeof(BroadcastEffect) + 64,
-    sizeof(RequestResponseHeader) + sizeof(BroadcastComputorState)
+    sizeof(RequestResponseHeader) + sizeof(BroadcastComputorState),
+    sizeof(RequestResponseHeader) + sizeof(BroadcastTransferStatus),
+    sizeof(RequestResponseHeader) + sizeof(BroadcastResourceTestingProblem)
 };
 
 static volatile int state = 0;
@@ -4022,7 +4112,7 @@ static void requestProcessor(void* ProcedureArgument)
         {
             processor->peer->exchangedPublicPeers = TRUE;
 
-            ExchangePublicPeers* response = (ExchangePublicPeers*)((char*)processor->responseBuffer + sizeof(RequestResponseHeader));
+            ExchangePublicPeers* response = (ExchangePublicPeers*)(((char*)processor->responseBuffer) + sizeof(RequestResponseHeader));
             for (unsigned int i = 0; i < MIN_NUMBER_OF_PEERS; i++)
             {
                 unsigned int random;
@@ -4030,8 +4120,34 @@ static void requestProcessor(void* ProcedureArgument)
                 *((int*)response->peers[i]) = *((int*)publicPeers[random % numberOfPublicPeers].address);
             }
 
-            responseHeader->size = sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers);
+            responseHeader->size = sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers) + 1 + 8 + (VERSION_A > 9 ? 2 : 1) + (VERSION_B > 9 ? 2 : 1) + (VERSION_C > 9 ? 2 : 1);
             responseHeader->type = EXCHANGE_PUBLIC_PEERS;
+
+            char* software = ((char*)processor->responseBuffer) + (sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers));
+            *software++ = 8 + (VERSION_A > 9 ? 2 : 1) + (VERSION_B > 9 ? 2 : 1) + (VERSION_C > 9 ? 2 : 1);
+            *software++ = 'Q';
+            *software++ = 'u';
+            *software++ = 'b';
+            *software++ = 'i';
+            *software++ = 'c';
+            *software++ = ' ';
+            *software++ = (VERSION_A % 10) + '0';
+            if (VERSION_A > 9)
+            {
+                *software++ = (VERSION_A / 10) + '0';
+            }
+            *software++ = '.';
+            *software++ = (VERSION_B % 10) + '0';
+            if (VERSION_B > 9)
+            {
+                *software++ = (VERSION_B / 10) + '0';
+            }
+            *software++ = '.';
+            *software++ = (VERSION_C % 10) + '0';
+            if (VERSION_C > 9)
+            {
+                *software = (VERSION_C / 10) + '0';
+            }
         }
 
         ExchangePublicPeers* request = (ExchangePublicPeers*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
@@ -4061,7 +4177,7 @@ static void requestProcessor(void* ProcedureArgument)
                 dejavu0[saltedId >> 6] |= (((unsigned long long)1) << (saltedId & 63));
 
                 unsigned char digest[32];
-                KangarooTwelve((unsigned char*)request, sizeof(BroadcastMessage) + request->messageSize, digest, sizeof(digest));
+                KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
                 if (verify(request->sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastMessage) + request->messageSize)))
                 {
                     if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->destinationPublicKey), *((__m256i*)ownPublicKey))) == 0xFFFFFFFF)
@@ -4095,7 +4211,7 @@ static void requestProcessor(void* ProcedureArgument)
 
                 unsigned char digest[32];
                 request->transfer.sourcePublicKey[0] ^= 1;
-                KangarooTwelve((unsigned char*)request, sizeof(BroadcastTransfer) - 64, digest, sizeof(digest));
+                KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
                 request->transfer.sourcePublicKey[0] ^= 1;
                 if (verify(request->transfer.sourcePublicKey, digest, request->transfer.signature))
                 {
@@ -4110,7 +4226,7 @@ static void requestProcessor(void* ProcedureArgument)
     case BROADCAST_EFFECT:
     {
         BroadcastEffect* request = (BroadcastEffect*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
-        if (requestHeader->size == sizeof(RequestResponseHeader) + sizeof(BroadcastEffect) + request->effectSize + 64)
+        if (requestHeader->size == sizeof(RequestResponseHeader) + sizeof(BroadcastEffect) + request->effect.effectSize + 64)
         {
             unsigned int saltedId;
 
@@ -4124,10 +4240,10 @@ static void requestProcessor(void* ProcedureArgument)
                 dejavu0[saltedId >> 6] |= (((unsigned long long)1) << (saltedId & 63));
 
                 unsigned char digest[32];
-                request->sourcePublicKey[0] ^= 2;
-                KangarooTwelve((unsigned char*)request, sizeof(BroadcastEffect) + request->effectSize, digest, sizeof(digest));
-                request->sourcePublicKey[0] ^= 2;
-                if (verify(request->sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastEffect) + request->effectSize)))
+                request->effect.sourcePublicKey[0] ^= 2;
+                KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
+                request->effect.sourcePublicKey[0] ^= 2;
+                if (verify(request->effect.sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastEffect) + request->effect.effectSize)))
                 {
                     bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
                     processor->responseTransmittingType = -1;
@@ -4150,7 +4266,7 @@ static void requestProcessor(void* ProcedureArgument)
             if (request->computorState.timestamp > latestComputorStates[request->computorState.computorIndex].timestamp && latestComputorStates[NUMBER_OF_COMPUTORS].timestamp)
             {
                 unsigned char digest[32];
-                KangarooTwelve((unsigned char*)request, sizeof(BroadcastComputorState) - 64, digest, sizeof(digest));
+                KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
                 if (verify(latestComputorStates[NUMBER_OF_COMPUTORS].computorPublicKeys[request->computorState.computorIndex], digest, request->computorState.signature))
                 {
                     bs->CopyMem(&latestComputorStates[request->computorState.computorIndex], request, sizeof(BroadcastComputorState));
@@ -4165,7 +4281,7 @@ static void requestProcessor(void* ProcedureArgument)
             if (request->computorState.timestamp > latestComputorStates[NUMBER_OF_COMPUTORS].timestamp)
             {
                 unsigned char digest[32];
-                KangarooTwelve((unsigned char*)request, sizeof(BroadcastComputorState) - 64, digest, sizeof(digest));
+                KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
                 if (verify(adminPublicKey, digest, request->computorState.signature))
                 {
                     bs->CopyMem(&latestComputorStates[NUMBER_OF_COMPUTORS], request, sizeof(BroadcastComputorState));
@@ -4213,7 +4329,7 @@ static void requestProcessor(void* ProcedureArgument)
                     {
                         unsigned char digest[32];
                         request->status.digest[0] ^= 3;
-                        KangarooTwelve((unsigned char*)request, sizeof(BroadcastTransferStatus), digest, sizeof(digest));
+                        KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
                         request->status.digest[0] ^= 3;
                         if (verify(latestComputorStates[NUMBER_OF_COMPUTORS].computorPublicKeys[request->status.computorIndex], digest, request->status.signature))
                         {
@@ -4228,6 +4344,46 @@ static void requestProcessor(void* ProcedureArgument)
                         bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
                         processor->responseTransmittingType = -1;
                     }
+                }
+            }
+        }
+    }
+    break;
+
+    case BROADCAST_RESOURCE_TESTING_PROBLEM:
+    {
+        BroadcastResourceTestingProblem* request = (BroadcastResourceTestingProblem*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
+        if (request->resourceTestingProblem.epoch >= latestComputorStates[NUMBER_OF_COMPUTORS].epoch
+            && !request->resourceTestingProblem.structureType
+            && (((request->resourceTestingProblem.inputLength + request->resourceTestingProblem.outputLength) * request->resourceTestingProblem.numberOfInputOutputPairs) << 5) == requestHeader->size - sizeof(RequestResponseHeader) - sizeof(BroadcastResourceTestingProblem) - 64)
+        {
+            unsigned int saltedId;
+
+            const long long tmp = *((long long*)requestHeader);
+            *((long long*)requestHeader) = salt;
+            KangarooTwelve((unsigned char*)requestHeader, ((RequestResponseHeader*)&tmp)->size, (unsigned char*)&saltedId, sizeof(saltedId));
+            *((long long*)requestHeader) = tmp;
+
+            if (!((dejavu0[saltedId >> 6] | dejavu1[saltedId >> 6]) & (((unsigned long long)1) << (saltedId & 63))))
+            {
+                dejavu0[saltedId >> 6] |= (((unsigned long long)1) << (saltedId & 63));
+
+                if (latestComputorStates[NUMBER_OF_COMPUTORS].timestamp)
+                {
+                    unsigned char digest[32];
+                    request->resourceTestingProblem.epoch ^= 4;
+                    KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
+                    request->resourceTestingProblem.epoch ^= 4;
+                    if (verify(adminPublicKey, digest, ((const unsigned char*)request) + (requestHeader->size - sizeof(RequestResponseHeader) - 64)))
+                    {
+                        bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
+                        processor->responseTransmittingType = -1;
+                    }
+                }
+                else
+                {
+                    bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
+                    processor->responseTransmittingType = -1;
                 }
             }
         }
@@ -4270,6 +4426,7 @@ static void responseCallback(EFI_EVENT Event, void* Context)
                     else
                     {
                         bs->CopyMem(peers[i].transmitData.FragmentTable[0].FragmentBuffer, processor->responseBuffer, responseHeader->size);
+                        peers[i].isTransmitting = TRUE;
                         transmit(&peers[i], responseHeader->size);
                     }
                 }
@@ -4292,6 +4449,7 @@ static void responseCallback(EFI_EVENT Event, void* Context)
                     void* tmp = processor->responseBuffer;
                     processor->responseBuffer = processor->peer->transmitData.FragmentTable[0].FragmentBuffer;
                     processor->peer->transmitData.FragmentTable[0].FragmentBuffer = tmp;
+                    processor->peer->isTransmitting = TRUE;
                     transmit(processor->peer, responseHeader->size);
                 }
             }
@@ -4599,8 +4757,6 @@ static void transmit(Peer* peer, unsigned int size)
 
     if (((unsigned long long)peer->tcp4Protocol) > 1)
     {
-        peer->isTransmitting = TRUE;
-
         EFI_STATUS status;
         bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, transmitCallback, peer, &peer->transmitToken.CompletionToken.Event);
 
@@ -4614,7 +4770,7 @@ static void transmit(Peer* peer, unsigned int size)
             }
             else
             {
-                if (size <= 0xFFFF)
+                if (size < 0x10000)
                 {
                     bs->CopyMem(((char*)peer->transmitData.FragmentTable[0].FragmentBuffer) + 4, peer->transmitData.FragmentTable[0].FragmentBuffer, size);
                     ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[1] = 126;
@@ -4626,10 +4782,7 @@ static void transmit(Peer* peer, unsigned int size)
                 {
                     bs->CopyMem(((char*)peer->transmitData.FragmentTable[0].FragmentBuffer) + 10, peer->transmitData.FragmentTable[0].FragmentBuffer, size);
                     ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[1] = 127;
-                    ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[2] = 0;
-                    ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[3] = 0;
-                    ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[4] = 0;
-                    ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[5] = 0;
+                    ((unsigned int*)peer->transmitData.FragmentTable[0].FragmentBuffer)[2] = 0;
                     ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[6] = size >> 24;
                     ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[7] = size >> 16;
                     ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[8] = size >> 8;
@@ -4739,8 +4892,37 @@ static void connectCallback(EFI_EVENT Event, void* Context)
         publicPeersLock = 0;
 
         RequestResponseHeader* requestHeader = (RequestResponseHeader*)peer->transmitData.FragmentTable[0].FragmentBuffer;
-        requestHeader->size = sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers);
+        requestHeader->size = sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers) + 1 + 8 + (VERSION_A > 9 ? 2 : 1) + (VERSION_B > 9 ? 2 : 1) + (VERSION_C > 9 ? 2 : 1);
+        requestHeader->protocol = PROTOCOL;
         requestHeader->type = EXCHANGE_PUBLIC_PEERS;
+
+        char* software = ((char*)peer->transmitData.FragmentTable[0].FragmentBuffer) + (sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers));
+        *software++ = 8 + (VERSION_A > 9 ? 2 : 1) + (VERSION_B > 9 ? 2 : 1) + (VERSION_C > 9 ? 2 : 1);
+        *software++ = 'Q';
+        *software++ = 'u';
+        *software++ = 'b';
+        *software++ = 'i';
+        *software++ = 'c';
+        *software++ = ' ';
+        *software++ = (VERSION_A % 10) + '0';
+        if (VERSION_A > 9)
+        {
+            *software++ = (VERSION_A / 10) + '0';
+        }
+        *software++ = '.';
+        *software++ = (VERSION_B % 10) + '0';
+        if (VERSION_B > 9)
+        {
+            *software++ = (VERSION_B / 10) + '0';
+        }
+        *software++ = '.';
+        *software++ = (VERSION_C % 10) + '0';
+        if (VERSION_C > 9)
+        {
+            *software = (VERSION_C / 10) + '0';
+        }
+
+        peer->isTransmitting = TRUE;
         transmit(peer, requestHeader->size);
 
         peer->receiveData.FragmentTable[0].FragmentBuffer = peer->receiveBuffer;
@@ -4778,7 +4960,7 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
     bs->CloseEvent(Event);
 
     Peer* peer = (Peer*)Context;
-    if (peer->receiveToken.CompletionToken.Status || !peer->receiveData.DataLength)
+    if (peer->receiveToken.CompletionToken.Status)
     {
         close(peer);
     }
@@ -4872,6 +5054,7 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                 if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)operatorPublicKey), ZERO)) == 0xFFFFFFFF)
                 {
                     bs->CopyMem(peer->transmitData.FragmentTable[0].FragmentBuffer, (void*)"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n", 45);
+                    peer->isTransmitting = TRUE;
                     transmit(peer, 45);
                 }
                 else
@@ -5107,10 +5290,9 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                         const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
 
                         peer->isTransmitting = TRUE;
-
-                        EFI_STATUS status;
                         bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, transmitCallback, peer, &peer->transmitToken.CompletionToken.Event);
                         peer->transmitData.DataLength = peer->transmitData.FragmentTable[0].FragmentLength = i;
+                        EFI_STATUS status;
                         if (status = peer->tcp4Protocol->Transmit(peer->tcp4Protocol, &peer->transmitToken))
                         {
                             if (status != EFI_ACCESS_DENIED)
@@ -5215,7 +5397,7 @@ static void transmitCallback(EFI_EVENT Event, void* Context)
     bs->CloseEvent(Event);
 
     Peer* peer = (Peer*)Context;
-    if (peer->transmitToken.CompletionToken.Status || !peer->transmitData.DataLength)
+    if (peer->transmitToken.CompletionToken.Status)
     {
         close(peer);
     }
@@ -5410,12 +5592,18 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    log(L"Qubic 0.4.0 is launched.");
+    CHAR16 message[256];
+    setText(message, L"Qubic ");
+    appendNumber(message, VERSION_A, FALSE);
+    appendText(message, L".");
+    appendNumber(message, VERSION_B, FALSE);
+    appendText(message, L".");
+    appendNumber(message, VERSION_C, FALSE);
+    appendText(message, L" is launched.");
+    log(message);
 
     if (initialize())
     {
-        CHAR16 message[256];
-
         getIdentity(ownPublicKey, message);
         log(message);
 
