@@ -3484,7 +3484,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define PROTOCOL 5
 #define VERSION_A 0
 #define VERSION_B 5
-#define VERSION_C 0
+#define VERSION_C 1
 
 static __m256i ZERO;
 
@@ -3735,6 +3735,11 @@ static unsigned long long launchTime;
 static unsigned char ownSubseed[32], ownPrivateKey[32], ownPublicKey[32], operatorPublicKey[32], adminPublicKey[32];
 static unsigned long long latestOperatorTimestamp;
 static unsigned long long salt;
+
+static volatile char resourceTestingProblemLock = 0;
+static __m256i* resourceTestingProblem = NULL;
+static unsigned short resourceTestingProblemNumberOfFragments, resourceTestingProblemNumberOfKnownFragments;
+static unsigned long long resourceTestingProblemFragmentFlags[65536 / 64];
 
 static Entity* entities = NULL;
 static TransferSuperstatus* transferSuperstatuses = NULL;
@@ -4284,7 +4289,20 @@ static void requestProcessor(void* ProcedureArgument)
                 KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
                 if (verify(adminPublicKey, digest, request->computorState.signature))
                 {
-                    bs->CopyMem(&latestComputorStates[NUMBER_OF_COMPUTORS], request, sizeof(BroadcastComputorState));
+                    if (request->computorState.epoch > latestComputorStates[NUMBER_OF_COMPUTORS].epoch)
+                    {
+                        while (_InterlockedCompareExchange8(&resourceTestingProblemLock, 1, 0))
+                        {
+                        }
+                        if (resourceTestingProblem)
+                        {
+                            bs->FreePool(resourceTestingProblem);
+                            resourceTestingProblem = NULL;
+                        }
+                        resourceTestingProblemLock = 0;
+                    }
+
+                    bs->CopyMem(&latestComputorStates[NUMBER_OF_COMPUTORS], &request->computorState, sizeof(ComputorState));
 
                     bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
                     processor->responseTransmittingType = -1;
@@ -4378,6 +4396,35 @@ static void requestProcessor(void* ProcedureArgument)
                     {
                         bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
                         processor->responseTransmittingType = -1;
+
+                        while (_InterlockedCompareExchange8(&resourceTestingProblemLock, 1, 0))
+                        {
+                        }
+                        if (request->resourceTestingProblem.epoch == latestComputorStates[NUMBER_OF_COMPUTORS].epoch)
+                        {
+                            if (!resourceTestingProblem)
+                            {
+                                resourceTestingProblemNumberOfKnownFragments = 0;
+                                bs->SetMem(&resourceTestingProblemFragmentFlags, (((unsigned int)request->resourceTestingProblem.numberOfFragments) + 63) >> 6, 0);
+
+                                EFI_STATUS status;
+                                if (status = bs->AllocatePool(EfiRuntimeServicesData, (((request->resourceTestingProblem.inputLength + request->resourceTestingProblem.outputLength) * request->resourceTestingProblem.numberOfInputOutputPairs) << 5) * request->resourceTestingProblem.numberOfFragments, (void**)&resourceTestingProblem))
+                                {
+                                    logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status);
+                                }
+                            }
+                            if (resourceTestingProblem)
+                            {
+                                if (!(resourceTestingProblemFragmentFlags[request->resourceTestingProblem.fragmentIndex >> 6] & (((unsigned long long)1) << (request->resourceTestingProblem.fragmentIndex & 63))))
+                                {
+                                    bs->CopyMem(&resourceTestingProblem[((request->resourceTestingProblem.inputLength + request->resourceTestingProblem.outputLength) * request->resourceTestingProblem.numberOfInputOutputPairs) * request->resourceTestingProblem.fragmentIndex], ((char*)request) + sizeof(ResourceTestingProblem), ((request->resourceTestingProblem.inputLength + request->resourceTestingProblem.outputLength) * request->resourceTestingProblem.numberOfInputOutputPairs) << 5);
+                                    resourceTestingProblemNumberOfFragments = request->resourceTestingProblem.numberOfFragments;
+                                    resourceTestingProblemNumberOfKnownFragments++;
+                                    resourceTestingProblemFragmentFlags[request->resourceTestingProblem.fragmentIndex >> 6] |= (((unsigned long long)1) << (request->resourceTestingProblem.fragmentIndex & 63));
+                                }
+                            }
+                        }
+                        resourceTestingProblemLock = 0;
                     }
                 }
                 else
@@ -5458,7 +5505,7 @@ static BOOLEAN initialize()
     appendText(message, L" Hz.");
     log(message);
 
-    bs->SetMem(latestComputorStates, sizeof(latestComputorStates), 0);
+    bs->SetMem(&latestComputorStates, sizeof(latestComputorStates), 0);
     for (unsigned int i = 0; i < sizeof(latestComputorStates) / sizeof(latestComputorStates[0]); i++)
     {
         latestComputorStates[i].computorIndex = i;
@@ -5532,6 +5579,13 @@ static void deinitialize()
     bs->SetMem(ownPrivateKey, sizeof(ownPrivateKey), 0);
     bs->SetMem(ownPublicKey, sizeof(ownPublicKey), 0);
 
+    if (ROLE == COMPUTOR || ROLE == MINER)
+    {
+        if (resourceTestingProblem)
+        {
+            bs->FreePool(resourceTestingProblem);
+        }
+    }
     if (ROLE == COMPUTOR)
     {
         if (entities)
@@ -5833,6 +5887,20 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 prevNumberOfProcessedRequests = numberOfProcessedRequests;
                                 prevNumberOfReceivedBytes = numberOfReceivedBytes;
                                 prevNumberOfTransmittedBytes = numberOfTransmittedBytes;
+
+                                if (ROLE == COMPUTOR || ROLE == MINER)
+                                {
+                                    if (resourceTestingProblem && resourceTestingProblemNumberOfFragments)
+                                    {
+                                        setNumber(message, resourceTestingProblemNumberOfKnownFragments, TRUE);
+                                        appendText(message, L" of ");
+                                        appendNumber(message, resourceTestingProblemNumberOfFragments, TRUE);
+                                        appendText(message, L" resource testing problem fragments (");
+                                        appendNumber(message, ((unsigned int)resourceTestingProblemNumberOfKnownFragments) * 100 / resourceTestingProblemNumberOfFragments, FALSE);
+                                        appendText(message, L" %) are known.");
+                                        log(message);
+                                    }
+                                }
 
                                 prevLogTick = __rdtsc();
                             }
