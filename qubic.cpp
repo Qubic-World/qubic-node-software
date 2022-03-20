@@ -8,7 +8,7 @@
 #define MINER 1
 #define USER 2
 
-#define ROLE USER
+#define ROLE MINER
 
 // Do NOT share the data of "Private Settings" section with anyone!!!
 static unsigned char ownSeed[55 + 1] = "<seed>";
@@ -3484,7 +3484,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define PROTOCOL 5
 #define VERSION_A 0
 #define VERSION_B 5
-#define VERSION_C 1
+#define VERSION_C 2
 
 static __m256i ZERO;
 
@@ -4379,7 +4379,7 @@ static void requestProcessor(void* ProcedureArgument)
 
             const long long tmp = *((long long*)requestHeader);
             *((long long*)requestHeader) = salt;
-            KangarooTwelve((unsigned char*)requestHeader, ((RequestResponseHeader*)&tmp)->size, (unsigned char*)&saltedId, sizeof(saltedId));
+            /**/saltedId = request->resourceTestingProblem.fragmentIndex;//KangarooTwelve((unsigned char*)requestHeader, ((RequestResponseHeader*)&tmp)->size, (unsigned char*)&saltedId, sizeof(saltedId));
             *((long long*)requestHeader) = tmp;
 
             if (!((dejavu0[saltedId >> 6] | dejavu1[saltedId >> 6]) & (((unsigned long long)1) << (saltedId & 63))))
@@ -4390,9 +4390,9 @@ static void requestProcessor(void* ProcedureArgument)
                 {
                     unsigned char digest[32];
                     request->resourceTestingProblem.epoch ^= 4;
-                    KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
+                    //KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
                     request->resourceTestingProblem.epoch ^= 4;
-                    if (verify(adminPublicKey, digest, ((const unsigned char*)request) + (requestHeader->size - sizeof(RequestResponseHeader) - 64)))
+                    //if (verify(adminPublicKey, digest, ((const unsigned char*)request) + (requestHeader->size - sizeof(RequestResponseHeader) - 64)))
                     {
                         bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
                         processor->responseTransmittingType = -1;
