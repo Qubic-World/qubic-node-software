@@ -3484,7 +3484,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define PROTOCOL 5
 #define VERSION_A 0
 #define VERSION_B 5
-#define VERSION_C 2
+#define VERSION_C 3
 
 static __m256i ZERO;
 
@@ -4373,13 +4373,13 @@ static void requestProcessor(void* ProcedureArgument)
         BroadcastResourceTestingProblem* request = (BroadcastResourceTestingProblem*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
         if (request->resourceTestingProblem.epoch >= latestComputorStates[NUMBER_OF_COMPUTORS].epoch
             && !request->resourceTestingProblem.structureType
-            && (((request->resourceTestingProblem.inputLength + request->resourceTestingProblem.outputLength) * request->resourceTestingProblem.numberOfInputOutputPairs) << 5) == requestHeader->size - sizeof(RequestResponseHeader) - sizeof(BroadcastResourceTestingProblem) - 64)
+            && (((((unsigned long long)request->resourceTestingProblem.inputLength) + request->resourceTestingProblem.outputLength) * request->resourceTestingProblem.numberOfInputOutputPairs) << 5) == requestHeader->size - sizeof(RequestResponseHeader) - sizeof(BroadcastResourceTestingProblem) - 64)
         {
             unsigned int saltedId;
 
             const long long tmp = *((long long*)requestHeader);
             *((long long*)requestHeader) = salt;
-            /**/saltedId = request->resourceTestingProblem.fragmentIndex;//KangarooTwelve((unsigned char*)requestHeader, ((RequestResponseHeader*)&tmp)->size, (unsigned char*)&saltedId, sizeof(saltedId));
+            KangarooTwelve((unsigned char*)requestHeader, ((RequestResponseHeader*)&tmp)->size, (unsigned char*)&saltedId, sizeof(saltedId));
             *((long long*)requestHeader) = tmp;
 
             if (!((dejavu0[saltedId >> 6] | dejavu1[saltedId >> 6]) & (((unsigned long long)1) << (saltedId & 63))))
@@ -4390,9 +4390,9 @@ static void requestProcessor(void* ProcedureArgument)
                 {
                     unsigned char digest[32];
                     request->resourceTestingProblem.epoch ^= 4;
-                    //KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
+                    KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
                     request->resourceTestingProblem.epoch ^= 4;
-                    //if (verify(adminPublicKey, digest, ((const unsigned char*)request) + (requestHeader->size - sizeof(RequestResponseHeader) - 64)))
+                    if (verify(adminPublicKey, digest, ((const unsigned char*)request) + (requestHeader->size - sizeof(RequestResponseHeader) - 64)))
                     {
                         bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
                         processor->responseTransmittingType = -1;
@@ -4408,7 +4408,7 @@ static void requestProcessor(void* ProcedureArgument)
                                 bs->SetMem(&resourceTestingProblemFragmentFlags, (((unsigned int)request->resourceTestingProblem.numberOfFragments) + 63) >> 6, 0);
 
                                 EFI_STATUS status;
-                                if (status = bs->AllocatePool(EfiRuntimeServicesData, (((request->resourceTestingProblem.inputLength + request->resourceTestingProblem.outputLength) * request->resourceTestingProblem.numberOfInputOutputPairs) << 5) * request->resourceTestingProblem.numberOfFragments, (void**)&resourceTestingProblem))
+                                if (status = bs->AllocatePool(EfiRuntimeServicesData, (((((unsigned long long)request->resourceTestingProblem.inputLength) + request->resourceTestingProblem.outputLength) * request->resourceTestingProblem.numberOfInputOutputPairs) << 5) * request->resourceTestingProblem.numberOfFragments, (void**)&resourceTestingProblem))
                                 {
                                     logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status);
                                 }
@@ -4417,7 +4417,7 @@ static void requestProcessor(void* ProcedureArgument)
                             {
                                 if (!(resourceTestingProblemFragmentFlags[request->resourceTestingProblem.fragmentIndex >> 6] & (((unsigned long long)1) << (request->resourceTestingProblem.fragmentIndex & 63))))
                                 {
-                                    bs->CopyMem(&resourceTestingProblem[((request->resourceTestingProblem.inputLength + request->resourceTestingProblem.outputLength) * request->resourceTestingProblem.numberOfInputOutputPairs) * request->resourceTestingProblem.fragmentIndex], ((char*)request) + sizeof(ResourceTestingProblem), ((request->resourceTestingProblem.inputLength + request->resourceTestingProblem.outputLength) * request->resourceTestingProblem.numberOfInputOutputPairs) << 5);
+                                    bs->CopyMem(&resourceTestingProblem[((((unsigned long long)request->resourceTestingProblem.inputLength) + request->resourceTestingProblem.outputLength) * request->resourceTestingProblem.numberOfInputOutputPairs) * request->resourceTestingProblem.fragmentIndex], ((char*)request) + sizeof(ResourceTestingProblem), ((((unsigned long long)request->resourceTestingProblem.inputLength) + request->resourceTestingProblem.outputLength) * request->resourceTestingProblem.numberOfInputOutputPairs) << 5);
                                     resourceTestingProblemNumberOfFragments = request->resourceTestingProblem.numberOfFragments;
                                     resourceTestingProblemNumberOfKnownFragments++;
                                     resourceTestingProblemFragmentFlags[request->resourceTestingProblem.fragmentIndex >> 6] |= (((unsigned long long)1) << (request->resourceTestingProblem.fragmentIndex & 63));
