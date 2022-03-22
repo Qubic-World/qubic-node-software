@@ -3484,7 +3484,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define PROTOCOL 5
 #define VERSION_A 0
 #define VERSION_B 5
-#define VERSION_C 3
+#define VERSION_C 4
 
 static __m256i ZERO;
 
@@ -4294,15 +4294,21 @@ static void requestProcessor(void* ProcedureArgument)
                         while (_InterlockedCompareExchange8(&resourceTestingProblemLock, 1, 0))
                         {
                         }
+
+                        bs->CopyMem(&latestComputorStates[NUMBER_OF_COMPUTORS], &request->computorState, sizeof(ComputorState));
+
                         if (resourceTestingProblem)
                         {
                             bs->FreePool(resourceTestingProblem);
                             resourceTestingProblem = NULL;
                         }
+
                         resourceTestingProblemLock = 0;
                     }
-
-                    bs->CopyMem(&latestComputorStates[NUMBER_OF_COMPUTORS], &request->computorState, sizeof(ComputorState));
+                    else
+                    {
+                        bs->CopyMem(&latestComputorStates[NUMBER_OF_COMPUTORS], &request->computorState, sizeof(ComputorState));
+                    }
 
                     bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
                     processor->responseTransmittingType = -1;
@@ -4410,7 +4416,7 @@ static void requestProcessor(void* ProcedureArgument)
                                 EFI_STATUS status;
                                 if (status = bs->AllocatePool(EfiRuntimeServicesData, (((((unsigned long long)request->resourceTestingProblem.inputLength) + request->resourceTestingProblem.outputLength) * request->resourceTestingProblem.numberOfInputOutputPairs) << 5) * request->resourceTestingProblem.numberOfFragments, (void**)&resourceTestingProblem))
                                 {
-                                    logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status);
+                                    //logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status);
                                 }
                             }
                             if (resourceTestingProblem)
