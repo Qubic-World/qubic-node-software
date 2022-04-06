@@ -1,3 +1,5 @@
+#include "qpi.h"
+
 #include <intrin.h>
 
 
@@ -21,7 +23,7 @@ static const unsigned char defaultRouteGateway[4] = { 0, 0, 0, 0 };
 static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define OPERATOR "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-
+#define MINING_DATA_FILE_NAME "mining.data"
 
 
 ////////// Public Settings \\\\\\\\\\
@@ -3473,26 +3475,33 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define BUFFER_SIZE 4194304
 #define DEJAVU_SWAP_PERIOD 30
 #define MAX_CONNECTION_DELAY 5
+#define MAX_ENERGY_AMOUNT 9223372036854775807
 #define MAX_NUMBER_OF_PEERS 16
 #define MAX_NUMBER_OF_PROCESSORS 1024
 #define MAX_NUMBER_OF_PUBLIC_PEERS 64
+#define MAX_TIMESTAMP_VALUE 9223372036854775807
 #define MIN_ENERGY_AMOUNT 1000000
 #define MIN_NUMBER_OF_PEERS 4
 #define NUMBER_OF_COMPUTORS (26 * 26)
 #define PEER_RATING_PERIOD 15
 #define PORT 21841
-#define PROTOCOL 5
+#define PROTOCOL 6
 #define VERSION_A 0
-#define VERSION_B 5
-#define VERSION_C 4
+#define VERSION_B 6
+#define VERSION_C 0
 
 static __m256i ZERO;
+
+struct MiningData
+{
+    unsigned int version;
+} miningData;
 
 typedef struct
 {
     unsigned char publicKey[32];
     unsigned long long latestTimestamp;
-    unsigned long long amount;
+    long long amount;
     unsigned int latestUpdateTick;
     volatile char lock;
     char padding[11];
@@ -3553,28 +3562,25 @@ typedef struct
 typedef struct
 {
     unsigned char sourcePublicKey[32];
-    unsigned char environment[32];
+    unsigned char destinationPublicKey[32];
+    unsigned long long timestamp;
+    unsigned long long messageSize;
+} Message;
+
+typedef struct
+{
+    unsigned char sourcePublicKey[32];
+    unsigned char destinationEnvironment[32];
     unsigned long long timestamp;
     unsigned long long effectSize;
 } Effect;
 
 typedef struct
 {
-    unsigned short epoch;
-    unsigned short numberOfFragments;
-    unsigned short fragmentIndex;
-    unsigned short structureType;
-    unsigned short inputLength;
-    unsigned short outputLength;
-    unsigned int numberOfInputOutputPairs;
-} ResourceTestingProblem;
-
-typedef struct
-{
     unsigned char sourcePublicKey[32];
     unsigned char destinationPublicKey[32];
     unsigned long long timestamp;
-    unsigned long long amount;
+    long long amount;
     unsigned char signature[64];
 } Transfer;
 
@@ -3681,10 +3687,7 @@ typedef struct
 #define BROADCAST_MESSAGE 2
 typedef struct
 {
-    unsigned char sourcePublicKey[32];
-    unsigned char destinationPublicKey[32];
-    unsigned long long timestamp;
-    unsigned long long messageSize;
+    Message message;
 } BroadcastMessage;
 
 #define BROADCAST_TRANSFER 3
@@ -3711,12 +3714,6 @@ typedef struct
     TransferStatus status;
 } BroadcastTransferStatus;
 
-#define BROADCAST_RESOURCE_TESTING_PROBLEM 7
-typedef struct
-{
-    ResourceTestingProblem resourceTestingProblem;
-} BroadcastResourceTestingProblem;
-
 const unsigned short requestResponseMinSizes[] = {
     sizeof(RequestResponseHeader) + sizeof(ProcessWebSocketClientRequest),
     sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers),
@@ -3724,8 +3721,7 @@ const unsigned short requestResponseMinSizes[] = {
     sizeof(RequestResponseHeader) + sizeof(BroadcastTransfer),
     sizeof(RequestResponseHeader) + sizeof(BroadcastEffect) + 64,
     sizeof(RequestResponseHeader) + sizeof(BroadcastComputorState),
-    sizeof(RequestResponseHeader) + sizeof(BroadcastTransferStatus),
-    sizeof(RequestResponseHeader) + sizeof(BroadcastResourceTestingProblem)
+    sizeof(RequestResponseHeader) + sizeof(BroadcastTransferStatus)
 };
 
 static volatile int state = 0;
@@ -3736,11 +3732,6 @@ static unsigned char ownSubseed[32], ownPrivateKey[32], ownPublicKey[32], operat
 static unsigned long long latestOperatorTimestamp;
 static unsigned long long salt;
 
-static volatile char resourceTestingProblemLock = 0;
-static __m256i* resourceTestingProblem = NULL;
-static unsigned short resourceTestingProblemNumberOfFragments, resourceTestingProblemNumberOfKnownFragments;
-static unsigned long long resourceTestingProblemFragmentFlags[65536 / 64];
-
 static Entity* entities = NULL;
 static TransferSuperstatus* transferSuperstatuses = NULL;
 
@@ -3749,6 +3740,8 @@ static ComputorState latestComputorStates[NUMBER_OF_COMPUTORS + 1];
 
 static volatile unsigned long long* dejavu0 = NULL;
 static volatile unsigned long long* dejavu1 = NULL;
+
+static EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* simpleFileSystemProtocol;
 
 static EFI_MP_SERVICES_PROTOCOL* mpServicesProtocol;
 static unsigned long long frequency;
@@ -3785,7 +3778,7 @@ static void closeCallback(EFI_EVENT Event, void* Context);
 static void receiveCallback(EFI_EVENT Event, void* Context);
 static void transmitCallback(EFI_EVENT Event, void* Context);
 
-static void increaseEnergy(unsigned char* publicKey, unsigned long long amount)
+static void increaseEnergy(unsigned char* publicKey, long long amount)
 {
     unsigned int index = (*((unsigned int*)publicKey)) & 0xFFFFFF;
 
@@ -3820,7 +3813,7 @@ iteration:
     entities[index].lock = 0;
 }
 
-static BOOLEAN decreaseEnergy(unsigned char* publicKey, unsigned long long timestamp, unsigned long long amount)
+static BOOLEAN decreaseEnergy(unsigned char* publicKey, unsigned long long timestamp, long long amount)
 {
     unsigned int index = (*((unsigned int*)publicKey)) & 0xFFFFFF;
 
@@ -4168,7 +4161,8 @@ static void requestProcessor(void* ProcedureArgument)
     case BROADCAST_MESSAGE:
     {
         BroadcastMessage* request = (BroadcastMessage*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
-        if (requestHeader->size == sizeof(RequestResponseHeader) + sizeof(BroadcastMessage) + request->messageSize + 64)
+        if (requestHeader->size == sizeof(RequestResponseHeader) + sizeof(BroadcastMessage) + request->message.messageSize + 64
+            && request->message.timestamp <= MAX_TIMESTAMP_VALUE)
         {
             unsigned int saltedId;
 
@@ -4183,9 +4177,9 @@ static void requestProcessor(void* ProcedureArgument)
 
                 unsigned char digest[32];
                 KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
-                if (verify(request->sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastMessage) + request->messageSize)))
+                if (verify(request->message.sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastMessage) + request->message.messageSize)))
                 {
-                    if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->destinationPublicKey), *((__m256i*)ownPublicKey))) == 0xFFFFFFFF)
+                    if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->message.destinationPublicKey), *((__m256i*)ownPublicKey))) == 0xFFFFFFFF)
                     {
                         //log(L"Receives a message for self.");
                     }
@@ -4201,7 +4195,8 @@ static void requestProcessor(void* ProcedureArgument)
     case BROADCAST_TRANSFER:
     {
         BroadcastTransfer* request = (BroadcastTransfer*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
-        if (request->transfer.timestamp >= launchTime && request->transfer.amount >= MIN_ENERGY_AMOUNT)
+        if (request->transfer.timestamp >= launchTime && request->transfer.timestamp <= MAX_TIMESTAMP_VALUE
+            && request->transfer.amount >= MIN_ENERGY_AMOUNT && request->transfer.amount <= MAX_ENERGY_AMOUNT)
         {
             unsigned int saltedId;
 
@@ -4231,7 +4226,8 @@ static void requestProcessor(void* ProcedureArgument)
     case BROADCAST_EFFECT:
     {
         BroadcastEffect* request = (BroadcastEffect*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
-        if (requestHeader->size == sizeof(RequestResponseHeader) + sizeof(BroadcastEffect) + request->effect.effectSize + 64)
+        if (requestHeader->size == sizeof(RequestResponseHeader) + sizeof(BroadcastEffect) + request->effect.effectSize + 64
+            && request->effect.timestamp <= MAX_TIMESTAMP_VALUE)
         {
             unsigned int saltedId;
 
@@ -4261,57 +4257,40 @@ static void requestProcessor(void* ProcedureArgument)
     case BROADCAST_COMPUTOR_STATE:
     {
         BroadcastComputorState* request = (BroadcastComputorState*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
-
-        while (_InterlockedCompareExchange8(&latestComputorStatesLock, 1, 0))
+        if (request->computorState.timestamp <= MAX_TIMESTAMP_VALUE)
         {
-        }
-
-        if (request->computorState.computorIndex < NUMBER_OF_COMPUTORS)
-        {
-            if (request->computorState.timestamp > latestComputorStates[request->computorState.computorIndex].timestamp && latestComputorStates[NUMBER_OF_COMPUTORS].timestamp)
+            while (_InterlockedCompareExchange8(&latestComputorStatesLock, 1, 0))
             {
-                unsigned char digest[32];
-                KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
-                if (verify(latestComputorStates[NUMBER_OF_COMPUTORS].computorPublicKeys[request->computorState.computorIndex], digest, request->computorState.signature))
-                {
-                    bs->CopyMem(&latestComputorStates[request->computorState.computorIndex], request, sizeof(BroadcastComputorState));
+            }
 
-                    bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
-                    processor->responseTransmittingType = -1;
+            if (request->computorState.computorIndex < NUMBER_OF_COMPUTORS)
+            {
+                if (request->computorState.timestamp > latestComputorStates[request->computorState.computorIndex].timestamp && latestComputorStates[NUMBER_OF_COMPUTORS].timestamp)
+                {
+                    unsigned char digest[32];
+                    KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
+                    if (verify(latestComputorStates[NUMBER_OF_COMPUTORS].computorPublicKeys[request->computorState.computorIndex], digest, request->computorState.signature))
+                    {
+                        bs->CopyMem(&latestComputorStates[request->computorState.computorIndex], request, sizeof(BroadcastComputorState));
+
+                        bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
+                        processor->responseTransmittingType = -1;
+                    }
                 }
             }
-        }
-        else
-        {
-            if (request->computorState.timestamp > latestComputorStates[NUMBER_OF_COMPUTORS].timestamp)
+            else
             {
-                unsigned char digest[32];
-                KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
-                if (verify(adminPublicKey, digest, request->computorState.signature))
+                if (request->computorState.timestamp > latestComputorStates[NUMBER_OF_COMPUTORS].timestamp)
                 {
-                    if (request->computorState.epoch > latestComputorStates[NUMBER_OF_COMPUTORS].epoch)
-                    {
-                        while (_InterlockedCompareExchange8(&resourceTestingProblemLock, 1, 0))
-                        {
-                        }
-
-                        bs->CopyMem(&latestComputorStates[NUMBER_OF_COMPUTORS], &request->computorState, sizeof(ComputorState));
-
-                        if (resourceTestingProblem)
-                        {
-                            bs->FreePool(resourceTestingProblem);
-                            resourceTestingProblem = NULL;
-                        }
-
-                        resourceTestingProblemLock = 0;
-                    }
-                    else
+                    unsigned char digest[32];
+                    KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
+                    if (verify(adminPublicKey, digest, request->computorState.signature))
                     {
                         bs->CopyMem(&latestComputorStates[NUMBER_OF_COMPUTORS], &request->computorState, sizeof(ComputorState));
-                    }
 
-                    bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
-                    processor->responseTransmittingType = -1;
+                        bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
+                        processor->responseTransmittingType = -1;
+                    }
                 }
             }
         }
@@ -4368,75 +4347,6 @@ static void requestProcessor(void* ProcedureArgument)
                         bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
                         processor->responseTransmittingType = -1;
                     }
-                }
-            }
-        }
-    }
-    break;
-
-    case BROADCAST_RESOURCE_TESTING_PROBLEM:
-    {
-        BroadcastResourceTestingProblem* request = (BroadcastResourceTestingProblem*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
-        if (request->resourceTestingProblem.epoch >= latestComputorStates[NUMBER_OF_COMPUTORS].epoch
-            && !request->resourceTestingProblem.structureType
-            && (((((unsigned long long)request->resourceTestingProblem.inputLength) + request->resourceTestingProblem.outputLength) * request->resourceTestingProblem.numberOfInputOutputPairs) << 5) == requestHeader->size - sizeof(RequestResponseHeader) - sizeof(BroadcastResourceTestingProblem) - 64)
-        {
-            unsigned int saltedId;
-
-            const long long tmp = *((long long*)requestHeader);
-            *((long long*)requestHeader) = salt;
-            KangarooTwelve((unsigned char*)requestHeader, ((RequestResponseHeader*)&tmp)->size, (unsigned char*)&saltedId, sizeof(saltedId));
-            *((long long*)requestHeader) = tmp;
-
-            if (!((dejavu0[saltedId >> 6] | dejavu1[saltedId >> 6]) & (((unsigned long long)1) << (saltedId & 63))))
-            {
-                dejavu0[saltedId >> 6] |= (((unsigned long long)1) << (saltedId & 63));
-
-                if (latestComputorStates[NUMBER_OF_COMPUTORS].timestamp)
-                {
-                    unsigned char digest[32];
-                    request->resourceTestingProblem.epoch ^= 4;
-                    KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
-                    request->resourceTestingProblem.epoch ^= 4;
-                    if (verify(adminPublicKey, digest, ((const unsigned char*)request) + (requestHeader->size - sizeof(RequestResponseHeader) - 64)))
-                    {
-                        bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
-                        processor->responseTransmittingType = -1;
-
-                        while (_InterlockedCompareExchange8(&resourceTestingProblemLock, 1, 0))
-                        {
-                        }
-                        if (request->resourceTestingProblem.epoch == latestComputorStates[NUMBER_OF_COMPUTORS].epoch)
-                        {
-                            if (!resourceTestingProblem)
-                            {
-                                resourceTestingProblemNumberOfKnownFragments = 0;
-                                bs->SetMem(&resourceTestingProblemFragmentFlags, (((unsigned int)request->resourceTestingProblem.numberOfFragments) + 63) >> 6, 0);
-
-                                EFI_STATUS status;
-                                if (status = bs->AllocatePool(EfiRuntimeServicesData, (((((unsigned long long)request->resourceTestingProblem.inputLength) + request->resourceTestingProblem.outputLength) * request->resourceTestingProblem.numberOfInputOutputPairs) << 5) * request->resourceTestingProblem.numberOfFragments, (void**)&resourceTestingProblem))
-                                {
-                                    //logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status);
-                                }
-                            }
-                            if (resourceTestingProblem)
-                            {
-                                if (!(resourceTestingProblemFragmentFlags[request->resourceTestingProblem.fragmentIndex >> 6] & (((unsigned long long)1) << (request->resourceTestingProblem.fragmentIndex & 63))))
-                                {
-                                    bs->CopyMem(&resourceTestingProblem[((((unsigned long long)request->resourceTestingProblem.inputLength) + request->resourceTestingProblem.outputLength) * request->resourceTestingProblem.numberOfInputOutputPairs) * request->resourceTestingProblem.fragmentIndex], ((char*)request) + sizeof(ResourceTestingProblem), ((((unsigned long long)request->resourceTestingProblem.inputLength) + request->resourceTestingProblem.outputLength) * request->resourceTestingProblem.numberOfInputOutputPairs) << 5);
-                                    resourceTestingProblemNumberOfFragments = request->resourceTestingProblem.numberOfFragments;
-                                    resourceTestingProblemNumberOfKnownFragments++;
-                                    resourceTestingProblemFragmentFlags[request->resourceTestingProblem.fragmentIndex >> 6] |= (((unsigned long long)1) << (request->resourceTestingProblem.fragmentIndex & 63));
-                                }
-                            }
-                        }
-                        resourceTestingProblemLock = 0;
-                    }
-                }
-                else
-                {
-                    bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
-                    processor->responseTransmittingType = -1;
                 }
             }
         }
@@ -5523,6 +5433,54 @@ static BOOLEAN initialize()
 
     EFI_STATUS status;
 
+    if (ROLE == COMPUTOR || ROLE == MINER)
+    {
+        EFI_GUID simpleFileSystemProtocolGuid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+        bs->LocateProtocol(&simpleFileSystemProtocolGuid, NULL, (void**)&simpleFileSystemProtocol);
+        EFI_STATUS status;
+        EFI_FILE_PROTOCOL* root;
+        if (status = simpleFileSystemProtocol->OpenVolume(simpleFileSystemProtocol, (void**)&root))
+        {
+            logStatus(L"EFI_SIMPLE_FILE_SYSTEM_PROTOCOL.OpenVolume() fails", status);
+
+            return FALSE;
+        }
+        else
+        {
+            EFI_FILE_PROTOCOL* dataFile;
+            if (status = root->Open(root, (void**)&dataFile, (CHAR16*)MINING_DATA_FILE_NAME, EFI_FILE_MODE_READ, 0))
+            {
+                logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status);
+
+                root->Close(root);
+
+                return FALSE;
+            }
+            else
+            {
+                unsigned long long size = sizeof(MiningData);
+                status = dataFile->Read(dataFile, &size, &miningData);
+                dataFile->Close(dataFile);
+                root->Close(root);
+                if (status)
+                {
+                    logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status);
+
+                    return FALSE;
+                }
+                else
+                {
+                    if (size < sizeof(MiningData))
+                    {
+                        log(L"The file is too small!");
+
+                        return FALSE;
+                    }
+                }
+            }
+        }
+    }
+
     if (ROLE == COMPUTOR)
     {
         if (status = bs->AllocatePool(EfiRuntimeServicesData, 0x1000000 * sizeof(Entity), (void**)&entities))
@@ -5585,13 +5543,6 @@ static void deinitialize()
     bs->SetMem(ownPrivateKey, sizeof(ownPrivateKey), 0);
     bs->SetMem(ownPublicKey, sizeof(ownPublicKey), 0);
 
-    if (ROLE == COMPUTOR || ROLE == MINER)
-    {
-        if (resourceTestingProblem)
-        {
-            bs->FreePool(resourceTestingProblem);
-        }
-    }
     if (ROLE == COMPUTOR)
     {
         if (entities)
@@ -5893,20 +5844,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 prevNumberOfProcessedRequests = numberOfProcessedRequests;
                                 prevNumberOfReceivedBytes = numberOfReceivedBytes;
                                 prevNumberOfTransmittedBytes = numberOfTransmittedBytes;
-
-                                if (ROLE == COMPUTOR || ROLE == MINER)
-                                {
-                                    if (resourceTestingProblem && resourceTestingProblemNumberOfFragments)
-                                    {
-                                        setNumber(message, resourceTestingProblemNumberOfKnownFragments, TRUE);
-                                        appendText(message, L" of ");
-                                        appendNumber(message, resourceTestingProblemNumberOfFragments, TRUE);
-                                        appendText(message, L" resource testing problem fragments (");
-                                        appendNumber(message, ((unsigned int)resourceTestingProblemNumberOfKnownFragments) * 100 / resourceTestingProblemNumberOfFragments, FALSE);
-                                        appendText(message, L" %) are known.");
-                                        log(message);
-                                    }
-                                }
 
                                 prevLogTick = __rdtsc();
                             }

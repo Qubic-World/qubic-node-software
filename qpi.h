@@ -1,7 +1,9 @@
-// Qubic Programming Interface 0.0.0
+// Qubic Programming Interface 0.0.3
 
 #define NUMBER_OF_COMPUTORS 676
 #define ADMIN_INDEX NUMBER_OF_COMPUTORS
+
+#define NULL_ID nullptr
 
 #define JANUARY 1
 #define FEBRUARY 2
@@ -29,6 +31,282 @@
 #define MIN_ENERGY_AMOUNT 1000000
 #define MAX_ENERGY_AMOUNT 9223372036854775807
 
+bool get1(long long map, long long domain, long long key) {
+
+	return 0;
+}
+
+bool get1(long long map, long long domain, void* key) {
+
+	return 0;
+}
+
+bool get1(long long map, long long key) {
+
+	return get1(map, 0, key);
+}
+
+bool get1(long long map, void* key) {
+
+	return get1(map, 0, key);
+}
+
+bool get1(long long map) {
+
+	return get1(map, (long long)0);
+}
+
+char get8(long long map, long long domain, long long key) {
+
+	return 0;
+}
+
+char get8(long long map, long long domain, void* key) {
+
+	return 0;
+}
+
+char get8(long long map, long long key) {
+
+	return get8(map, 0, key);
+}
+
+char get8(long long map, void* key) {
+
+	return get8(map, 0, key);
+}
+
+char get8(long long map) {
+
+	return get8(map, (long long)0);
+}
+
+short get16(long long map, long long domain, long long key) {
+
+	return 0;
+}
+
+short get16(long long map, long long domain, void* key) {
+
+	return 0;
+}
+
+short get16(long long map, long long key) {
+
+	return get16(map, 0, key);
+}
+
+short get16(long long map, void* key) {
+
+	return get16(map, 0, key);
+}
+
+short get16(long long map) {
+
+	return get16(map, (long long)0);
+}
+
+int get32(long long map, long long domain, long long key) {
+
+	return 0;
+}
+
+int get32(long long map, long long domain, void* key) {
+
+	return 0;
+}
+
+int get32(long long map, long long key) {
+
+	return get32(map, 0, key);
+}
+
+int get32(long long map, void* key) {
+
+	return get32(map, 0, key);
+}
+
+int get32(long long map) {
+
+	return get32(map, (long long)0);
+}
+
+long long get64(long long map, long long domain, long long key) {
+
+	return 0;
+}
+
+long long get64(long long map, long long domain, void* key) {
+
+	return 0;
+}
+
+long long get64(long long map, long long key) {
+
+	return get64(map, 0, key);
+}
+
+long long get64(long long map, void* key) {
+
+	return get64(map, 0, key);
+}
+
+long long get64(long long map) {
+
+	return get64(map, (long long)0);
+}
+
+void* get256(long long map, long long domain, long long key) {
+
+	return NULL_ID;
+}
+
+void* get256(long long map, long long domain, void* key) {
+
+	return NULL_ID;
+}
+
+void* get256(long long map, long long key) {
+
+	return get256(map, 0, key);
+}
+
+void* get256(long long map, void* key) {
+
+	return get256(map, 0, key);
+}
+
+void* get256(long long map) {
+
+	return get256(map, (long long)0);
+}
+
+void set1(long long map, long long domain, long long key, bool value) {
+}
+
+void set1(long long map, long long domain, void* key, bool value) {
+}
+
+void set1(long long map, long long key, bool value) {
+
+	set1(map, 0, key, value);
+}
+
+void set1(long long map, void* key, bool value) {
+
+	set1(map, 0, key, value);
+}
+
+void set1(long long map, bool value) {
+
+	set1(map, (long long)0, value);
+}
+
+void set8(long long map, long long domain, long long key, char value) {
+}
+
+void set8(long long map, long long domain, void* key, char value) {
+}
+
+void set8(long long map, long long key, char value) {
+
+	set8(map, 0, key, value);
+}
+
+void set8(long long map, void* key, char value) {
+
+	set8(map, 0, key, value);
+}
+
+void set8(long long map, char value) {
+
+	set8(map, (long long)0, value);
+}
+
+void set16(long long map, long long domain, long long key, short value) {
+}
+
+void set16(long long map, long long domain, void* key, short value) {
+}
+
+void set16(long long map, long long key, short value) {
+
+	set16(map, 0, key, value);
+}
+
+void set16(long long map, void* key, short value) {
+
+	set16(map, 0, key, value);
+}
+
+void set16(long long map, short value) {
+
+	set16(map, (long long)0, value);
+}
+
+void set32(long long map, long long domain, long long key, int value) {
+}
+
+void set32(long long map, long long domain, void* key, int value) {
+}
+
+void set32(long long map, long long key, int value) {
+
+	set32(map, 0, key, value);
+}
+
+void set32(long long map, void* key, int value) {
+
+	set32(map, 0, key, value);
+}
+
+void set32(long long map, int value) {
+
+	set32(map, (long long)0, value);
+}
+
+void set64(long long map, long long domain, long long key, long long value) {
+}
+
+void set64(long long map, long long domain, void* key, long long value) {
+}
+
+void set64(long long map, long long key, long long value) {
+
+	set64(map, 0, key, value);
+}
+
+void set64(long long map, void* key, long long value) {
+
+	set64(map, 0, key, value);
+}
+
+void set64(long long map, long long value) {
+
+	set64(map, (long long)0, value);
+}
+
+void set256(long long map, long long domain, long long key, void* value) {
+}
+
+void set256(long long map, long long domain, void* key, void* value) {
+}
+
+void set256(long long map, long long key, void* value) {
+
+	set256(map, 0, key, value);
+}
+
+void set256(long long map, void* key, void* value) {
+
+	set256(map, 0, key, value);
+}
+
+void set256(long long map, void* value) {
+
+	set256(map, (long long)0, value);
+}
+
 long long add(long long a, long long b) {
 
 	return a + b;
@@ -36,7 +314,7 @@ long long add(long long a, long long b) {
 
 long long sub(long long a, long long b) {
 
-	return a + b;
+	return a - b;
 }
 
 long long mul(long long a, long long b) {
@@ -52,6 +330,12 @@ long long div(long long a, long long b) {
 long long mod(long long a, long long b) {
 
 	return b == 0 ? 0 : a % b;
+}
+
+unsigned long long random(
+) { // Returns a deterministic pseudo-random number in [0..18446744073709551615] range
+
+	return 0;
 }
 
 struct System {
@@ -72,25 +356,51 @@ struct System {
 	unsigned char		second;			// [0..60] ("60" is not a typo, see https://en.wikipedia.org/wiki/Leap_second)
 	unsigned int		nanosecond;		// [0..999999999]
 
-	char*				self;			// Non-zero value
+	void*				self;			// Non-zero value
 } system;
 
-char* computorId(
+void* environment(
+) {
+
+	return NULL_ID;
+}
+
+void* entity(
+) {
+
+	return NULL_ID;
+}
+
+void* effect(
+) {
+
+	return NULL_ID;
+}
+
+void* id(
+	char* id
+) {
+
+	return NULL_ID;
+}
+
+void* computorId(
 	unsigned short computorIndex, // Returns NULL_ID for "676", use "adminId()" to get the identity of the admin
 	unsigned short epoch // Must be "system.epoch" now
 ) { // Returns the identity of the computor or NULL_ID
 
-	return nullptr;
+	return NULL_ID;
 }
 
-char* adminId(
+void* adminId(
 ) { // Returns the identity of the admin
 
-	return nullptr;
+	return NULL_ID;
 }
 
-unsigned long long random(
-) { // Returns a deterministic pseudo-random number in [0..18446744073709551615] range
+long long energy(
+	void* id
+) {
 
 	return 0;
 }
