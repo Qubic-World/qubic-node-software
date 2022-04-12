@@ -3490,7 +3490,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define PROTOCOL 6
 #define VERSION_A 0
 #define VERSION_B 6
-#define VERSION_C 1
+#define VERSION_C 2
 
 static __m256i ZERO;
 
@@ -3502,6 +3502,7 @@ static volatile char neuronNetworkLock = 0;
 static EFI_EVENT minerEvents[NUMBER_OF_MINING_PROCESSORS];
 static unsigned int neuronLinks[NUMBER_OF_MINING_PROCESSORS][NUMBER_OF_NEURONS][2];
 static unsigned int neuronValues[NUMBER_OF_MINING_PROCESSORS][NUMBER_OF_NEURONS];
+static volatile long long numberOfMiningIterations = 0;
 #endif
 
 typedef struct
@@ -4541,6 +4542,8 @@ static void minerProcessor(void* ProcedureArgument)
             {
                 miningScore = outputLength;
             }
+
+            _InterlockedIncrement64(&numberOfMiningIterations);
         }
 
         if (miningScore > bestMiningScore)
@@ -5785,6 +5788,7 @@ static void deinitialize()
     }
 }
 
+#if NUMBER_OF_MINING_PROCESSORS
 static void saveSolution()
 {
     EFI_STATUS status;
@@ -5817,6 +5821,7 @@ static void saveSolution()
         root->Close(root);
     }
 }
+#endif
 
 EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 {
@@ -5916,6 +5921,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             unsigned long long prevPeerRatingTick = __rdtsc();
                             unsigned long long prevLogTick = __rdtsc();
                             int knownMiningScore = 0;
+                            long long prevNumberOfMiningIterations = 0;
+                            unsigned long long prevMiningPerformanceTick = __rdtsc();
                             while (!state)
                             {
                                 if (__rdtsc() - prevDejavuSwapTick >= DEJAVU_SWAP_PERIOD * frequency)
@@ -6091,7 +6098,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     {
                                         setText(message, L"Score = ");
                                         appendNumber(message, bestMiningScore, TRUE);
-                                        appendText(message, L".");
+                                        appendText(message, L" (");
+                                        appendNumber(message, (numberOfMiningIterations - prevNumberOfMiningIterations) * frequency / (__rdtsc() - prevMiningPerformanceTick), TRUE);
+                                        prevMiningPerformanceTick = __rdtsc();
+                                        prevNumberOfMiningIterations = numberOfMiningIterations;
+                                        appendText(message, L" it/s).");
                                         log(message);
                                         if (bestMiningScore > knownMiningScore)
                                         {
