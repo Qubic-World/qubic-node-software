@@ -1,5 +1,3 @@
-#include "qpi.h"
-
 #include <intrin.h>
 
 
@@ -10,7 +8,7 @@
 #define NUMBER_OF_MINING_PROCESSORS 0
 
 // Do NOT share the data of "Private Settings" section with anyone!!!
-static unsigned char ownSeed[55 + 1] = "<seed>";
+static unsigned char ownSeed[55 + 1] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 static const unsigned char ownAddress[4] = { 0, 0, 0, 0 };
 static const unsigned char ownMask[4] = { 255, 255, 255, 255 };
@@ -28,7 +26,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 ////////// Public Settings \\\\\\\\\\
 
-#define ADMIN "MGEBBBMCLILFBGOBFJCLNBBADELCIBAMGPGMFIDLPIPGIOLOGJAJGNIEAAALEEKFAEDGOH"
+#define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
 
 static const unsigned char knownPublicPeers[][4] = {
 };
@@ -3484,26 +3482,15 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define MIN_ENERGY_AMOUNT 1000000
 #define MIN_NUMBER_OF_PEERS 4
 #define NUMBER_OF_COMPUTORS (26 * 26)
-#define NUMBER_OF_NEURONS 100000
+#define NUMBER_OF_NEURONS 20000
 #define PEER_RATING_PERIOD 15
 #define PORT 21841
-#define PROTOCOL 6
-#define VERSION_A 0
-#define VERSION_B 6
-#define VERSION_C 2
+#define PROTOCOL 256
+#define VERSION_A 1
+#define VERSION_B 0
+#define VERSION_C 0
 
 static __m256i ZERO;
-
-static volatile int bestMiningScore = -1;
-#if NUMBER_OF_MINING_PROCESSORS
-static unsigned long long miningData[15625000];
-static unsigned int bestNeuronLinks[NUMBER_OF_NEURONS][2];
-static volatile char neuronNetworkLock = 0;
-static EFI_EVENT minerEvents[NUMBER_OF_MINING_PROCESSORS];
-static unsigned int neuronLinks[NUMBER_OF_MINING_PROCESSORS][NUMBER_OF_NEURONS][2];
-static unsigned int neuronValues[NUMBER_OF_MINING_PROCESSORS][NUMBER_OF_NEURONS];
-static volatile long long numberOfMiningIterations = 0;
-#endif
 
 typedef struct
 {
@@ -3788,6 +3775,23 @@ static volatile char publicPeersLock = 0;
 static unsigned int numberOfPublicPeers = 0;
 static PublicPeer publicPeers[MAX_NUMBER_OF_PUBLIC_PEERS];
 static unsigned long long totalRatingOfPublicPeers = 0;
+
+static volatile int bestMiningScore = -1;
+#if NUMBER_OF_MINING_PROCESSORS
+static unsigned long long miningData[15625000];
+static unsigned int bestNeuronLinks[NUMBER_OF_NEURONS][2];
+static volatile char neuronNetworkLock = 0;
+static EFI_EVENT minerEvents[NUMBER_OF_MINING_PROCESSORS];
+static unsigned int neuronLinks[NUMBER_OF_MINING_PROCESSORS][NUMBER_OF_NEURONS][2];
+static unsigned int neuronValues[NUMBER_OF_MINING_PROCESSORS][NUMBER_OF_NEURONS];
+static volatile long long numberOfMiningIterations = 0;
+
+struct
+{
+    RequestResponseHeader header;
+    BroadcastResourceTestingSolution broadcastResourceTestingSolution;
+} solution;
+#endif
 
 static BOOLEAN accept();
 static void connect(unsigned char* address);
@@ -4423,7 +4427,7 @@ static void responseCallback(EFI_EVENT Event, void* Context)
                 {
                     if (peers[i].isTransmitting)
                     {
-                        if (peers[i].dataToTransmitSize + responseHeader->size <= BUFFER_SIZE - 10) // 10 bytes are required by WebSocket protocol
+                        if (peers[i].dataToTransmitSize + responseHeader->size <= BUFFER_SIZE)
                         {
                             bs->CopyMem(&peers[i].dataToTransmit[peers[i].dataToTransmitSize], processor->responseBuffer, responseHeader->size);
                             peers[i].dataToTransmitSize += responseHeader->size;
@@ -6106,9 +6110,37 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         log(message);
                                         if (bestMiningScore > knownMiningScore)
                                         {
+                                            knownMiningScore = bestMiningScore;
+
                                             saveSolution();
 
-                                            knownMiningScore = bestMiningScore;
+                                            solution.header.size = sizeof(solution);
+                                            solution.header.protocol = PROTOCOL;
+                                            solution.header.type = BROADCAST_RESOURCE_TESTING_SOLUTION;
+                                            bs->CopyMem(solution.broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey, computorPublicKey, 32);
+                                            solution.broadcastResourceTestingSolution.resourceTestingSolution.score = knownMiningScore;
+                                            bs->CopyMem(solution.broadcastResourceTestingSolution.resourceTestingSolution.neuronLinks, bestNeuronLinks, sizeof(solution.broadcastResourceTestingSolution.resourceTestingSolution.neuronLinks));
+
+                                            for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
+                                            {
+                                                if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type > 0)
+                                                {
+                                                    if (peers[i].isTransmitting)
+                                                    {
+                                                        if (peers[i].dataToTransmitSize <= BUFFER_SIZE - sizeof(solution))
+                                                        {
+                                                            bs->CopyMem(&peers[i].dataToTransmit[peers[i].dataToTransmitSize], &solution, sizeof(solution));
+                                                            peers[i].dataToTransmitSize += sizeof(solution);
+                                                        }
+                                                    }
+                                                    else
+                                                    {
+                                                        bs->CopyMem(peers[i].transmitData.FragmentTable[0].FragmentBuffer, &solution, sizeof(solution));
+                                                        peers[i].isTransmitting = TRUE;
+                                                        transmit(&peers[i], sizeof(solution));
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
 #endif
