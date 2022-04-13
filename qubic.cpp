@@ -3488,7 +3488,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define PROTOCOL 256
 #define VERSION_A 1
 #define VERSION_B 0
-#define VERSION_C 0
+#define VERSION_C 1
 
 static __m256i ZERO;
 
@@ -4415,6 +4415,17 @@ static void responseCallback(EFI_EVENT Event, void* Context)
     if (responseHeader->size)
     {
         responseHeader->protocol = PROTOCOL;
+
+        if (responseHeader->type == BROADCAST_RESOURCE_TESTING_SOLUTION)
+        {
+            BroadcastResourceTestingSolution* broadcastResourceTestingSolution = (BroadcastResourceTestingSolution*)(((char*)processor->responseBuffer) + sizeof(RequestResponseHeader));
+            CHAR16 message[256];
+            getIdentity(broadcastResourceTestingSolution->resourceTestingSolution.computorPublicKey, message);
+            appendText(message, L" - ");
+            appendNumber(message, broadcastResourceTestingSolution->resourceTestingSolution.score, TRUE);
+            appendText(message, L".");
+            log(message);
+        }
 
         const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
 
