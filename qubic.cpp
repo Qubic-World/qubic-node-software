@@ -8,7 +8,7 @@
 #define NUMBER_OF_MINING_PROCESSORS 0
 
 // Do NOT share the data of "Private Settings" section with anyone!!!
-static unsigned char ownSeed[55 + 1] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+static unsigned char ownSeed[55 + 1] = "<seed>";
 
 static const unsigned char ownAddress[4] = { 0, 0, 0, 0 };
 static const unsigned char ownMask[4] = { 255, 255, 255, 255 };
@@ -3471,7 +3471,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 ////////// Qubic \\\\\\\\\\
 
 #define BUFFER_SIZE 4194304
-#define DEJAVU_SWAP_PERIOD 30
+#define DEJAVU_SWAP_PERIOD 60
 #define EPOCH_ISSUANCE_RATE 1000000000000
 #define MAX_CONNECTION_DELAY 5
 #define MAX_ENERGY_AMOUNT 9223372036854775807
@@ -3488,7 +3488,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define PROTOCOL 256
 #define VERSION_A 1
 #define VERSION_B 0
-#define VERSION_C 1
+#define VERSION_C 2
 
 static __m256i ZERO;
 
@@ -3784,6 +3784,7 @@ static volatile char neuronNetworkLock = 0;
 static EFI_EVENT minerEvents[NUMBER_OF_MINING_PROCESSORS];
 static unsigned int neuronLinks[NUMBER_OF_MINING_PROCESSORS][NUMBER_OF_NEURONS][2];
 static unsigned int neuronValues[NUMBER_OF_MINING_PROCESSORS][NUMBER_OF_NEURONS];
+static unsigned int neuronValuesForVerification[NUMBER_OF_NEURONS];
 static volatile long long numberOfMiningIterations = 0;
 
 struct
@@ -4425,6 +4426,58 @@ static void responseCallback(EFI_EVENT Event, void* Context)
             appendNumber(message, broadcastResourceTestingSolution->resourceTestingSolution.score, TRUE);
             appendText(message, L".");
             log(message);
+
+            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)broadcastResourceTestingSolution->resourceTestingSolution.computorPublicKey), *((__m256i*)computorPublicKey))) == 0xFFFFFFFF
+                && broadcastResourceTestingSolution->resourceTestingSolution.score > bestMiningScore)
+            {
+                bs->SetMem(neuronValuesForVerification, NUMBER_OF_NEURONS * sizeof(unsigned int), 0xFF);
+
+                int outputLength = 0;
+                while (outputLength < (sizeof(miningData) << 3))
+                {
+                    const unsigned int prevValue0 = neuronValuesForVerification[NUMBER_OF_NEURONS - 1];
+                    const unsigned int prevValue1 = neuronValuesForVerification[NUMBER_OF_NEURONS - 2];
+
+                    for (unsigned int i = 0; i < NUMBER_OF_NEURONS; i++)
+                    {
+                        neuronValuesForVerification[i] = ~(neuronValuesForVerification[broadcastResourceTestingSolution->resourceTestingSolution.neuronLinks[i][0]] & neuronValuesForVerification[broadcastResourceTestingSolution->resourceTestingSolution.neuronLinks[i][1]]);
+                    }
+
+                    if (neuronValuesForVerification[NUMBER_OF_NEURONS - 1] != prevValue0
+                        && neuronValuesForVerification[NUMBER_OF_NEURONS - 2] == prevValue1)
+                    {
+                        if ((miningData[outputLength >> 6] >> (outputLength & 63)) & 1)
+                        {
+                            break;
+                        }
+
+                        outputLength++;
+                    }
+                    else
+                    {
+                        if (neuronValuesForVerification[NUMBER_OF_NEURONS - 2] != prevValue1
+                            && neuronValuesForVerification[NUMBER_OF_NEURONS - 1] == prevValue0)
+                        {
+                            if (!((miningData[outputLength >> 6] >> (outputLength & 63)) & 1))
+                            {
+                                break;
+                            }
+
+                            outputLength++;
+                        }
+                    }
+                }
+
+                if (outputLength == broadcastResourceTestingSolution->resourceTestingSolution.score && outputLength > bestMiningScore)
+                {
+                    while (_InterlockedCompareExchange8(&neuronNetworkLock, 1, 0))
+                    {
+                    }
+                    bestMiningScore = broadcastResourceTestingSolution->resourceTestingSolution.score;
+                    bs->CopyMem(bestNeuronLinks, broadcastResourceTestingSolution->resourceTestingSolution.neuronLinks, sizeof(bestNeuronLinks));
+                    neuronNetworkLock = 0;
+                }
+            }
         }
 
         const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
