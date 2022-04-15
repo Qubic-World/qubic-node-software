@@ -3475,6 +3475,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define EPOCH_ISSUANCE_RATE 1000000000000
 #define MAX_CONNECTION_DELAY 5
 #define MAX_ENERGY_AMOUNT 9223372036854775807
+#define MAX_NUMBER_OF_MINERS 10000
 #define MAX_NUMBER_OF_PEERS 16
 #define MAX_NUMBER_OF_PROCESSORS 1024
 #define MAX_NUMBER_OF_PUBLIC_PEERS 64
@@ -3486,9 +3487,10 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define PEER_RATING_PERIOD 15
 #define PORT 21841
 #define PROTOCOL 256
+#define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 60
 #define VERSION_A 1
 #define VERSION_B 0
-#define VERSION_C 2
+#define VERSION_C 3
 
 static __m256i ZERO;
 
@@ -3786,6 +3788,10 @@ static unsigned int neuronLinks[NUMBER_OF_MINING_PROCESSORS][NUMBER_OF_NEURONS][
 static unsigned int neuronValues[NUMBER_OF_MINING_PROCESSORS][NUMBER_OF_NEURONS];
 static unsigned int neuronValuesForVerification[NUMBER_OF_NEURONS];
 static volatile long long numberOfMiningIterations = 0;
+
+static unsigned int numberOfMiners = 0;
+static __m256i minerPublicKeys[MAX_NUMBER_OF_MINERS];
+static unsigned int minerScores[MAX_NUMBER_OF_MINERS];
 
 struct
 {
@@ -4417,6 +4423,7 @@ static void responseCallback(EFI_EVENT Event, void* Context)
     {
         responseHeader->protocol = PROTOCOL;
 
+#if NUMBER_OF_MINING_PROCESSORS
         if (responseHeader->type == BROADCAST_RESOURCE_TESTING_SOLUTION)
         {
             BroadcastResourceTestingSolution* broadcastResourceTestingSolution = (BroadcastResourceTestingSolution*)(((char*)processor->responseBuffer) + sizeof(RequestResponseHeader));
@@ -4478,7 +4485,31 @@ static void responseCallback(EFI_EVENT Event, void* Context)
                     neuronNetworkLock = 0;
                 }
             }
+
+            if (broadcastResourceTestingSolution->resourceTestingSolution.score >= 100)
+            {
+                unsigned int i;
+                for (i = 0; i < numberOfMiners; i++)
+                {
+                    if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)broadcastResourceTestingSolution->resourceTestingSolution.computorPublicKey), minerPublicKeys[i])) == 0xFFFFFFFF)
+                    {
+                        break;
+                    }
+                }
+                if (i < MAX_NUMBER_OF_MINERS)
+                {
+                    if (i == numberOfMiners)
+                    {
+                        minerPublicKeys[numberOfMiners++] = *((__m256i*)broadcastResourceTestingSolution->resourceTestingSolution.computorPublicKey);
+                    }
+                    if (broadcastResourceTestingSolution->resourceTestingSolution.score > minerScores[i])
+                    {
+                        minerScores[i] = broadcastResourceTestingSolution->resourceTestingSolution.score;
+                    }
+                }
+            }
         }
+#endif
 
         const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
 
@@ -5742,6 +5773,8 @@ static BOOLEAN initialize()
             }
         }
     }
+
+    bs->SetMem(minerScores, sizeof(minerScores), 0);
 #endif
 
     if (NUMBER_OF_COMPUTING_PROCESSORS > 0)
@@ -5991,6 +6024,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             int knownMiningScore = 0;
                             long long prevNumberOfMiningIterations = 0;
                             unsigned long long prevMiningPerformanceTick = __rdtsc();
+                            unsigned long long prevResourceTestingSolutionPublicationTick = 0;
                             while (!state)
                             {
                                 if (__rdtsc() - prevDejavuSwapTick >= DEJAVU_SWAP_PERIOD * frequency)
@@ -6164,19 +6198,40 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 #if NUMBER_OF_MINING_PROCESSORS
                                     if (bestMiningScore >= 0)
                                     {
+                                        unsigned int numberOfBetterScores = 1;
+                                        for (unsigned int i = 0; i < numberOfMiners; i++)
+                                        {
+                                            if (minerScores[i] >= bestMiningScore)
+                                            {
+                                                numberOfBetterScores;
+                                            }
+                                        }
+
                                         setText(message, L"Score = ");
                                         appendNumber(message, bestMiningScore, TRUE);
                                         appendText(message, L" (");
                                         appendNumber(message, (numberOfMiningIterations - prevNumberOfMiningIterations) * frequency / (__rdtsc() - prevMiningPerformanceTick), TRUE);
                                         prevMiningPerformanceTick = __rdtsc();
                                         prevNumberOfMiningIterations = numberOfMiningIterations;
-                                        appendText(message, L" it/s).");
+                                        appendText(message, L" it/s); rating = ");
+                                        appendNumber(message, numberOfBetterScores, TRUE);
+                                        appendText(message, L" of ");
+                                        appendNumber(message, numberOfMiners, TRUE);
+                                        appendText(message, L".");
                                         log(message);
-                                        if (bestMiningScore > knownMiningScore)
-                                        {
-                                            knownMiningScore = bestMiningScore;
 
-                                            saveSolution();
+                                        if (bestMiningScore > knownMiningScore || __rdtsc() - prevResourceTestingSolutionPublicationTick >= RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD * frequency)
+                                        {
+                                            if (bestMiningScore > knownMiningScore)
+                                            {
+                                                knownMiningScore = bestMiningScore;
+
+                                                saveSolution();
+                                            }
+                                            else
+                                            {
+                                                prevResourceTestingSolutionPublicationTick = __rdtsc();
+                                            }
 
                                             solution.header.size = sizeof(solution);
                                             solution.header.protocol = PROTOCOL;
