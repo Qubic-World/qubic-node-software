@@ -3490,7 +3490,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 60
 #define VERSION_A 1
 #define VERSION_B 0
-#define VERSION_C 3
+#define VERSION_C 4
 
 static __m256i ZERO;
 
@@ -4520,19 +4520,10 @@ static void responseCallback(EFI_EVENT Event, void* Context)
                 if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type > 0
                     && (processor->responseTransmittingType > 0 || &peers[i] != processor->peer))
                 {
-                    if (peers[i].isTransmitting)
+                    if (peers[i].dataToTransmitSize + responseHeader->size <= BUFFER_SIZE)
                     {
-                        if (peers[i].dataToTransmitSize + responseHeader->size <= BUFFER_SIZE)
-                        {
-                            bs->CopyMem(&peers[i].dataToTransmit[peers[i].dataToTransmitSize], processor->responseBuffer, responseHeader->size);
-                            peers[i].dataToTransmitSize += responseHeader->size;
-                        }
-                    }
-                    else
-                    {
-                        bs->CopyMem(peers[i].transmitData.FragmentTable[0].FragmentBuffer, processor->responseBuffer, responseHeader->size);
-                        peers[i].isTransmitting = TRUE;
-                        transmit(&peers[i], responseHeader->size);
+                        bs->CopyMem(&peers[i].dataToTransmit[peers[i].dataToTransmitSize], processor->responseBuffer, responseHeader->size);
+                        peers[i].dataToTransmitSize += responseHeader->size;
                     }
                 }
             }
@@ -4541,21 +4532,10 @@ static void responseCallback(EFI_EVENT Event, void* Context)
         {
             if (processor->peerId == processor->peer->id && ((unsigned long long)processor->peer->tcp4Protocol) > 1)
             {
-                if (processor->peer->isTransmitting)
+                if (processor->peer->dataToTransmitSize + responseHeader->size <= BUFFER_SIZE - 10) // 10 bytes are required by WebSocket protocol
                 {
-                    if (processor->peer->dataToTransmitSize + responseHeader->size <= BUFFER_SIZE - 10) // 10 bytes are required by WebSocket protocol
-                    {
-                        bs->CopyMem(&processor->peer->dataToTransmit[processor->peer->dataToTransmitSize], processor->responseBuffer, responseHeader->size);
-                        processor->peer->dataToTransmitSize += responseHeader->size;
-                    }
-                }
-                else
-                {
-                    void* tmp = processor->responseBuffer;
-                    processor->responseBuffer = processor->peer->transmitData.FragmentTable[0].FragmentBuffer;
-                    processor->peer->transmitData.FragmentTable[0].FragmentBuffer = tmp;
-                    processor->peer->isTransmitting = TRUE;
-                    transmit(processor->peer, responseHeader->size);
+                    bs->CopyMem(&processor->peer->dataToTransmit[processor->peer->dataToTransmitSize], processor->responseBuffer, responseHeader->size);
+                    processor->peer->dataToTransmitSize += responseHeader->size;
                 }
             }
         }
@@ -4812,6 +4792,7 @@ static BOOLEAN accept()
     {
         peers[latestPeerIndex].tcp4Protocol = (EFI_TCP4_PROTOCOL*)1;
         *((int*)peers[latestPeerIndex].address) = 0;
+        peers[latestPeerIndex].connectionBeginningTick = __rdtsc();
         peers[latestPeerIndex].acceptToken.NewChildHandle = NULL;
         peers[latestPeerIndex].prevNumberOfReceivedBytes = peers[latestPeerIndex].numberOfReceivedBytes = 0;
         peers[latestPeerIndex].prevNumberOfTransmittedBytes = peers[latestPeerIndex].numberOfTransmittedBytes = 0;
@@ -4958,6 +4939,8 @@ static void receive(Peer* peer)
 static void transmit(Peer* peer, unsigned int size)
 {
     const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
+
+    peer->isTransmitting = TRUE;
 
     if (((unsigned long long)peer->tcp4Protocol) > 1)
     {
@@ -5126,7 +5109,6 @@ static void connectCallback(EFI_EVENT Event, void* Context)
             *software = (VERSION_C / 10) + '0';
         }
 
-        peer->isTransmitting = TRUE;
         transmit(peer, requestHeader->size);
 
         peer->receiveData.FragmentTable[0].FragmentBuffer = peer->receiveBuffer;
@@ -5258,7 +5240,6 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                 if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)operatorPublicKey), ZERO)) == 0xFFFFFFFF)
                 {
                     bs->CopyMem(peer->transmitData.FragmentTable[0].FragmentBuffer, (void*)"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n", 45);
-                    peer->isTransmitting = TRUE;
                     transmit(peer, 45);
                 }
                 else
@@ -5610,19 +5591,7 @@ static void transmitCallback(EFI_EVENT Event, void* Context)
         numberOfTransmittedBytes += peer->transmitData.DataLength;
         peer->numberOfTransmittedBytes += peer->transmitData.DataLength;
 
-        if (peer->dataToTransmitSize)
-        {
-            void* tmp = peer->dataToTransmit;
-            peer->dataToTransmit = (char*)peer->transmitData.FragmentTable[0].FragmentBuffer;
-            peer->transmitData.FragmentTable[0].FragmentBuffer = tmp;
-            const unsigned int size = peer->dataToTransmitSize;
-            peer->dataToTransmitSize = 0;
-            transmit(peer, size);
-        }
-        else
-        {
-            peer->isTransmitting = FALSE;
-        }
+        peer->isTransmitting = FALSE;
     }
 
     bs->RestoreTPL(tpl);
@@ -6037,7 +6006,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     prevDejavuSwapTick = __rdtsc();
                                 }
 
-                                const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
+                                EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
                                 unsigned int numberOfFreePeerSlots = 0, numberOfAcceptingPeerSlots = 0, numberOfWebSocketClients = 0;
                                 for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
                                 {
@@ -6053,37 +6022,35 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         }
                                         else
                                         {
-                                            if (!peers[i].acceptToken.NewChildHandle)
-                                            {
-                                                if ((!peers[i].numberOfReceivedBytes || !peers[i].numberOfTransmittedBytes)
-                                                    && __rdtsc() - peers[i].connectionBeginningTick > MAX_CONNECTION_DELAY * frequency)
-                                                {
-                                                    while (_InterlockedCompareExchange8(&publicPeersLock, 1, 0))
-                                                    {
-                                                    }
-                                                    for (unsigned int j = 0; numberOfPublicPeers > MIN_NUMBER_OF_PEERS && j < numberOfPublicPeers; j++)
-                                                    {
-                                                        if (*((int*)publicPeers[j].address) == *((int*)peers[i].address))
-                                                        {
-                                                            if (j != --numberOfPublicPeers)
-                                                            {
-                                                                bs->CopyMem(&publicPeers[j], &publicPeers[numberOfPublicPeers], sizeof(PublicPeer));
-                                                            }
-
-                                                            break;
-                                                        }
-                                                    }
-                                                    publicPeersLock = 0;
-
-                                                    close(&peers[i]);
-                                                }
-                                            }
-                                            else
+                                            if (peers[i].acceptToken.NewChildHandle)
                                             {
                                                 if (peers[i].type < 0)
                                                 {
                                                     numberOfWebSocketClients++;
                                                 }
+                                            }
+
+                                            if ((!peers[i].numberOfReceivedBytes || !peers[i].numberOfTransmittedBytes)
+                                                && __rdtsc() - peers[i].connectionBeginningTick > MAX_CONNECTION_DELAY * frequency)
+                                            {
+                                                while (_InterlockedCompareExchange8(&publicPeersLock, 1, 0))
+                                                {
+                                                }
+                                                for (unsigned int j = 0; numberOfPublicPeers > MIN_NUMBER_OF_PEERS && j < numberOfPublicPeers; j++)
+                                                {
+                                                    if (*((int*)publicPeers[j].address) == *((int*)peers[i].address))
+                                                    {
+                                                        if (j != --numberOfPublicPeers)
+                                                        {
+                                                            bs->CopyMem(&publicPeers[j], &publicPeers[numberOfPublicPeers], sizeof(PublicPeer));
+                                                        }
+
+                                                        break;
+                                                    }
+                                                }
+                                                publicPeersLock = 0;
+
+                                                close(&peers[i]);
                                             }
                                         }
                                     }
@@ -6097,6 +6064,22 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         peers[i].tcp4Protocol->Poll(peers[i].tcp4Protocol);
                                     }
                                 }
+
+                                tpl = bs->RaiseTPL(TPL_NOTIFY);
+                                for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
+                                {
+                                    if (((unsigned long long)peers[i].tcp4Protocol) > 1
+                                        && !peers[i].isTransmitting && peers[i].dataToTransmitSize)
+                                    {
+                                        void* tmp = peers[i].dataToTransmit;
+                                        peers[i].dataToTransmit = (char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer;
+                                        peers[i].transmitData.FragmentTable[0].FragmentBuffer = tmp;
+                                        const unsigned int size = peers[i].dataToTransmitSize;
+                                        peers[i].dataToTransmitSize = 0;
+                                        transmit(&peers[i], size);
+                                    }
+                                }
+                                bs->RestoreTPL(tpl);
 
                                 if (MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots - numberOfWebSocketClients < MIN_NUMBER_OF_PEERS)
                                 {
@@ -6203,7 +6186,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         {
                                             if (minerScores[i] >= bestMiningScore)
                                             {
-                                                numberOfBetterScores;
+                                                numberOfBetterScores++;
                                             }
                                         }
 
@@ -6244,19 +6227,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             {
                                                 if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type > 0)
                                                 {
-                                                    if (peers[i].isTransmitting)
+                                                    if (peers[i].dataToTransmitSize <= BUFFER_SIZE - sizeof(solution))
                                                     {
-                                                        if (peers[i].dataToTransmitSize <= BUFFER_SIZE - sizeof(solution))
-                                                        {
-                                                            bs->CopyMem(&peers[i].dataToTransmit[peers[i].dataToTransmitSize], &solution, sizeof(solution));
-                                                            peers[i].dataToTransmitSize += sizeof(solution);
-                                                        }
-                                                    }
-                                                    else
-                                                    {
-                                                        bs->CopyMem(peers[i].transmitData.FragmentTable[0].FragmentBuffer, &solution, sizeof(solution));
-                                                        peers[i].isTransmitting = TRUE;
-                                                        transmit(&peers[i], sizeof(solution));
+                                                        bs->CopyMem(&peers[i].dataToTransmit[peers[i].dataToTransmitSize], &solution, sizeof(solution));
+                                                        peers[i].dataToTransmitSize += sizeof(solution);
                                                     }
                                                 }
                                             }
