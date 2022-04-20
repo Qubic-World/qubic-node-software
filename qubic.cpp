@@ -3489,8 +3489,8 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define PROTOCOL 256
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 60
 #define VERSION_A 1
-#define VERSION_B 0
-#define VERSION_C 4
+#define VERSION_B 1
+#define VERSION_C 0
 
 static __m256i ZERO;
 
@@ -5689,6 +5689,8 @@ static BOOLEAN initialize()
 
                     return FALSE;
                 }
+
+                miningData[0] ^= 1;
 
                 unsigned char* miningDataBytes = (unsigned char*)miningData;
                 for (unsigned int i = 0; i < sizeof(computorPublicKey); i++)
