@@ -3490,7 +3490,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 60
 #define VERSION_A 1
 #define VERSION_B 1
-#define VERSION_C 0
+#define VERSION_C 1
 
 static __m256i ZERO;
 
@@ -4447,7 +4447,7 @@ static void responseCallback(EFI_EVENT Event, void* Context)
 
                     for (unsigned int i = 0; i < NUMBER_OF_NEURONS; i++)
                     {
-                        neuronValuesForVerification[i] = ~(neuronValuesForVerification[broadcastResourceTestingSolution->resourceTestingSolution.neuronLinks[i][0]] & neuronValuesForVerification[broadcastResourceTestingSolution->resourceTestingSolution.neuronLinks[i][1]]);
+                        neuronValuesForVerification[i] = ~(neuronValuesForVerification[broadcastResourceTestingSolution->resourceTestingSolution.neuronLinks[i][0] % NUMBER_OF_NEURONS] & neuronValuesForVerification[broadcastResourceTestingSolution->resourceTestingSolution.neuronLinks[i][1] % NUMBER_OF_NEURONS]);
                     }
 
                     if (neuronValuesForVerification[NUMBER_OF_NEURONS - 1] != prevValue0
@@ -6138,34 +6138,31 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             numberOfDeltas++;
                                         }
                                     }
-                                    if (numberOfDeltas)
+                                    if (worstNumberOfReceivedBytesPeerIndex >= 0 && (!worstNumberOfReceivedBytesDelta || worstNumberOfReceivedBytesDelta < numberOfReceivedBytesSumOfDeltas / ((numberOfDeltas ? numberOfDeltas : 1) * 3)))
                                     {
-                                        if (worstNumberOfReceivedBytesPeerIndex >= 0 && worstNumberOfReceivedBytesDelta < numberOfReceivedBytesSumOfDeltas / (numberOfDeltas * 3))
-                                        {
-                                            setText(message, L"A peer sending too few bytes (");
-                                            appendNumber(message, worstNumberOfReceivedBytesDelta, TRUE);
-                                            appendText(message, L" / ");
-                                            appendNumber(message, numberOfReceivedBytesSumOfDeltas / numberOfDeltas, TRUE);
-                                            appendText(message, L") is disconnected.");
-                                            log(message);
+                                        setText(message, L"A peer sending too few bytes (");
+                                        appendNumber(message, worstNumberOfReceivedBytesDelta, TRUE);
+                                        appendText(message, L" / ");
+                                        appendNumber(message, numberOfReceivedBytesSumOfDeltas / (numberOfDeltas ? numberOfDeltas : 1), TRUE);
+                                        appendText(message, L") is disconnected.");
+                                        log(message);
 
-                                            close(&peers[worstNumberOfReceivedBytesPeerIndex]);
-                                        }
-                                        else
-                                        {
-                                            worstNumberOfReceivedBytesPeerIndex = -1;
-                                        }
-                                        if (worstNumberOfTransmittedBytesPeerIndex != worstNumberOfReceivedBytesPeerIndex && worstNumberOfTransmittedBytesPeerIndex >= 0 && worstNumberOfTransmittedBytesDelta < numberOfTransmittedBytesSumOfDeltas / (numberOfDeltas * 3))
-                                        {
-                                            setText(message, L"A peer receiving too few bytes (");
-                                            appendNumber(message, worstNumberOfTransmittedBytesDelta, TRUE);
-                                            appendText(message, L" / ");
-                                            appendNumber(message, numberOfTransmittedBytesSumOfDeltas / numberOfDeltas, TRUE);
-                                            appendText(message, L") is disconnected.");
-                                            log(message);
+                                        close(&peers[worstNumberOfReceivedBytesPeerIndex]);
+                                    }
+                                    else
+                                    {
+                                        worstNumberOfReceivedBytesPeerIndex = -1;
+                                    }
+                                    if (worstNumberOfTransmittedBytesPeerIndex != worstNumberOfReceivedBytesPeerIndex && worstNumberOfTransmittedBytesPeerIndex >= 0 && (!worstNumberOfTransmittedBytesDelta || worstNumberOfTransmittedBytesDelta < numberOfTransmittedBytesSumOfDeltas / ((numberOfDeltas ? numberOfDeltas : 1) * 3)))
+                                    {
+                                        setText(message, L"A peer receiving too few bytes (");
+                                        appendNumber(message, worstNumberOfTransmittedBytesDelta, TRUE);
+                                        appendText(message, L" / ");
+                                        appendNumber(message, numberOfTransmittedBytesSumOfDeltas / (numberOfDeltas ? numberOfDeltas : 1), TRUE);
+                                        appendText(message, L") is disconnected.");
+                                        log(message);
 
-                                            close(&peers[worstNumberOfTransmittedBytesPeerIndex]);
-                                        }
+                                        close(&peers[worstNumberOfTransmittedBytesPeerIndex]);
                                     }
 
                                     prevPeerRatingTick = __rdtsc();
