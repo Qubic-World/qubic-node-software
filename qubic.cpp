@@ -31,6 +31,9 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 static const unsigned char knownPublicPeers[][4] = {
 };
 
+static const unsigned char whitelistedPeers[][4] = {
+};
+
 
 
 ////////// UEFI \\\\\\\\\\
@@ -3490,7 +3493,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 60
 #define VERSION_A 1
 #define VERSION_B 1
-#define VERSION_C 2
+#define VERSION_C 3
 
 static __m256i ZERO;
 
@@ -4426,12 +4429,6 @@ static void responseCallback(EFI_EVENT Event, void* Context)
         if (responseHeader->type == BROADCAST_RESOURCE_TESTING_SOLUTION)
         {
             BroadcastResourceTestingSolution* broadcastResourceTestingSolution = (BroadcastResourceTestingSolution*)(((char*)processor->responseBuffer) + sizeof(RequestResponseHeader));
-            CHAR16 message[256];
-            getIdentity(broadcastResourceTestingSolution->resourceTestingSolution.computorPublicKey, message);
-            appendText(message, L" - ");
-            appendNumber(message, broadcastResourceTestingSolution->resourceTestingSolution.score, TRUE);
-            appendText(message, L".");
-            log(message);
 
             if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)broadcastResourceTestingSolution->resourceTestingSolution.computorPublicKey), *((__m256i*)computorPublicKey))) == 0xFFFFFFFF
                 && broadcastResourceTestingSolution->resourceTestingSolution.score > bestMiningScore)
@@ -4504,6 +4501,13 @@ static void responseCallback(EFI_EVENT Event, void* Context)
                     if (broadcastResourceTestingSolution->resourceTestingSolution.score > minerScores[i])
                     {
                         minerScores[i] = broadcastResourceTestingSolution->resourceTestingSolution.score;
+
+                        CHAR16 message[256];
+                        getIdentity(broadcastResourceTestingSolution->resourceTestingSolution.computorPublicKey, message);
+                        appendText(message, L" - ");
+                        appendNumber(message, broadcastResourceTestingSolution->resourceTestingSolution.score, TRUE);
+                        appendText(message, L".");
+                        log(message);
                     }
                 }
             }
@@ -5604,6 +5608,19 @@ static void transmitCallback(EFI_EVENT Event, void* Context)
     bs->RestoreTPL(tpl);
 }
 
+static BOOLEAN isWhitelisted(int address)
+{
+    for (unsigned int i = 0; i < sizeof(whitelistedPeers) / sizeof(whitelistedPeers[0]); i++)
+    {
+        if (*((int*)whitelistedPeers[i]) == address)
+        {
+            return TRUE;
+        }
+    }
+
+    return FALSE;
+}
+
 static void processorInitializationProcessor(void* ProcedureArgument)
 {
     __writecr4(__readcr4() | 0x40600);
@@ -6037,22 +6054,25 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if ((!peers[i].numberOfReceivedBytes || !peers[i].numberOfTransmittedBytes)
                                                 && __rdtsc() - peers[i].connectionBeginningTick > MAX_CONNECTION_DELAY * frequency)
                                             {
-                                                while (_InterlockedCompareExchange8(&publicPeersLock, 1, 0))
+                                                if (!isWhitelisted(*((int*)peers[i].address)))
                                                 {
-                                                }
-                                                for (unsigned int j = 0; numberOfPublicPeers > MIN_NUMBER_OF_PEERS && j < numberOfPublicPeers; j++)
-                                                {
-                                                    if (*((int*)publicPeers[j].address) == *((int*)peers[i].address))
+                                                    while (_InterlockedCompareExchange8(&publicPeersLock, 1, 0))
                                                     {
-                                                        if (j != --numberOfPublicPeers)
-                                                        {
-                                                            bs->CopyMem(&publicPeers[j], &publicPeers[numberOfPublicPeers], sizeof(PublicPeer));
-                                                        }
-
-                                                        break;
                                                     }
+                                                    for (unsigned int j = 0; numberOfPublicPeers > MIN_NUMBER_OF_PEERS && j < numberOfPublicPeers; j++)
+                                                    {
+                                                        if (*((int*)publicPeers[j].address) == *((int*)peers[i].address))
+                                                        {
+                                                            if (j != --numberOfPublicPeers)
+                                                            {
+                                                                bs->CopyMem(&publicPeers[j], &publicPeers[numberOfPublicPeers], sizeof(PublicPeer));
+                                                            }
+
+                                                            break;
+                                                        }
+                                                    }
+                                                    publicPeersLock = 0;
                                                 }
-                                                publicPeersLock = 0;
 
                                                 close(&peers[i]);
                                             }
@@ -6156,7 +6176,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                 if (__rdtsc() - prevLogTick >= frequency)
                                 {
-                                    CHAR16 message[256]; setText(message, L"["); appendNumber(message, !numberOfBusyProcessorsNumberOfValues ? 0 : ((numberOfBusyProcessorsSumOfValues * 100) / (numberOfBusyProcessorsNumberOfValues * numberOfProcessors)), FALSE); appendText(message, L"% CPU / "); appendNumber(message, numberOfProcessedRequests - prevNumberOfProcessedRequests, TRUE); appendText(message, L"] "); appendNumber(message, MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots - numberOfWebSocketClients, TRUE); appendText(message, L"/"); appendNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" peers ("); appendNumber(message, numberOfReceivedBytes - prevNumberOfReceivedBytes, TRUE); appendText(message, L" rx / "); appendNumber(message, numberOfTransmittedBytes - prevNumberOfTransmittedBytes, TRUE); appendText(message, L" tx / "); appendNumber(message, numberOfDiscardedBytes - prevNumberOfDiscardedBytes, TRUE); appendText(message, L" dx)."); log(message);
+                                    CHAR16 message[256]; setText(message, L"["); appendNumber(message, !numberOfBusyProcessorsNumberOfValues ? (numberOfBusyProcessors * 100 / numberOfProcessors) : ((numberOfBusyProcessorsSumOfValues * 100) / (numberOfBusyProcessorsNumberOfValues * numberOfProcessors)), FALSE); appendText(message, L"% CPU / "); appendNumber(message, numberOfProcessedRequests - prevNumberOfProcessedRequests, TRUE); appendText(message, L"] "); appendNumber(message, MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots - numberOfWebSocketClients, TRUE); appendText(message, L"/"); appendNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" peers ("); appendNumber(message, numberOfReceivedBytes - prevNumberOfReceivedBytes, TRUE); appendText(message, L" rx / "); appendNumber(message, numberOfTransmittedBytes - prevNumberOfTransmittedBytes, TRUE); appendText(message, L" tx / "); appendNumber(message, numberOfDiscardedBytes - prevNumberOfDiscardedBytes, TRUE); appendText(message, L" dx)."); log(message);
                                     numberOfBusyProcessorsSumOfValues = 0;
                                     numberOfBusyProcessorsNumberOfValues = 0;
                                     prevNumberOfProcessedRequests = numberOfProcessedRequests;
