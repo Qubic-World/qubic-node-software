@@ -3473,7 +3473,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 
 ////////// Qubic \\\\\\\\\\
 
-#define BUFFER_SIZE 4194304
+#define BUFFER_SIZE 1048576
 #define DEJAVU_SWAP_PERIOD 60
 #define EPOCH_ISSUANCE_RATE 1000000000000
 #define MAX_CONNECTION_DELAY 5
@@ -3493,7 +3493,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 60
 #define VERSION_A 1
 #define VERSION_B 1
-#define VERSION_C 3
+#define VERSION_C 4
 
 static __m256i ZERO;
 
@@ -4700,6 +4700,13 @@ static EFI_HANDLE getTcp4Protocol(const unsigned char* remoteAddress, EFI_TCP4_P
                 configData.AccessPoint.RemotePort = PORT;
                 configData.AccessPoint.ActiveFlag = TRUE;
             }
+            EFI_TCP4_OPTION option;
+            bs->SetMem(&option, sizeof(option), 0);
+            option.ReceiveBufferSize = BUFFER_SIZE * 2;
+            option.SendBufferSize = BUFFER_SIZE * 2;
+            option.EnableWindowScaling = TRUE;
+            configData.ControlOption = &option;
+
             EFI_STATUS status;
             if ((status = (*tcp4Protocol)->Configure(*tcp4Protocol, &configData))
                 && status != EFI_NO_MAPPING)
@@ -5803,6 +5810,8 @@ static BOOLEAN initialize()
     for (unsigned int peerIndex = 0; peerIndex < MAX_NUMBER_OF_PEERS; peerIndex++)
     {
         peers[peerIndex].receiveData.FragmentCount = 1;
+        peers[peerIndex].transmitData.Push = TRUE;
+        peers[peerIndex].transmitData.Urgent = TRUE;
         peers[peerIndex].transmitData.FragmentCount = 1;
         if ((status = bs->AllocatePool(EfiRuntimeServicesData, BUFFER_SIZE, &peers[peerIndex].receiveBuffer))
             || (status = bs->AllocatePool(EfiRuntimeServicesData, BUFFER_SIZE, &peers[peerIndex].transmitData.FragmentTable[0].FragmentBuffer)))
