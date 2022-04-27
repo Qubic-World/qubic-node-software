@@ -3494,8 +3494,8 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define PROTOCOL 256
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 60
 #define VERSION_A 1
-#define VERSION_B 1
-#define VERSION_C 5
+#define VERSION_B 2
+#define VERSION_C 0
 
 static __m256i ZERO;
 
@@ -3504,9 +3504,9 @@ typedef struct
     unsigned char publicKey[32];
     unsigned long long latestTimestamp;
     long long amount;
-    unsigned int latestUpdateTick;
+    long long initialAmount;
     volatile char lock;
-    char padding[11];
+    char padding[7];
 } Entity;
 
 typedef struct
@@ -3771,7 +3771,6 @@ static EFI_SERVICE_BINDING_PROTOCOL* tcp4ServiceBindingProtocol;
 static EFI_GUID tcp4ProtocolGuid = EFI_TCP4_PROTOCOL_GUID;
 static EFI_TCP4_PROTOCOL* tcp4Protocol;
 static Peer peers[MAX_NUMBER_OF_PEERS];
-static int latestPeerIndex = -1;
 static unsigned int latestPeerId; // Initial value doesn't matter
 static volatile long long numberOfReceivedBytes = 0, prevNumberOfReceivedBytes = 0;
 static volatile long long numberOfTransmittedBytes = 0, prevNumberOfTransmittedBytes = 0;
@@ -3845,8 +3844,6 @@ iteration:
         }
     }
 
-    entities[index].latestUpdateTick = latestComputorStates[NUMBER_OF_COMPUTORS].tick;
-
     entities[index].lock = 0;
 }
 
@@ -3874,7 +3871,6 @@ iteration:
                 {
                     entities[index].amount -= amount;
                 }
-                entities[index].latestUpdateTick = latestComputorStates[NUMBER_OF_COMPUTORS].tick;
 
                 entities[index].lock = 0;
 
@@ -4804,28 +4800,27 @@ static BOOLEAN accept()
     unsigned int i;
     for (i = 0; i < MAX_NUMBER_OF_PEERS; i++)
     {
-        latestPeerIndex = (latestPeerIndex + 1) % MAX_NUMBER_OF_PEERS;
-        if (!peers[latestPeerIndex].tcp4Protocol)
+        if (!peers[i].tcp4Protocol)
         {
             break;
         }
     }
     if (i != MAX_NUMBER_OF_PEERS)
     {
-        peers[latestPeerIndex].tcp4Protocol = (EFI_TCP4_PROTOCOL*)1;
-        *((int*)peers[latestPeerIndex].address) = 0;
-        peers[latestPeerIndex].connectionBeginningTick = __rdtsc();
-        peers[latestPeerIndex].acceptToken.NewChildHandle = NULL;
-        peers[latestPeerIndex].prevNumberOfReceivedBytes = peers[latestPeerIndex].numberOfReceivedBytes = 0;
-        peers[latestPeerIndex].prevNumberOfTransmittedBytes = peers[latestPeerIndex].numberOfTransmittedBytes = 0;
-        bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, acceptCallback, &peers[latestPeerIndex], &peers[latestPeerIndex].acceptToken.CompletionToken.Event);
+        peers[i].tcp4Protocol = (EFI_TCP4_PROTOCOL*)1;
+        *((int*)peers[i].address) = 0;
+        peers[i].connectionBeginningTick = __rdtsc();
+        peers[i].acceptToken.NewChildHandle = NULL;
+        peers[i].prevNumberOfReceivedBytes = peers[i].numberOfReceivedBytes = 0;
+        peers[i].prevNumberOfTransmittedBytes = peers[i].numberOfTransmittedBytes = 0;
+        bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, acceptCallback, &peers[i], &peers[i].acceptToken.CompletionToken.Event);
         EFI_STATUS status;
-        if (status = tcp4Protocol->Accept(tcp4Protocol, &peers[latestPeerIndex].acceptToken))
+        if (status = tcp4Protocol->Accept(tcp4Protocol, &peers[i].acceptToken))
         {
             logStatus(L"EFI_TCP4_PROTOCOL.Accept() fails", status);
 
-            bs->CloseEvent(peers[latestPeerIndex].acceptToken.CompletionToken.Event);
-            peers[latestPeerIndex].tcp4Protocol = NULL;
+            bs->CloseEvent(peers[i].acceptToken.CompletionToken.Event);
+            peers[i].tcp4Protocol = NULL;
         }
         else
         {
@@ -4850,10 +4845,9 @@ static void connect(unsigned char* address)
     {
         if (freePeerSlot < 0)
         {
-            latestPeerIndex = (latestPeerIndex + 1) % MAX_NUMBER_OF_PEERS;
-            if (!peers[latestPeerIndex].tcp4Protocol)
+            if (!peers[i].tcp4Protocol)
             {
-                freePeerSlot = latestPeerIndex;
+                freePeerSlot = i;
             }
         }
 
@@ -5723,7 +5717,7 @@ static BOOLEAN initialize()
                     return FALSE;
                 }
 
-                miningData[0] ^= 1;
+                miningData[0] ^= 42;
 
                 unsigned char* miningDataBytes = (unsigned char*)miningData;
                 for (unsigned int i = 0; i < sizeof(computorPublicKey); i++)
@@ -6139,6 +6133,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                 if (__rdtsc() - prevPeerRatingTick >= PEER_RATING_PERIOD * frequency)
                                 {
+                                    tpl = bs->RaiseTPL(TPL_NOTIFY);
+
                                     int worstNumberOfReceivedBytesPeerIndex = -1;
                                     unsigned long long worstNumberOfReceivedBytesDelta = 0xFFFFFFFFFFFFFFFF;
                                     unsigned long long numberOfReceivedBytesSumOfDeltas = 0;
@@ -6200,6 +6196,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     }
 
                                     prevPeerRatingTick = __rdtsc();
+
+                                    bs->RestoreTPL(tpl);
                                 }
 
                                 if (__rdtsc() - prevLogTick >= frequency)
