@@ -3476,7 +3476,6 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define BUFFER_SIZE 1048576
 #define DEJAVU_SWAP_PERIOD 60
 #define EPOCH_ISSUANCE_RATE 1000000000000
-#define MAX_CONNECTION_DELAY 5
 #define MAX_ENERGY_AMOUNT 9223372036854775807
 #define MAX_NUMBER_OF_MINERS 10000
 #define MAX_NUMBER_OF_PEERS 16
@@ -3487,13 +3486,13 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define MIN_NUMBER_OF_PEERS 4
 #define NUMBER_OF_COMPUTORS (26 * 26)
 #define NUMBER_OF_NEURONS 20000
-#define PEER_RATING_PERIOD 15
+#define PEER_RATING_PERIOD 5
 #define PORT 21841
 #define PROTOCOL 256
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 60
 #define VERSION_A 1
 #define VERSION_B 2
-#define VERSION_C 1
+#define VERSION_C 2
 
 static __m256i ZERO;
 
@@ -3513,7 +3512,6 @@ typedef struct
     EFI_TCP4_LISTEN_TOKEN acceptToken;
     EFI_TCP4_CONNECTION_TOKEN connectToken;
     unsigned char address[4];
-    unsigned long long connectionBeginningTick;
     EFI_HANDLE connectChildHandle;
     void* receiveBuffer;
     EFI_TCP4_RECEIVE_DATA receiveData;
@@ -4672,6 +4670,19 @@ static void minerShutdownCallback(EFI_EVENT Event, void* Context)
 }
 #endif
 
+static BOOLEAN isWhitelisted(int address)
+{
+    for (unsigned int i = 0; i < sizeof(whitelistedPeers) / sizeof(whitelistedPeers[0]); i++)
+    {
+        if (*((int*)whitelistedPeers[i]) == address)
+        {
+            return TRUE;
+        }
+    }
+
+    return FALSE;
+}
+
 static EFI_HANDLE getTcp4Protocol(const unsigned char* remoteAddress, EFI_TCP4_PROTOCOL** tcp4Protocol)
 {
     EFI_STATUS status;
@@ -4825,10 +4836,10 @@ static BOOLEAN accept()
     {
         peers[i].tcp4Protocol = (EFI_TCP4_PROTOCOL*)1;
         *((int*)peers[i].address) = 0;
-        peers[i].connectionBeginningTick = __rdtsc();
         peers[i].acceptToken.NewChildHandle = NULL;
         peers[i].prevNumberOfReceivedBytes = peers[i].numberOfReceivedBytes = 0;
         peers[i].prevNumberOfTransmittedBytes = peers[i].numberOfTransmittedBytes = 0;
+        peers[i].type = 0;
         bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, acceptCallback, &peers[i], &peers[i].acceptToken.CompletionToken.Event);
         EFI_STATUS status;
         if (status = tcp4Protocol->Accept(tcp4Protocol, &peers[i].acceptToken))
@@ -4881,10 +4892,10 @@ static void connect(unsigned char* address)
             peers[freePeerSlot].tcp4Protocol = tcp4Protocol;
             peers[freePeerSlot].acceptToken.NewChildHandle = NULL;
             *((int*)peers[freePeerSlot].address) = *((int*)address);
-            peers[freePeerSlot].connectionBeginningTick = __rdtsc();
             peers[freePeerSlot].connectChildHandle = childHandle;
             peers[freePeerSlot].prevNumberOfReceivedBytes = peers[freePeerSlot].numberOfReceivedBytes = 0;
             peers[freePeerSlot].prevNumberOfTransmittedBytes = peers[freePeerSlot].numberOfTransmittedBytes = 0;
+            peers[freePeerSlot].type = 0;
             bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, connectCallback, &peers[freePeerSlot], &peers[freePeerSlot].connectToken.CompletionToken.Event);
             EFI_STATUS status;
             if (status = peers[freePeerSlot].tcp4Protocol->Connect(peers[freePeerSlot].tcp4Protocol, &peers[freePeerSlot].connectToken))
@@ -5058,7 +5069,6 @@ static void acceptCallback(EFI_EVENT Event, void* Context)
             peer->id = ++latestPeerId;
             peer->receiveData.FragmentTable[0].FragmentBuffer = peer->receiveBuffer;
             peer->dataToTransmitSize = 0;
-            peer->type = 0;
             peer->exchangedPublicPeers = FALSE;
             peer->isTransmitting = FALSE;
             receive(peer);
@@ -5079,13 +5089,32 @@ static void connectCallback(EFI_EVENT Event, void* Context)
     Peer* peer = (Peer*)Context;
     if (peer->connectToken.CompletionToken.Status)
     {
+        if (!isWhitelisted(*((int*)peer->address)))
+        {
+            while (_InterlockedCompareExchange8(&publicPeersLock, 1, 0))
+            {
+            }
+            for (unsigned int j = 0; numberOfPublicPeers > MIN_NUMBER_OF_PEERS && j < numberOfPublicPeers; j++)
+            {
+                if (*((int*)publicPeers[j].address) == *((int*)peer->address))
+                {
+                    if (j != --numberOfPublicPeers)
+                    {
+                        bs->CopyMem(&publicPeers[j], &publicPeers[numberOfPublicPeers], sizeof(PublicPeer));
+                    }
+
+                    break;
+                }
+            }
+            publicPeersLock = 0;
+        }
+
         close(peer);
     }
     else
     {
         peer->id = ++latestPeerId;
         peer->dataToTransmitSize = 0;
-        peer->type = 0;
         peer->exchangedPublicPeers = TRUE;
 
         ExchangePublicPeers* request = (ExchangePublicPeers*)((char*)peer->transmitData.FragmentTable[0].FragmentBuffer + sizeof(RequestResponseHeader));
@@ -5504,8 +5533,6 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                         peer->receiveData.FragmentTable[0].FragmentBuffer = peer->receiveBuffer;
                         receive(peer);
 
-                        const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
-
                         peer->isTransmitting = TRUE;
                         bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, transmitCallback, peer, &peer->transmitToken.CompletionToken.Event);
                         peer->transmitData.DataLength = peer->transmitData.FragmentTable[0].FragmentLength = i;
@@ -5521,8 +5548,6 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
 
                             close(peer);
                         }
-
-                        bs->RestoreTPL(tpl);
                     }
                     else
                     {
@@ -5639,19 +5664,6 @@ static void transmitCallback(EFI_EVENT Event, void* Context)
     }
 
     bs->RestoreTPL(tpl);
-}
-
-static BOOLEAN isWhitelisted(int address)
-{
-    for (unsigned int i = 0; i < sizeof(whitelistedPeers) / sizeof(whitelistedPeers[0]); i++)
-    {
-        if (*((int*)whitelistedPeers[i]) == address)
-        {
-            return TRUE;
-        }
-    }
-
-    return FALSE;
 }
 
 static void processorInitializationProcessor(void* ProcedureArgument)
@@ -5836,8 +5848,6 @@ static BOOLEAN initialize()
     for (unsigned int peerIndex = 0; peerIndex < MAX_NUMBER_OF_PEERS; peerIndex++)
     {
         peers[peerIndex].receiveData.FragmentCount = 1;
-        peers[peerIndex].transmitData.Push = TRUE;
-        peers[peerIndex].transmitData.Urgent = TRUE;
         peers[peerIndex].transmitData.FragmentCount = 1;
         if ((status = bs->AllocatePool(EfiRuntimeServicesData, BUFFER_SIZE, &peers[peerIndex].receiveBuffer))
             || (status = bs->AllocatePool(EfiRuntimeServicesData, BUFFER_SIZE, &peers[peerIndex].transmitData.FragmentTable[0].FragmentBuffer))
@@ -6107,32 +6117,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             {
                                                 appendText(peersGraph, peers[i].type ? L"O" : L".");
                                             }
-
-                                            if ((!peers[i].numberOfReceivedBytes || !peers[i].numberOfTransmittedBytes)
-                                                && __rdtsc() - peers[i].connectionBeginningTick > MAX_CONNECTION_DELAY * frequency)
-                                            {
-                                                if (!isWhitelisted(*((int*)peers[i].address)))
-                                                {
-                                                    while (_InterlockedCompareExchange8(&publicPeersLock, 1, 0))
-                                                    {
-                                                    }
-                                                    for (unsigned int j = 0; numberOfPublicPeers > MIN_NUMBER_OF_PEERS && j < numberOfPublicPeers; j++)
-                                                    {
-                                                        if (*((int*)publicPeers[j].address) == *((int*)peers[i].address))
-                                                        {
-                                                            if (j != --numberOfPublicPeers)
-                                                            {
-                                                                bs->CopyMem(&publicPeers[j], &publicPeers[numberOfPublicPeers], sizeof(PublicPeer));
-                                                            }
-
-                                                            break;
-                                                        }
-                                                    }
-                                                    publicPeersLock = 0;
-                                                }
-
-                                                close(&peers[i]);
-                                            }
                                         }
                                     }
                                 }
@@ -6180,7 +6164,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                     for (unsigned int i = MAX_NUMBER_OF_PEERS; i-- > 0; )
                                     {
-                                        if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type > 0)
+                                        if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type >= 0)
                                         {
                                             unsigned long long delta = peers[i].numberOfReceivedBytes - peers[i].prevNumberOfReceivedBytes;
                                             peers[i].prevNumberOfReceivedBytes = peers[i].numberOfReceivedBytes;
