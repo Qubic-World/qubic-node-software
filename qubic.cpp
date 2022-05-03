@@ -26,6 +26,8 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 ////////// Public Settings \\\\\\\\\\
 
+//#define APPLY_COMMUNITY_FIX_FOR_AVX2
+
 #define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
 
 static const unsigned char knownPublicPeers[][4] = {
@@ -3492,7 +3494,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 60
 #define VERSION_A 1
 #define VERSION_B 2
-#define VERSION_C 2
+#define VERSION_C 4
 
 static __m256i ZERO;
 
@@ -4008,8 +4010,18 @@ static void addPublicPeer(unsigned char address[4])
     }
 }
 
+static void processorInitializationProcessor(void* ProcedureArgument)
+{
+    __writecr4(__readcr4() | 0x40600);
+    _xsetbv(_XCR_XFEATURE_ENABLED_MASK, (_xgetbv(_XCR_XFEATURE_ENABLED_MASK) & 0xFFFB) | 7); // Enable AVX2
+}
+
 static void requestProcessor(void* ProcedureArgument)
 {
+#ifdef APPLY_COMMUNITY_FIX_FOR_AVX2
+    processorInitializationProcessor(NULL);
+#endif
+
     unsigned long long busynessBeginningTick = __rdtsc();
     _InterlockedIncrement64(&numberOfBusyProcessors);
 
@@ -4574,6 +4586,10 @@ static void responseCallback(EFI_EVENT Event, void* Context)
 #if NUMBER_OF_MINING_PROCESSORS
 static void minerProcessor(void* ProcedureArgument)
 {
+#ifdef APPLY_COMMUNITY_FIX_FOR_AVX2
+    processorInitializationProcessor(NULL);
+#endif
+
     _InterlockedIncrement64(&numberOfBusyProcessors);
 
     while (_InterlockedCompareExchange8(&neuronNetworkLock, 1, 0))
@@ -4839,7 +4855,6 @@ static BOOLEAN accept()
         peers[i].acceptToken.NewChildHandle = NULL;
         peers[i].prevNumberOfReceivedBytes = peers[i].numberOfReceivedBytes = 0;
         peers[i].prevNumberOfTransmittedBytes = peers[i].numberOfTransmittedBytes = 0;
-        peers[i].type = 0;
         bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, acceptCallback, &peers[i], &peers[i].acceptToken.CompletionToken.Event);
         EFI_STATUS status;
         if (status = tcp4Protocol->Accept(tcp4Protocol, &peers[i].acceptToken))
@@ -4895,7 +4910,6 @@ static void connect(unsigned char* address)
             peers[freePeerSlot].connectChildHandle = childHandle;
             peers[freePeerSlot].prevNumberOfReceivedBytes = peers[freePeerSlot].numberOfReceivedBytes = 0;
             peers[freePeerSlot].prevNumberOfTransmittedBytes = peers[freePeerSlot].numberOfTransmittedBytes = 0;
-            peers[freePeerSlot].type = 0;
             bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, connectCallback, &peers[freePeerSlot], &peers[freePeerSlot].connectToken.CompletionToken.Event);
             EFI_STATUS status;
             if (status = peers[freePeerSlot].tcp4Protocol->Connect(peers[freePeerSlot].tcp4Protocol, &peers[freePeerSlot].connectToken))
@@ -4935,6 +4949,7 @@ static void close(Peer* peer)
                 bs->CloseProtocol(peer->connectChildHandle, &tcp4ProtocolGuid, ih, NULL);
                 tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peer->connectChildHandle);
             }
+            peer->type = 0;
             peer->tcp4Protocol = NULL;
         }
     }
@@ -5195,6 +5210,7 @@ static void closeCallback(EFI_EVENT Event, void* Context)
         bs->CloseProtocol(peer->connectChildHandle, &tcp4ProtocolGuid, ih, NULL);
         tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peer->connectChildHandle);
     }
+    peer->type = 0;
     peer->tcp4Protocol = NULL;
 
     bs->RestoreTPL(tpl);
@@ -5666,12 +5682,6 @@ static void transmitCallback(EFI_EVENT Event, void* Context)
     bs->RestoreTPL(tpl);
 }
 
-static void processorInitializationProcessor(void* ProcedureArgument)
-{
-    __writecr4(__readcr4() | 0x40600);
-    _xsetbv(_XCR_XFEATURE_ENABLED_MASK, (_xgetbv(_XCR_XFEATURE_ENABLED_MASK) & 0xFFFB) | 7); // Enable AVX2
-}
-
 static BOOLEAN initialize()
 {
     processorInitializationProcessor(NULL);
@@ -6067,6 +6077,14 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             unsigned long long prevResourceTestingSolutionPublicationTick = 0;
                             while (!state)
                             {
+                                for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
+                                {
+                                    if (((unsigned long long)peers[i].tcp4Protocol) > 1)
+                                    {
+                                        peers[i].tcp4Protocol->Poll(peers[i].tcp4Protocol);
+                                    }
+                                }
+
                                 if (__rdtsc() - prevDejavuSwapTick >= DEJAVU_SWAP_PERIOD * frequency)
                                 {
                                     volatile unsigned long long* tmp = dejavu1;
@@ -6121,14 +6139,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     }
                                 }
                                 bs->RestoreTPL(tpl);
-
-                                for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
-                                {
-                                    if (((unsigned long long)peers[i].tcp4Protocol) > 1)
-                                    {
-                                        peers[i].tcp4Protocol->Poll(peers[i].tcp4Protocol);
-                                    }
-                                }
 
                                 if (MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots - numberOfWebSocketClients < MIN_NUMBER_OF_PEERS)
                                 {
