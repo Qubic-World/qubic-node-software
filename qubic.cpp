@@ -3493,8 +3493,8 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define PROTOCOL 256
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 60
 #define VERSION_A 1
-#define VERSION_B 2
-#define VERSION_C 4
+#define VERSION_B 3
+#define VERSION_C 0
 
 static __m256i ZERO;
 
@@ -4966,7 +4966,7 @@ static void receive(Peer* peer)
         if (((unsigned long long)peer->receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peer->receiveBuffer) >= BUFFER_SIZE)
         {
             close(peer);
-            log(L"A peer sending too many requests is disconnected.");
+            log(L"A peer sending too much data is disconnected.");
         }
         else
         {
@@ -5769,7 +5769,7 @@ static BOOLEAN initialize()
                     return FALSE;
                 }
 
-                miningData[0] ^= 42;
+                miningData[0] ^= 24;
 
                 unsigned char* miningDataBytes = (unsigned char*)miningData;
                 for (unsigned int i = 0; i < sizeof(computorPublicKey); i++)
@@ -6197,7 +6197,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             numberOfDeltas++;
                                         }
                                     }
-                                    if (worstNumberOfReceivedBytesPeerIndex >= 0 && (!worstNumberOfReceivedBytesDelta || worstNumberOfReceivedBytesDelta < numberOfReceivedBytesSumOfDeltas / ((numberOfDeltas ? numberOfDeltas : 1) * 3)))
+                                    if (worstNumberOfReceivedBytesPeerIndex >= 0 && worstNumberOfReceivedBytesDelta <= numberOfReceivedBytesSumOfDeltas / ((numberOfDeltas ? numberOfDeltas : 1) * 3))
                                     {
                                         setText(message, L"A peer sending too few bytes (");
                                         appendNumber(message, worstNumberOfReceivedBytesDelta, TRUE);
@@ -6212,7 +6212,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     {
                                         worstNumberOfReceivedBytesPeerIndex = -1;
                                     }
-                                    if (worstNumberOfTransmittedBytesPeerIndex != worstNumberOfReceivedBytesPeerIndex && worstNumberOfTransmittedBytesPeerIndex >= 0 && (!worstNumberOfTransmittedBytesDelta || worstNumberOfTransmittedBytesDelta < numberOfTransmittedBytesSumOfDeltas / ((numberOfDeltas ? numberOfDeltas : 1) * 3)))
+                                    if (worstNumberOfTransmittedBytesPeerIndex != worstNumberOfReceivedBytesPeerIndex && worstNumberOfTransmittedBytesPeerIndex >= 0 && worstNumberOfTransmittedBytesDelta <= numberOfTransmittedBytesSumOfDeltas / ((numberOfDeltas ? numberOfDeltas : 1) * 3))
                                     {
                                         setText(message, L"A peer receiving too few bytes (");
                                         appendNumber(message, worstNumberOfTransmittedBytesDelta, TRUE);
