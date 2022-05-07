@@ -3475,7 +3475,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 
 ////////// Qubic \\\\\\\\\\
 
-#define BUFFER_SIZE 1048576
+#define BUFFER_SIZE 4194304
 #define DEJAVU_SWAP_PERIOD 60
 #define EPOCH_ISSUANCE_RATE 1000000000000
 #define MAX_ENERGY_AMOUNT 9223372036854775807
@@ -3494,7 +3494,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 60
 #define VERSION_A 1
 #define VERSION_B 3
-#define VERSION_C 0
+#define VERSION_C 1
 
 static __m256i ZERO;
 
@@ -3581,6 +3581,21 @@ typedef struct
     unsigned int score;
     unsigned int neuronLinks[NUMBER_OF_NEURONS][2];
 } ResourceTestingSolution;
+
+typedef struct
+{
+    unsigned short computorIndex;
+    unsigned short epoch;
+    unsigned int tick;
+    unsigned short year;
+    unsigned char month;
+    unsigned char day;
+    unsigned char dayOfWeek;
+    unsigned char hour;
+    unsigned char minute;
+    unsigned char second;
+    unsigned char signature[64];
+} ComputorTimestamp;
 
 typedef struct
 {
@@ -3727,6 +3742,12 @@ typedef struct
     ResourceTestingSolution resourceTestingSolution;
 } BroadcastResourceTestingSolution;
 
+#define BROADCAST_COMPUTOR_TIMESTAMP 8
+typedef struct
+{
+    ComputorTimestamp computorTimestamp;
+} BroadcastComputorTimestamp;
+
 const unsigned short requestResponseMinSizes[] = {
     sizeof(RequestResponseHeader) + sizeof(ProcessWebSocketClientRequest),
     sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers),
@@ -3735,7 +3756,8 @@ const unsigned short requestResponseMinSizes[] = {
     sizeof(RequestResponseHeader) + sizeof(BroadcastEffect) + 64,
     sizeof(RequestResponseHeader) + sizeof(BroadcastComputorState),
     sizeof(RequestResponseHeader) + sizeof(BroadcastTransferStatus),
-    sizeof(RequestResponseHeader) + sizeof(BroadcastResourceTestingSolution)
+    sizeof(RequestResponseHeader) + sizeof(BroadcastResourceTestingSolution),
+    sizeof(RequestResponseHeader) + sizeof(BroadcastComputorTimestamp)
 };
 
 static volatile int state = 0;
@@ -3751,6 +3773,9 @@ static TransferSuperstatus* transferSuperstatuses = NULL;
 
 static volatile char latestComputorStatesLock = 0;
 static ComputorState latestComputorStates[NUMBER_OF_COMPUTORS + 1];
+
+static volatile char latestComputorTimestampsLock = 0;
+static ComputorTimestamp latestComputorTimestamps[NUMBER_OF_COMPUTORS];
 
 static volatile unsigned long long* dejavu0 = NULL;
 static volatile unsigned long long* dejavu1 = NULL;
@@ -4314,7 +4339,7 @@ static void requestProcessor(void* ProcedureArgument)
                     KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
                     if (verify(latestComputorStates[NUMBER_OF_COMPUTORS].computorPublicKeys[request->computorState.computorIndex], digest, request->computorState.signature))
                     {
-                        bs->CopyMem(&latestComputorStates[request->computorState.computorIndex], request, sizeof(BroadcastComputorState));
+                        bs->CopyMem(&latestComputorStates[request->computorState.computorIndex], &request->computorState, sizeof(ComputorState));
 
                         bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
                         processor->responseTransmittingType = -1;
@@ -4336,9 +4361,9 @@ static void requestProcessor(void* ProcedureArgument)
                     }
                 }
             }
-        }
 
-        latestComputorStatesLock = 0;
+            latestComputorStatesLock = 0;
+        }
     }
     break;
 
@@ -4413,6 +4438,54 @@ static void requestProcessor(void* ProcedureArgument)
 
             bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
             processor->responseTransmittingType = -1;
+        }
+    }
+    break;
+
+    case BROADCAST_COMPUTOR_TIMESTAMP:
+    {
+        BroadcastComputorTimestamp* request = (BroadcastComputorTimestamp*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
+        if (request->computorTimestamp.computorIndex < NUMBER_OF_COMPUTORS
+            && request->computorTimestamp.year >= 2001 && request->computorTimestamp.year <= 2100
+            && request->computorTimestamp.month >= 1 && request->computorTimestamp.month <= 12
+            && request->computorTimestamp.day >= 1 && request->computorTimestamp.day <= 31
+            && request->computorTimestamp.dayOfWeek <= 6
+            && request->computorTimestamp.hour <= 23
+            && request->computorTimestamp.minute <= 59
+            && request->computorTimestamp.second <= 60) // "60" is not a typo, see https://en.wikipedia.org/wiki/Leap_second
+        {
+            while (_InterlockedCompareExchange8(&latestComputorTimestampsLock, 1, 0))
+            {
+            }
+
+            if (request->computorTimestamp.year > latestComputorTimestamps[request->computorTimestamp.computorIndex].year
+                || (request->computorTimestamp.year == latestComputorTimestamps[request->computorTimestamp.computorIndex].year && (request->computorTimestamp.month > latestComputorTimestamps[request->computorTimestamp.computorIndex].month
+                    || (request->computorTimestamp.month == latestComputorTimestamps[request->computorTimestamp.computorIndex].month && (request->computorTimestamp.day > latestComputorTimestamps[request->computorTimestamp.computorIndex].day
+                        || (request->computorTimestamp.day == latestComputorTimestamps[request->computorTimestamp.computorIndex].day && (request->computorTimestamp.dayOfWeek > latestComputorTimestamps[request->computorTimestamp.computorIndex].dayOfWeek
+                            || (request->computorTimestamp.dayOfWeek == latestComputorTimestamps[request->computorTimestamp.computorIndex].dayOfWeek && (request->computorTimestamp.hour > latestComputorTimestamps[request->computorTimestamp.computorIndex].hour
+                                || (request->computorTimestamp.hour == latestComputorTimestamps[request->computorTimestamp.computorIndex].hour && (request->computorTimestamp.minute > latestComputorTimestamps[request->computorTimestamp.computorIndex].minute
+                                    || (request->computorTimestamp.minute == latestComputorTimestamps[request->computorTimestamp.computorIndex].minute && (request->computorTimestamp.second > latestComputorTimestamps[request->computorTimestamp.computorIndex].second)))))))))))))
+            {
+                if (latestComputorStates[NUMBER_OF_COMPUTORS].timestamp)
+                {
+                    unsigned char digest[32];
+                    KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
+                    if (verify(latestComputorStates[NUMBER_OF_COMPUTORS].computorPublicKeys[request->computorTimestamp.computorIndex], digest, request->computorTimestamp.signature))
+                    {
+                        bs->CopyMem(&latestComputorTimestamps[request->computorTimestamp.computorIndex], &request->computorTimestamp, sizeof(ComputorTimestamp));
+
+                        bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
+                        processor->responseTransmittingType = -1;
+                    }
+                }
+                else
+                {
+                    bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
+                    processor->responseTransmittingType = -1;
+                }
+            }
+
+            latestComputorTimestampsLock = 0;
         }
     }
     break;
@@ -5712,9 +5785,15 @@ static BOOLEAN initialize()
     log(message);
 
     bs->SetMem(&latestComputorStates, sizeof(latestComputorStates), 0);
-    for (unsigned int i = 0; i < sizeof(latestComputorStates) / sizeof(latestComputorStates[0]); i++)
+    for (unsigned int i = 1; i < sizeof(latestComputorStates) / sizeof(latestComputorStates[0]); i++)
     {
         latestComputorStates[i].computorIndex = i;
+    }
+
+    bs->SetMem(&latestComputorTimestamps, sizeof(latestComputorTimestamps), 0);
+    for (unsigned int i = 1; i < sizeof(latestComputorTimestamps) / sizeof(latestComputorTimestamps[0]); i++)
+    {
+        latestComputorTimestamps[i].computorIndex = i;
     }
 
     bs->SetMem(processors, sizeof(processors), 0);
