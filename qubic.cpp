@@ -3476,7 +3476,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 ////////// Qubic \\\\\\\\\\
 
 #define BUFFER_SIZE 4194304
-#define DEJAVU_SWAP_PERIOD 60
+#define DEJAVU_SWAP_PERIOD 30
 #define EPOCH_ISSUANCE_RATE 1000000000000
 #define MAX_ENERGY_AMOUNT 9223372036854775807
 #define MAX_NUMBER_OF_MINERS 10000
@@ -3488,13 +3488,13 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define MIN_NUMBER_OF_PEERS 4
 #define NUMBER_OF_COMPUTORS (26 * 26)
 #define NUMBER_OF_NEURONS 20000
-#define PEER_RATING_PERIOD 5
+#define PEER_RATING_PERIOD 15
 #define PORT 21841
 #define PROTOCOL 256
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 60
 #define VERSION_A 1
 #define VERSION_B 3
-#define VERSION_C 1
+#define VERSION_C 2
 
 static __m256i ZERO;
 
@@ -3520,6 +3520,7 @@ typedef struct
     EFI_TCP4_IO_TOKEN receiveToken;
     EFI_TCP4_TRANSMIT_DATA transmitData;
     EFI_TCP4_IO_TOKEN transmitToken;
+    unsigned long long transmissionBeginningTimestamp;
     char* dataToTransmit;
     unsigned int dataToTransmitSize;
     EFI_TCP4_CLOSE_TOKEN closeToken;
@@ -3799,7 +3800,6 @@ static Peer peers[MAX_NUMBER_OF_PEERS];
 static unsigned int latestPeerId; // Initial value doesn't matter
 static volatile long long numberOfReceivedBytes = 0, prevNumberOfReceivedBytes = 0;
 static volatile long long numberOfTransmittedBytes = 0, prevNumberOfTransmittedBytes = 0;
-static volatile long long numberOfDiscardedBytes = 0, prevNumberOfDiscardedBytes = 0;
 
 static volatile char publicPeersLock = 0;
 static unsigned int numberOfPublicPeers = 0;
@@ -4613,7 +4613,8 @@ static void responseCallback(EFI_EVENT Event, void* Context)
                         }
                         else
                         {
-                            numberOfDiscardedBytes += responseHeader->size;
+                            close(processor->peer);
+                            log(L"A peer not capable of receiving all the data is disconnected.");
                         }
                     }
                     else
@@ -4637,7 +4638,8 @@ static void responseCallback(EFI_EVENT Event, void* Context)
                     }
                     else
                     {
-                        numberOfDiscardedBytes += responseHeader->size;
+                        close(processor->peer);
+                        log(L"A peer not capable of receiving all the data is disconnected.");
                     }
                 }
                 else
@@ -4926,8 +4928,13 @@ static BOOLEAN accept()
         peers[i].tcp4Protocol = (EFI_TCP4_PROTOCOL*)1;
         *((int*)peers[i].address) = 0;
         peers[i].acceptToken.NewChildHandle = NULL;
+        peers[i].receiveData.FragmentTable[0].FragmentBuffer = peers[i].receiveBuffer;
+        peers[i].dataToTransmitSize = 0;
         peers[i].prevNumberOfReceivedBytes = peers[i].numberOfReceivedBytes = 0;
         peers[i].prevNumberOfTransmittedBytes = peers[i].numberOfTransmittedBytes = 0;
+        peers[i].id = ++latestPeerId;
+        peers[i].exchangedPublicPeers = FALSE;
+        peers[i].isTransmitting = FALSE;
         bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, acceptCallback, &peers[i], &peers[i].acceptToken.CompletionToken.Event);
         EFI_STATUS status;
         if (status = tcp4Protocol->Accept(tcp4Protocol, &peers[i].acceptToken))
@@ -4981,8 +4988,10 @@ static void connect(unsigned char* address)
             peers[freePeerSlot].acceptToken.NewChildHandle = NULL;
             *((int*)peers[freePeerSlot].address) = *((int*)address);
             peers[freePeerSlot].connectChildHandle = childHandle;
+            peers[freePeerSlot].dataToTransmitSize = 0;
             peers[freePeerSlot].prevNumberOfReceivedBytes = peers[freePeerSlot].numberOfReceivedBytes = 0;
             peers[freePeerSlot].prevNumberOfTransmittedBytes = peers[freePeerSlot].numberOfTransmittedBytes = 0;
+            peers[freePeerSlot].id = ++latestPeerId;
             bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, connectCallback, &peers[freePeerSlot], &peers[freePeerSlot].connectToken.CompletionToken.Event);
             EFI_STATUS status;
             if (status = peers[freePeerSlot].tcp4Protocol->Connect(peers[freePeerSlot].tcp4Protocol, &peers[freePeerSlot].connectToken))
@@ -5073,6 +5082,8 @@ static void transmit(Peer* peer, unsigned int size)
 
     peer->isTransmitting = TRUE;
 
+    peer->transmissionBeginningTimestamp = __rdtsc();
+
     if (((unsigned long long)peer->tcp4Protocol) > 1)
     {
         EFI_STATUS status;
@@ -5154,11 +5165,6 @@ static void acceptCallback(EFI_EVENT Event, void* Context)
         }
         else
         {
-            peer->id = ++latestPeerId;
-            peer->receiveData.FragmentTable[0].FragmentBuffer = peer->receiveBuffer;
-            peer->dataToTransmitSize = 0;
-            peer->exchangedPublicPeers = FALSE;
-            peer->isTransmitting = FALSE;
             receive(peer);
         }
     }
@@ -5201,8 +5207,6 @@ static void connectCallback(EFI_EVENT Event, void* Context)
     }
     else
     {
-        peer->id = ++latestPeerId;
-        peer->dataToTransmitSize = 0;
         peer->exchangedPublicPeers = TRUE;
 
         ExchangePublicPeers* request = (ExchangePublicPeers*)((char*)peer->transmitData.FragmentTable[0].FragmentBuffer + sizeof(RequestResponseHeader));
@@ -5736,6 +5740,24 @@ static void transmitCallback(EFI_EVENT Event, void* Context)
     {
         numberOfTransmittedBytes += peer->transmitData.DataLength;
         peer->numberOfTransmittedBytes += peer->transmitData.DataLength;
+
+        CHAR16 message[256];
+        setText(message, L"Transmission of ");
+        appendNumber(message, peer->transmitData.DataLength, TRUE);
+        appendText(message, L" bytes took ");
+        appendNumber(message, (__rdtsc() - peer->transmissionBeginningTimestamp) * 1000000 / frequency, TRUE);
+        appendText(message, L" microseconds for peer #");
+        appendNumber(message, peer->id, TRUE);
+        appendText(message, L" (");
+        appendNumber(message, peer->address[0], FALSE);
+        appendText(message, L".");
+        appendNumber(message, peer->address[1], FALSE);
+        appendText(message, L".");
+        appendNumber(message, peer->address[2], FALSE);
+        appendText(message, L".");
+        appendNumber(message, peer->address[3], FALSE);
+        appendText(message, L").");
+        log(message);
 
         if (peer->dataToTransmitSize)
         {
@@ -6310,13 +6332,22 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                 if (__rdtsc() - prevLogTick >= frequency)
                                 {
-                                    CHAR16 message[256]; setText(message, L"["); appendNumber(message, !numberOfBusyProcessorsNumberOfValues ? (numberOfBusyProcessors * 100 / numberOfProcessors) : ((numberOfBusyProcessorsSumOfValues * 100) / (numberOfBusyProcessorsNumberOfValues * numberOfProcessors)), FALSE); appendText(message, L"% CPU / "); appendNumber(message, numberOfProcessedRequests - prevNumberOfProcessedRequests, TRUE); appendText(message, L"] "); appendNumber(message, MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots - numberOfWebSocketClients, TRUE); appendText(message, L"/"); appendNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" peers ("); appendNumber(message, numberOfReceivedBytes - prevNumberOfReceivedBytes, TRUE); appendText(message, L" rx / "); appendNumber(message, numberOfTransmittedBytes - prevNumberOfTransmittedBytes, TRUE); appendText(message, L" tx / "); appendNumber(message, numberOfDiscardedBytes - prevNumberOfDiscardedBytes, TRUE); appendText(message, L" dx)."); log(message);
+                                    unsigned long long numberOfWaitingBytes = 0;
+
+                                    for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
+                                    {
+                                        if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type > 0)
+                                        {
+                                            numberOfWaitingBytes += peers[i].dataToTransmitSize;
+                                        }
+                                    }
+
+                                    CHAR16 message[256]; setText(message, L"["); appendNumber(message, !numberOfBusyProcessorsNumberOfValues ? (numberOfBusyProcessors * 100 / numberOfProcessors) : ((numberOfBusyProcessorsSumOfValues * 100) / (numberOfBusyProcessorsNumberOfValues * numberOfProcessors)), FALSE); appendText(message, L"% CPU / "); appendNumber(message, numberOfProcessedRequests - prevNumberOfProcessedRequests, TRUE); appendText(message, L"] "); appendNumber(message, MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots - numberOfWebSocketClients, TRUE); appendText(message, L"/"); appendNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" peers ("); appendNumber(message, numberOfReceivedBytes - prevNumberOfReceivedBytes, TRUE); appendText(message, L" rx / "); appendNumber(message, numberOfTransmittedBytes - prevNumberOfTransmittedBytes, TRUE); appendText(message, L" tx / "); appendNumber(message, numberOfWaitingBytes, TRUE); appendText(message, L" wx)."); log(message);
                                     numberOfBusyProcessorsSumOfValues = 0;
                                     numberOfBusyProcessorsNumberOfValues = 0;
                                     prevNumberOfProcessedRequests = numberOfProcessedRequests;
                                     prevNumberOfReceivedBytes = numberOfReceivedBytes;
                                     prevNumberOfTransmittedBytes = numberOfTransmittedBytes;
-                                    prevNumberOfDiscardedBytes = numberOfDiscardedBytes;
 
                                     log(peersGraph);
 
@@ -6380,7 +6411,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                         }
                                                         else
                                                         {
-                                                            numberOfDiscardedBytes += solution.header.size;
+                                                            close(&peers[i]);
+                                                            log(L"A peer not capable of receiving all the data is disconnected.");
                                                         }
                                                     }
                                                     else
