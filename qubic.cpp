@@ -19,6 +19,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define OPERATOR "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 #define COMPUTOR "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+#define SYSTEM_DATA_FILE_NAME L"system.data"
 #define MINING_DATA_FILE_NAME L"mining.data"
 #define SOLUTION_DATA_FILE_NAME L"solution.data"
 
@@ -35,6 +36,9 @@ static const unsigned char knownPublicPeers[][4] = {
 
 static const unsigned char whitelistedPeers[][4] = {
 };
+
+static unsigned int numberOfBlacklistedPeers = 0;
+static unsigned int blacklistedPeers[1000000];
 
 
 
@@ -3484,7 +3488,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define MAX_NUMBER_OF_PROCESSORS 1024
 #define MAX_NUMBER_OF_PUBLIC_PEERS 64
 #define MAX_TIMESTAMP_VALUE 9223372036854775807
-#define MAX_TRANSMISSION_DURATION 100000
+#define MAX_TRANSMISSION_DURATION 200000
 #define MIN_ENERGY_AMOUNT 1000000
 #define MIN_NUMBER_OF_PEERS 4
 #define NUMBER_OF_COMPUTORS (26 * 26)
@@ -3495,7 +3499,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 60
 #define VERSION_A 1
 #define VERSION_B 3
-#define VERSION_C 3
+#define VERSION_C 4
 
 static __m256i ZERO;
 
@@ -3770,6 +3774,14 @@ static unsigned char ownSubseed[32], ownPrivateKey[32], ownPublicKey[32], operat
 static unsigned long long latestOperatorTimestamp;
 static unsigned long long salt;
 
+static volatile char systemLock = 0;
+static struct System
+{
+    short ownComputorIndex;
+    unsigned short epoch;
+    unsigned int tick;
+} system, systemToSave;
+
 static Entity* entities = NULL;
 static TransferSuperstatus* transferSuperstatuses = NULL;
 
@@ -3798,7 +3810,7 @@ static EFI_SERVICE_BINDING_PROTOCOL* tcp4ServiceBindingProtocol;
 static EFI_GUID tcp4ProtocolGuid = EFI_TCP4_PROTOCOL_GUID;
 static EFI_TCP4_PROTOCOL* tcp4Protocol;
 static Peer peers[MAX_NUMBER_OF_PEERS];
-static unsigned int latestPeerId; // Initial value doesn't matter
+static unsigned int latestPeerId = 0;
 static volatile long long numberOfReceivedBytes = 0, prevNumberOfReceivedBytes = 0;
 static volatile long long numberOfTransmittedBytes = 0, prevNumberOfTransmittedBytes = 0;
 
@@ -4015,9 +4027,66 @@ static void updateTransferStatus(TransferStatus* status)
     transferSuperstatuses[index].lock = 0;
 }
 
+static BOOLEAN isWhitelisted(int address)
+{
+    for (unsigned int i = 0; i < sizeof(whitelistedPeers) / sizeof(whitelistedPeers[0]); i++)
+    {
+        if (*((int*)whitelistedPeers[i]) == address)
+        {
+            return TRUE;
+        }
+    }
+
+    return FALSE;
+}
+
+static void blacklist(int address)
+{
+    if (numberOfBlacklistedPeers < sizeof(blacklistedPeers) / sizeof(blacklistedPeers[0]) && !isWhitelisted(address))
+    {
+        blacklistedPeers[numberOfBlacklistedPeers++] = address;
+    }
+}
+
+static BOOLEAN isBlacklisted(int address)
+{
+    for (unsigned int i = 0; i < sizeof(blacklistedPeers) / sizeof(blacklistedPeers[0]); i++)
+    {
+        if (blacklistedPeers[i] == address)
+        {
+            return TRUE;
+        }
+    }
+
+    return FALSE;
+}
+
+static void forget(int address)
+{
+    if (!isWhitelisted(address))
+    {
+        while (_InterlockedCompareExchange8(&publicPeersLock, 1, 0))
+        {
+        }
+        for (unsigned int j = 0; numberOfPublicPeers > MIN_NUMBER_OF_PEERS && j < numberOfPublicPeers; j++)
+        {
+            if (*((int*)publicPeers[j].address) == address)
+            {
+                if (j != --numberOfPublicPeers)
+                {
+                    bs->CopyMem(&publicPeers[j], &publicPeers[numberOfPublicPeers], sizeof(PublicPeer));
+                }
+
+                break;
+            }
+        }
+        publicPeersLock = 0;
+    }
+}
+
 static void addPublicPeer(unsigned char address[4])
 {
-    if ((*((int*)address)) && *((int*)address) != *((int*)ownPublicAddress))
+    if ((*((int*)address)) && *((int*)address) != *((int*)ownPublicAddress) && !isBlacklisted(*((int*)address)))
     {
         unsigned int i;
         for (i = 0; i < numberOfPublicPeers; i++)
@@ -4357,6 +4426,16 @@ static void requestProcessor(void* ProcedureArgument)
                     {
                         bs->CopyMem(&latestComputorStates[NUMBER_OF_COMPUTORS], &request->computorState, sizeof(ComputorState));
 
+                        unsigned int i;
+                        for (i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                        {
+                            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->computorState.computorPublicKeys[i]), *((__m256i*)ownPublicKey))) == 0xFFFFFFFF)
+                            {
+                                break;
+                            }
+                        }
+                        system.ownComputorIndex = (i < NUMBER_OF_COMPUTORS ? i : -1);
+
                         bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
                         processor->responseTransmittingType = -1;
                     }
@@ -4614,8 +4693,9 @@ static void responseCallback(EFI_EVENT Event, void* Context)
                         }
                         else
                         {
+                            forget(*((int*)processor->peer->address));
                             close(processor->peer);
-                            log(L"A peer not capable of receiving all the data is disconnected.");
+                            log(L"A peer incapable of receiving all the data is disconnected.");
                         }
                     }
                     else
@@ -4639,8 +4719,9 @@ static void responseCallback(EFI_EVENT Event, void* Context)
                     }
                     else
                     {
+                        forget(*((int*)processor->peer->address));
                         close(processor->peer);
-                        log(L"A peer not capable of receiving all the data is disconnected.");
+                        log(L"A peer incapable of receiving all the data is disconnected.");
                     }
                 }
                 else
@@ -4761,19 +4842,6 @@ static void minerShutdownCallback(EFI_EVENT Event, void* Context)
     bs->CloseEvent(Event);
 }
 #endif
-
-static BOOLEAN isWhitelisted(int address)
-{
-    for (unsigned int i = 0; i < sizeof(whitelistedPeers) / sizeof(whitelistedPeers[0]); i++)
-    {
-        if (*((int*)whitelistedPeers[i]) == address)
-        {
-            return TRUE;
-        }
-    }
-
-    return FALSE;
-}
 
 static EFI_HANDLE getTcp4Protocol(const unsigned char* remoteAddress, EFI_TCP4_PROTOCOL** tcp4Protocol)
 {
@@ -5048,6 +5116,7 @@ static void receive(Peer* peer)
     {
         if (((unsigned long long)peer->receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peer->receiveBuffer) >= BUFFER_SIZE)
         {
+            forget(*((int*)peer->address));
             close(peer);
             log(L"A peer sending too much data is disconnected.");
         }
@@ -5184,25 +5253,7 @@ static void connectCallback(EFI_EVENT Event, void* Context)
     Peer* peer = (Peer*)Context;
     if (peer->connectToken.CompletionToken.Status)
     {
-        if (!isWhitelisted(*((int*)peer->address)))
-        {
-            while (_InterlockedCompareExchange8(&publicPeersLock, 1, 0))
-            {
-            }
-            for (unsigned int j = 0; numberOfPublicPeers > MIN_NUMBER_OF_PEERS && j < numberOfPublicPeers; j++)
-            {
-                if (*((int*)publicPeers[j].address) == *((int*)peer->address))
-                {
-                    if (j != --numberOfPublicPeers)
-                    {
-                        bs->CopyMem(&publicPeers[j], &publicPeers[numberOfPublicPeers], sizeof(PublicPeer));
-                    }
-
-                    break;
-                }
-            }
-            publicPeersLock = 0;
-        }
+        forget(*((int*)peer->address));
 
         close(peer);
     }
@@ -5762,6 +5813,8 @@ static void transmitCallback(EFI_EVENT Event, void* Context)
             appendText(message, L" bytes is disconnected.");
             log(message);
 
+            forget(*((int*)peer->address));
+            blacklist(*((int*)peer->address));
             close(peer);
         }
         else
@@ -5845,6 +5898,49 @@ static BOOLEAN initialize()
     else
     {
         EFI_FILE_PROTOCOL* dataFile;
+
+        if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SYSTEM_DATA_FILE_NAME, EFI_FILE_MODE_READ, 0))
+        {
+            logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status);
+
+            root->Close(root);
+
+            return FALSE;
+        }
+        else
+        {
+            bs->SetMem(&system, sizeof(system), 0);
+
+            unsigned long long size = sizeof(system);
+            status = dataFile->Read(dataFile, &size, &system);
+            dataFile->Close(dataFile);
+            if (status)
+            {
+                logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status);
+
+                root->Close(root);
+
+                return FALSE;
+            }
+            else
+            {
+                if (size < sizeof(system))
+                {
+                    if (size)
+                    {
+                        log(L"System data file is too small!");
+
+                        root->Close(root);
+
+                        return FALSE;
+                    }
+                }
+                else
+                {
+                    system.ownComputorIndex = -1;
+                }
+            }
+        }
 
         if (status = root->Open(root, (void**)&dataFile, (CHAR16*)MINING_DATA_FILE_NAME, EFI_FILE_MODE_READ, 0))
         {
@@ -6047,6 +6143,42 @@ static void deinitialize()
         }
     }
 }
+
+#if NUMBER_OF_COMPUTING_PROCESSORS
+static void saveSystem()
+{
+    EFI_STATUS status;
+    EFI_FILE_PROTOCOL* root;
+    if (status = simpleFileSystemProtocol->OpenVolume(simpleFileSystemProtocol, (void**)&root))
+    {
+        logStatus(L"EFI_SIMPLE_FILE_SYSTEM_PROTOCOL.OpenVolume() fails", status);
+    }
+    else
+    {
+        EFI_FILE_PROTOCOL* dataFile;
+        if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SYSTEM_DATA_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0))
+        {
+            logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status);
+        }
+        else
+        {
+            while (_InterlockedCompareExchange8(&systemLock, 1, 0))
+            {
+            }
+            bs->CopyMem(&systemToSave, &system, sizeof(systemToSave));
+            systemLock = 0;
+            unsigned long long size = sizeof(systemToSave);
+            status = dataFile->Write(dataFile, &size, &systemToSave);
+            dataFile->Close(dataFile);
+            if (status)
+            {
+                logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status);
+            }
+        }
+        root->Close(root);
+    }
+}
+#endif
 
 #if NUMBER_OF_MINING_PROCESSORS
 static void saveSolution()
@@ -6315,6 +6447,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         appendText(message, L") is disconnected.");
                                         log(message);
 
+                                        forget(*((int*)peers[worstNumberOfReceivedBytesPeerIndex].address));
                                         close(&peers[worstNumberOfReceivedBytesPeerIndex]);
                                     }
                                     else
@@ -6330,6 +6463,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         appendText(message, L") is disconnected.");
                                         log(message);
 
+                                        forget(*((int*)peers[worstNumberOfTransmittedBytesPeerIndex].address));
                                         close(&peers[worstNumberOfTransmittedBytesPeerIndex]);
                                     }
 
@@ -6350,7 +6484,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         }
                                     }
 
-                                    CHAR16 message[256]; setText(message, L"["); appendNumber(message, !numberOfBusyProcessorsNumberOfValues ? (numberOfBusyProcessors * 100 / numberOfProcessors) : ((numberOfBusyProcessorsSumOfValues * 100) / (numberOfBusyProcessorsNumberOfValues * numberOfProcessors)), FALSE); appendText(message, L"% CPU / "); appendNumber(message, numberOfProcessedRequests - prevNumberOfProcessedRequests, TRUE); appendText(message, L"] "); appendNumber(message, MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots - numberOfWebSocketClients, TRUE); appendText(message, L"/"); appendNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" peers ("); appendNumber(message, numberOfReceivedBytes - prevNumberOfReceivedBytes, TRUE); appendText(message, L" rx / "); appendNumber(message, numberOfTransmittedBytes - prevNumberOfTransmittedBytes, TRUE); appendText(message, L" tx / "); appendNumber(message, numberOfWaitingBytes, TRUE); appendText(message, L" wx)."); log(message);
+                                    CHAR16 message[256]; setText(message, L"["); appendNumber(message, !numberOfBusyProcessorsNumberOfValues ? (numberOfBusyProcessors * 100 / numberOfProcessors) : ((numberOfBusyProcessorsSumOfValues * 100) / (numberOfBusyProcessorsNumberOfValues * numberOfProcessors)), FALSE); appendText(message, L"% CPU / "); appendNumber(message, numberOfProcessedRequests - prevNumberOfProcessedRequests, TRUE); appendText(message, L"] "); appendNumber(message, MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots - numberOfWebSocketClients, TRUE); appendText(message, L"/"); appendNumber(message, numberOfPublicPeers, TRUE); appendText(message, L"/"); appendNumber(message, numberOfBlacklistedPeers, TRUE); appendText(message, L" peers ("); appendNumber(message, numberOfReceivedBytes - prevNumberOfReceivedBytes, TRUE); appendText(message, L" rx / "); appendNumber(message, numberOfTransmittedBytes - prevNumberOfTransmittedBytes, TRUE); appendText(message, L" tx / "); appendNumber(message, numberOfWaitingBytes, TRUE); appendText(message, L" wx)."); log(message);
                                     numberOfBusyProcessorsSumOfValues = 0;
                                     numberOfBusyProcessorsNumberOfValues = 0;
                                     prevNumberOfProcessedRequests = numberOfProcessedRequests;
@@ -6383,7 +6517,16 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         appendNumber(message, numberOfBetterScores, TRUE);
                                         appendText(message, L" of ");
                                         appendNumber(message, numberOfMiners, TRUE);
-                                        appendText(message, L".");
+                                        appendText(message, L"; own computor index = ");
+                                        if (system.ownComputorIndex < 0)
+                                        {
+                                            appendText(message, L"n/a.");
+                                        }
+                                        else
+                                        {
+                                            appendNumber(message, system.ownComputorIndex, FALSE);
+                                            appendText(message, L".");
+                                        }
                                         log(message);
 
                                         if (bestMiningScore > knownMiningScore || __rdtsc() - prevResourceTestingSolutionPublicationTick >= RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD * frequency)
@@ -6419,6 +6562,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                         }
                                                         else
                                                         {
+                                                            forget(*((int*)peers[i].address));
                                                             close(&peers[i]);
                                                             log(L"A peer incapable of receiving all the data is disconnected.");
                                                         }
@@ -6436,7 +6580,18 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                     prevLogTick = __rdtsc();
                                 }
+
+                                if (bs->CheckEvent(st->ConIn->WaitForKey) == EFI_SUCCESS)
+                                {
+                                    state = 1;
+                                }
                             }
+
+#if NUMBER_OF_COMPUTING_PROCESSORS
+                            saveSystem();
+#endif
+
+                            log(L"The node can now be shut down.");
                         }
                     }
                 }
