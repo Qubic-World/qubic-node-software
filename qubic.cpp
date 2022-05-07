@@ -3484,6 +3484,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define MAX_NUMBER_OF_PROCESSORS 1024
 #define MAX_NUMBER_OF_PUBLIC_PEERS 64
 #define MAX_TIMESTAMP_VALUE 9223372036854775807
+#define MAX_TRANSMISSION_DURATION 100000
 #define MIN_ENERGY_AMOUNT 1000000
 #define MIN_NUMBER_OF_PEERS 4
 #define NUMBER_OF_COMPUTORS (26 * 26)
@@ -3494,7 +3495,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 60
 #define VERSION_A 1
 #define VERSION_B 3
-#define VERSION_C 2
+#define VERSION_C 3
 
 static __m256i ZERO;
 
@@ -5741,36 +5742,43 @@ static void transmitCallback(EFI_EVENT Event, void* Context)
         numberOfTransmittedBytes += peer->transmitData.DataLength;
         peer->numberOfTransmittedBytes += peer->transmitData.DataLength;
 
-        CHAR16 message[256];
-        setText(message, L"Transmission of ");
-        appendNumber(message, peer->transmitData.DataLength, TRUE);
-        appendText(message, L" bytes took ");
-        appendNumber(message, (__rdtsc() - peer->transmissionBeginningTimestamp) * 1000000 / frequency, TRUE);
-        appendText(message, L" microseconds for peer #");
-        appendNumber(message, peer->id, TRUE);
-        appendText(message, L" (");
-        appendNumber(message, peer->address[0], FALSE);
-        appendText(message, L".");
-        appendNumber(message, peer->address[1], FALSE);
-        appendText(message, L".");
-        appendNumber(message, peer->address[2], FALSE);
-        appendText(message, L".");
-        appendNumber(message, peer->address[3], FALSE);
-        appendText(message, L").");
-        log(message);
-
-        if (peer->dataToTransmitSize)
+        if (__rdtsc() - peer->transmissionBeginningTimestamp > frequency * MAX_TRANSMISSION_DURATION / 1000000)
         {
-            void* tmp = peer->dataToTransmit;
-            peer->dataToTransmit = (char*)peer->transmitData.FragmentTable[0].FragmentBuffer;
-            peer->transmitData.FragmentTable[0].FragmentBuffer = tmp;
-            const unsigned int size = peer->dataToTransmitSize;
-            peer->dataToTransmitSize = 0;
-            transmit(peer, size);
+            CHAR16 message[256];
+            setText(message, L"Peer #");
+            appendNumber(message, peer->id, FALSE);
+            appendText(message, L" (");
+            appendNumber(message, peer->address[0], FALSE);
+            appendText(message, L".");
+            appendNumber(message, peer->address[1], FALSE);
+            appendText(message, L".");
+            appendNumber(message, peer->address[2], FALSE);
+            appendText(message, L".");
+            appendNumber(message, peer->address[3], FALSE);
+            appendText(message, L") which required ");
+            appendNumber(message, (__rdtsc() - peer->transmissionBeginningTimestamp) * 1000000 / frequency, TRUE);
+            appendText(message, L" microseconds to receive ");
+            appendNumber(message, peer->transmitData.DataLength, TRUE);
+            appendText(message, L" bytes is disconnected.");
+            log(message);
+
+            close(peer);
         }
         else
         {
-            peer->isTransmitting = FALSE;
+            if (peer->dataToTransmitSize)
+            {
+                void* tmp = peer->dataToTransmit;
+                peer->dataToTransmit = (char*)peer->transmitData.FragmentTable[0].FragmentBuffer;
+                peer->transmitData.FragmentTable[0].FragmentBuffer = tmp;
+                const unsigned int size = peer->dataToTransmitSize;
+                peer->dataToTransmitSize = 0;
+                transmit(peer, size);
+            }
+            else
+            {
+                peer->isTransmitting = FALSE;
+            }
         }
     }
 
@@ -6412,7 +6420,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                         else
                                                         {
                                                             close(&peers[i]);
-                                                            log(L"A peer not capable of receiving all the data is disconnected.");
+                                                            log(L"A peer incapable of receiving all the data is disconnected.");
                                                         }
                                                     }
                                                     else
