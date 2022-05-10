@@ -3479,16 +3479,20 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 
 ////////// Qubic \\\\\\\\\\
 
-#define BUFFER_SIZE 4194304
+#define VERSION_A 1
+#define VERSION_B 3
+#define VERSION_C 5
+
+#define BUFFER_SIZE 1048576
 #define DEJAVU_SWAP_PERIOD 30
-#define EPOCH_ISSUANCE_RATE 1000000000000
+#define ISSUANCE_RATE 1000000000000
 #define MAX_ENERGY_AMOUNT 9223372036854775807
 #define MAX_NUMBER_OF_MINERS 10000
 #define MAX_NUMBER_OF_PEERS 16
 #define MAX_NUMBER_OF_PROCESSORS 1024
 #define MAX_NUMBER_OF_PUBLIC_PEERS 64
 #define MAX_TIMESTAMP_VALUE 9223372036854775807
-#define MAX_TRANSMISSION_DURATION 200000
+#define MAX_TRANSMISSION_DURATION 100000
 #define MIN_ENERGY_AMOUNT 1000000
 #define MIN_NUMBER_OF_PEERS 4
 #define NUMBER_OF_COMPUTORS (26 * 26)
@@ -3497,9 +3501,6 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define PORT 21841
 #define PROTOCOL 256
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 60
-#define VERSION_A 1
-#define VERSION_B 3
-#define VERSION_C 4
 
 static __m256i ZERO;
 
@@ -3525,7 +3526,6 @@ typedef struct
     EFI_TCP4_IO_TOKEN receiveToken;
     EFI_TCP4_TRANSMIT_DATA transmitData;
     EFI_TCP4_IO_TOKEN transmitToken;
-    unsigned long long transmissionBeginningTimestamp;
     char* dataToTransmit;
     unsigned int dataToTransmitSize;
     EFI_TCP4_CLOSE_TOKEN closeToken;
@@ -3591,17 +3591,20 @@ typedef struct
 typedef struct
 {
     unsigned short computorIndex;
+
     unsigned short epoch;
     unsigned int tick;
-    unsigned short year;
+
+    unsigned char year;
     unsigned char month;
     unsigned char day;
-    unsigned char dayOfWeek;
     unsigned char hour;
     unsigned char minute;
     unsigned char second;
+    unsigned short millisecond;
+
     unsigned char signature[64];
-} ComputorTimestamp;
+} TickEnding;
 
 typedef struct
 {
@@ -3748,11 +3751,11 @@ typedef struct
     ResourceTestingSolution resourceTestingSolution;
 } BroadcastResourceTestingSolution;
 
-#define BROADCAST_COMPUTOR_TIMESTAMP 8
+#define BROADCAST_TICK_ENDING 8
 typedef struct
 {
-    ComputorTimestamp computorTimestamp;
-} BroadcastComputorTimestamp;
+    TickEnding tickEnding;
+} BroadcastTickEnding;
 
 const unsigned short requestResponseMinSizes[] = {
     sizeof(RequestResponseHeader) + sizeof(ProcessWebSocketClientRequest),
@@ -3763,7 +3766,7 @@ const unsigned short requestResponseMinSizes[] = {
     sizeof(RequestResponseHeader) + sizeof(BroadcastComputorState),
     sizeof(RequestResponseHeader) + sizeof(BroadcastTransferStatus),
     sizeof(RequestResponseHeader) + sizeof(BroadcastResourceTestingSolution),
-    sizeof(RequestResponseHeader) + sizeof(BroadcastComputorTimestamp)
+    sizeof(RequestResponseHeader) + sizeof(BroadcastTickEnding)
 };
 
 static volatile int state = 0;
@@ -3788,8 +3791,8 @@ static TransferSuperstatus* transferSuperstatuses = NULL;
 static volatile char latestComputorStatesLock = 0;
 static ComputorState latestComputorStates[NUMBER_OF_COMPUTORS + 1];
 
-static volatile char latestComputorTimestampsLock = 0;
-static ComputorTimestamp latestComputorTimestamps[NUMBER_OF_COMPUTORS];
+static volatile char latestTickEndingsLock = 0;
+static TickEnding latestTickEndings[NUMBER_OF_COMPUTORS];
 
 static volatile unsigned long long* dejavu0 = NULL;
 static volatile unsigned long long* dejavu1 = NULL;
@@ -3818,6 +3821,10 @@ static volatile char publicPeersLock = 0;
 static unsigned int numberOfPublicPeers = 0;
 static PublicPeer publicPeers[MAX_NUMBER_OF_PUBLIC_PEERS];
 static unsigned long long totalRatingOfPublicPeers = 0;
+
+#if NUMBER_OF_COMPUTING_PROCESSORS
+static EFI_EVENT computorEvents[NUMBER_OF_COMPUTING_PROCESSORS];
+#endif
 
 static volatile int bestMiningScore = -1;
 #if NUMBER_OF_MINING_PROCESSORS
@@ -4042,7 +4049,7 @@ static BOOLEAN isWhitelisted(int address)
 
 static void blacklist(int address)
 {
-    if (numberOfBlacklistedPeers < sizeof(blacklistedPeers) / sizeof(blacklistedPeers[0]) && !isWhitelisted(address))
+    if (address && numberOfBlacklistedPeers < sizeof(blacklistedPeers) / sizeof(blacklistedPeers[0]) && !isWhitelisted(address))
     {
         blacklistedPeers[numberOfBlacklistedPeers++] = address;
     }
@@ -4522,37 +4529,36 @@ static void requestProcessor(void* ProcedureArgument)
     }
     break;
 
-    case BROADCAST_COMPUTOR_TIMESTAMP:
+    case BROADCAST_TICK_ENDING:
     {
-        BroadcastComputorTimestamp* request = (BroadcastComputorTimestamp*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
-        if (request->computorTimestamp.computorIndex < NUMBER_OF_COMPUTORS
-            && request->computorTimestamp.year >= 2001 && request->computorTimestamp.year <= 2100
-            && request->computorTimestamp.month >= 1 && request->computorTimestamp.month <= 12
-            && request->computorTimestamp.day >= 1 && request->computorTimestamp.day <= 31
-            && request->computorTimestamp.dayOfWeek <= 6
-            && request->computorTimestamp.hour <= 23
-            && request->computorTimestamp.minute <= 59
-            && request->computorTimestamp.second <= 60) // "60" is not a typo, see https://en.wikipedia.org/wiki/Leap_second
+        BroadcastTickEnding* request = (BroadcastTickEnding*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
+        if (request->tickEnding.computorIndex < NUMBER_OF_COMPUTORS
+            && request->tickEnding.month >= 1 && request->tickEnding.month <= 12
+            && request->tickEnding.day >= 1 && request->tickEnding.day <= 31
+            && request->tickEnding.hour <= 23
+            && request->tickEnding.minute <= 59
+            && request->tickEnding.second <= 60 // "60" is not a typo, see https://en.wikipedia.org/wiki/Leap_second
+            && request->tickEnding.millisecond <= 999)
         {
-            while (_InterlockedCompareExchange8(&latestComputorTimestampsLock, 1, 0))
+            while (_InterlockedCompareExchange8(&latestTickEndingsLock, 1, 0))
             {
             }
 
-            if (request->computorTimestamp.year > latestComputorTimestamps[request->computorTimestamp.computorIndex].year
-                || (request->computorTimestamp.year == latestComputorTimestamps[request->computorTimestamp.computorIndex].year && (request->computorTimestamp.month > latestComputorTimestamps[request->computorTimestamp.computorIndex].month
-                    || (request->computorTimestamp.month == latestComputorTimestamps[request->computorTimestamp.computorIndex].month && (request->computorTimestamp.day > latestComputorTimestamps[request->computorTimestamp.computorIndex].day
-                        || (request->computorTimestamp.day == latestComputorTimestamps[request->computorTimestamp.computorIndex].day && (request->computorTimestamp.dayOfWeek > latestComputorTimestamps[request->computorTimestamp.computorIndex].dayOfWeek
-                            || (request->computorTimestamp.dayOfWeek == latestComputorTimestamps[request->computorTimestamp.computorIndex].dayOfWeek && (request->computorTimestamp.hour > latestComputorTimestamps[request->computorTimestamp.computorIndex].hour
-                                || (request->computorTimestamp.hour == latestComputorTimestamps[request->computorTimestamp.computorIndex].hour && (request->computorTimestamp.minute > latestComputorTimestamps[request->computorTimestamp.computorIndex].minute
-                                    || (request->computorTimestamp.minute == latestComputorTimestamps[request->computorTimestamp.computorIndex].minute && (request->computorTimestamp.second > latestComputorTimestamps[request->computorTimestamp.computorIndex].second)))))))))))))
+            if (request->tickEnding.year > latestTickEndings[request->tickEnding.computorIndex].year
+                || (request->tickEnding.year == latestTickEndings[request->tickEnding.computorIndex].year && (request->tickEnding.month > latestTickEndings[request->tickEnding.computorIndex].month
+                    || (request->tickEnding.month == latestTickEndings[request->tickEnding.computorIndex].month && (request->tickEnding.day > latestTickEndings[request->tickEnding.computorIndex].day
+                        || (request->tickEnding.day == latestTickEndings[request->tickEnding.computorIndex].day && (request->tickEnding.hour > latestTickEndings[request->tickEnding.computorIndex].hour
+                            || (request->tickEnding.hour == latestTickEndings[request->tickEnding.computorIndex].hour && (request->tickEnding.minute > latestTickEndings[request->tickEnding.computorIndex].minute
+                                || (request->tickEnding.minute == latestTickEndings[request->tickEnding.computorIndex].minute && (request->tickEnding.second > latestTickEndings[request->tickEnding.computorIndex].second
+                                    || (request->tickEnding.second == latestTickEndings[request->tickEnding.computorIndex].second && (request->tickEnding.millisecond > latestTickEndings[request->tickEnding.computorIndex].millisecond)))))))))))))
             {
                 if (latestComputorStates[NUMBER_OF_COMPUTORS].timestamp)
                 {
                     unsigned char digest[32];
                     KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
-                    if (verify(latestComputorStates[NUMBER_OF_COMPUTORS].computorPublicKeys[request->computorTimestamp.computorIndex], digest, request->computorTimestamp.signature))
+                    if (verify(latestComputorStates[NUMBER_OF_COMPUTORS].computorPublicKeys[request->tickEnding.computorIndex], digest, request->tickEnding.signature))
                     {
-                        bs->CopyMem(&latestComputorTimestamps[request->computorTimestamp.computorIndex], &request->computorTimestamp, sizeof(ComputorTimestamp));
+                        bs->CopyMem(&latestTickEndings[request->tickEnding.computorIndex], &request->tickEnding, sizeof(TickEnding));
 
                         bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
                         processor->responseTransmittingType = -1;
@@ -4565,7 +4571,7 @@ static void requestProcessor(void* ProcedureArgument)
                 }
             }
 
-            latestComputorTimestampsLock = 0;
+            latestTickEndingsLock = 0;
         }
     }
     break;
@@ -4694,8 +4700,9 @@ static void responseCallback(EFI_EVENT Event, void* Context)
                         else
                         {
                             forget(*((int*)processor->peer->address));
+                            blacklist(*((int*)processor->peer->address));
                             close(processor->peer);
-                            log(L"A peer incapable of receiving all the data is disconnected.");
+                            log(L"A peer incapable of receiving all the data is disconnected and blacklisted.");
                         }
                     }
                     else
@@ -4720,8 +4727,9 @@ static void responseCallback(EFI_EVENT Event, void* Context)
                     else
                     {
                         forget(*((int*)processor->peer->address));
+                        blacklist(*((int*)processor->peer->address));
                         close(processor->peer);
-                        log(L"A peer incapable of receiving all the data is disconnected.");
+                        log(L"A peer incapable of receiving all the data is disconnected and blacklisted.");
                     }
                 }
                 else
@@ -4739,6 +4747,28 @@ static void responseCallback(EFI_EVENT Event, void* Context)
 
     processor->peer = NULL;
 }
+
+#if NUMBER_OF_COMPUTING_PROCESSORS
+static void computorProcessor(void* ProcedureArgument)
+{
+#ifdef APPLY_COMMUNITY_FIX_FOR_AVX2
+    processorInitializationProcessor(NULL);
+#endif
+
+    _InterlockedIncrement64(&numberOfBusyProcessors);
+
+    // TODO
+
+    _InterlockedDecrement64(&numberOfBusyProcessors);
+}
+
+static void computorShutdownCallback(EFI_EVENT Event, void* Context)
+{
+    bs->CloseEvent(Event);
+
+    // TODO
+}
+#endif
 
 #if NUMBER_OF_MINING_PROCESSORS
 static void minerProcessor(void* ProcedureArgument)
@@ -4887,8 +4917,8 @@ static EFI_HANDLE getTcp4Protocol(const unsigned char* remoteAddress, EFI_TCP4_P
             }
             EFI_TCP4_OPTION option;
             bs->SetMem(&option, sizeof(option), 0);
-            option.ReceiveBufferSize = BUFFER_SIZE * 2;
-            option.SendBufferSize = BUFFER_SIZE * 2;
+            option.ReceiveBufferSize = BUFFER_SIZE;
+            option.SendBufferSize = BUFFER_SIZE;
             option.EnableWindowScaling = TRUE;
             configData.ControlOption = &option;
 
@@ -5151,8 +5181,6 @@ static void transmit(Peer* peer, unsigned int size)
     const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
 
     peer->isTransmitting = TRUE;
-
-    peer->transmissionBeginningTimestamp = __rdtsc();
 
     if (((unsigned long long)peer->tcp4Protocol) > 1)
     {
@@ -5792,46 +5820,19 @@ static void transmitCallback(EFI_EVENT Event, void* Context)
     {
         numberOfTransmittedBytes += peer->transmitData.DataLength;
         peer->numberOfTransmittedBytes += peer->transmitData.DataLength;
-
-        if (__rdtsc() - peer->transmissionBeginningTimestamp > frequency * MAX_TRANSMISSION_DURATION / 1000000)
+        
+        if (peer->dataToTransmitSize)
         {
-            CHAR16 message[256];
-            setText(message, L"Peer #");
-            appendNumber(message, peer->id, FALSE);
-            appendText(message, L" (");
-            appendNumber(message, peer->address[0], FALSE);
-            appendText(message, L".");
-            appendNumber(message, peer->address[1], FALSE);
-            appendText(message, L".");
-            appendNumber(message, peer->address[2], FALSE);
-            appendText(message, L".");
-            appendNumber(message, peer->address[3], FALSE);
-            appendText(message, L") which required ");
-            appendNumber(message, (__rdtsc() - peer->transmissionBeginningTimestamp) * 1000000 / frequency, TRUE);
-            appendText(message, L" microseconds to receive ");
-            appendNumber(message, peer->transmitData.DataLength, TRUE);
-            appendText(message, L" bytes is disconnected.");
-            log(message);
-
-            forget(*((int*)peer->address));
-            blacklist(*((int*)peer->address));
-            close(peer);
+            void* tmp = peer->dataToTransmit;
+            peer->dataToTransmit = (char*)peer->transmitData.FragmentTable[0].FragmentBuffer;
+            peer->transmitData.FragmentTable[0].FragmentBuffer = tmp;
+            const unsigned int size = peer->dataToTransmitSize;
+            peer->dataToTransmitSize = 0;
+            transmit(peer, size);
         }
         else
         {
-            if (peer->dataToTransmitSize)
-            {
-                void* tmp = peer->dataToTransmit;
-                peer->dataToTransmit = (char*)peer->transmitData.FragmentTable[0].FragmentBuffer;
-                peer->transmitData.FragmentTable[0].FragmentBuffer = tmp;
-                const unsigned int size = peer->dataToTransmitSize;
-                peer->dataToTransmitSize = 0;
-                transmit(peer, size);
-            }
-            else
-            {
-                peer->isTransmitting = FALSE;
-            }
+            peer->isTransmitting = FALSE;
         }
     }
 
@@ -5873,10 +5874,10 @@ static BOOLEAN initialize()
         latestComputorStates[i].computorIndex = i;
     }
 
-    bs->SetMem(&latestComputorTimestamps, sizeof(latestComputorTimestamps), 0);
-    for (unsigned int i = 1; i < sizeof(latestComputorTimestamps) / sizeof(latestComputorTimestamps[0]); i++)
+    bs->SetMem(&latestTickEndings, sizeof(latestTickEndings), 0);
+    for (unsigned int i = 1; i < sizeof(latestTickEndings) / sizeof(latestTickEndings[0]); i++)
     {
-        latestComputorTimestamps[i].computorIndex = i;
+        latestTickEndings[i].computorIndex = i;
     }
 
     bs->SetMem(processors, sizeof(processors), 0);
@@ -5952,6 +5953,7 @@ static BOOLEAN initialize()
         }
         else
         {
+#if NUMBER_OF_MINING_PROCESSORS
             unsigned long long size = sizeof(miningData);
             status = dataFile->Read(dataFile, &size, &miningData);
             dataFile->Close(dataFile);
@@ -5982,8 +5984,10 @@ static BOOLEAN initialize()
                     miningDataBytes[i] ^= computorPublicKey[i];
                 }
             }
+#endif
         }
 
+#if NUMBER_OF_MINING_PROCESSORS
         if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SOLUTION_DATA_FILE_NAME, EFI_FILE_MODE_READ, 0))
         {
             logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status);
@@ -6027,9 +6031,12 @@ static BOOLEAN initialize()
                 }
             }
         }
+#endif
     }
 
+#if NUMBER_OF_MINING_PROCESSORS
     bs->SetMem(minerScores, sizeof(minerScores), 0);
+#endif
 #endif
 
     if (NUMBER_OF_COMPUTING_PROCESSORS > 0)
@@ -6267,7 +6274,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
         }
         if (numberOfProcessors)
         {
-            if (numberOfProcessors < NUMBER_OF_MINING_PROCESSORS + 1)
+            if (numberOfProcessors < NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS + 1)
             {
                 log(L"[NUMBER_OF_MINING_PROCESSORS] is set to a too high value!");
             }
@@ -6298,9 +6305,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 #if NUMBER_OF_MINING_PROCESSORS
                             for (unsigned int i = 0; i < NUMBER_OF_MINING_PROCESSORS; i++)
                             {
-                                processors[i].peer = (Peer*)1;
+                                processors[NUMBER_OF_COMPUTING_PROCESSORS + i].peer = (Peer*)1;
                                 bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, minerShutdownCallback, NULL, &minerEvents[i]);
-                                mpServicesProtocol->StartupThisAP(mpServicesProtocol, minerProcessor, processors[i].number, minerEvents[i], 0, (void*)i, NULL);
+                                mpServicesProtocol->StartupThisAP(mpServicesProtocol, minerProcessor, processors[NUMBER_OF_COMPUTING_PROCESSORS + i].number, minerEvents[i], 0, (void*)i, NULL);
                             }
 #endif
 
@@ -6369,12 +6376,12 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 }
                                                 else
                                                 {
-                                                    appendText(peersGraph, peers[i].type ? L"O" : L".");
+                                                    appendText(peersGraph, peers[i].type ? L"X" : L".");
                                                 }
                                             }
                                             else
                                             {
-                                                appendText(peersGraph, peers[i].type ? L"O" : L".");
+                                                appendText(peersGraph, peers[i].type ? L"X" : L".");
                                             }
                                         }
                                     }
@@ -6448,6 +6455,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         log(message);
 
                                         forget(*((int*)peers[worstNumberOfReceivedBytesPeerIndex].address));
+                                        if (!worstNumberOfReceivedBytesDelta)
+                                        {
+                                            blacklist(*((int*)peers[worstNumberOfReceivedBytesPeerIndex].address));
+                                        }
                                         close(&peers[worstNumberOfReceivedBytesPeerIndex]);
                                     }
                                     else
@@ -6464,6 +6475,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         log(message);
 
                                         forget(*((int*)peers[worstNumberOfTransmittedBytesPeerIndex].address));
+                                        if (!worstNumberOfTransmittedBytesDelta)
+                                        {
+                                            blacklist(*((int*)peers[worstNumberOfTransmittedBytesPeerIndex].address));
+                                        }
                                         close(&peers[worstNumberOfTransmittedBytesPeerIndex]);
                                     }
 
@@ -6555,21 +6570,22 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 {
                                                     if (peers[i].isTransmitting)
                                                     {
-                                                        if (peers[i].dataToTransmitSize <= BUFFER_SIZE - sizeof(solution))
+                                                        if (peers[i].dataToTransmitSize <= BUFFER_SIZE - solution.header.size)
                                                         {
-                                                            bs->CopyMem(&peers[i].dataToTransmit[peers[i].dataToTransmitSize], &solution, sizeof(solution));
-                                                            peers[i].dataToTransmitSize += sizeof(solution);
+                                                            bs->CopyMem(&peers[i].dataToTransmit[peers[i].dataToTransmitSize], &solution, solution.header.size);
+                                                            peers[i].dataToTransmitSize += solution.header.size;
                                                         }
                                                         else
                                                         {
                                                             forget(*((int*)peers[i].address));
+                                                            blacklist(*((int*)peers[i].address));
                                                             close(&peers[i]);
-                                                            log(L"A peer incapable of receiving all the data is disconnected.");
+                                                            log(L"A peer incapable of receiving all the data is disconnected and blacklisted.");
                                                         }
                                                     }
                                                     else
                                                     {
-                                                        bs->CopyMem(peers[i].transmitData.FragmentTable[0].FragmentBuffer, &solution, sizeof(solution));
+                                                        bs->CopyMem(peers[i].transmitData.FragmentTable[0].FragmentBuffer, &solution, solution.header.size);
                                                         transmit(&peers[i], solution.header.size);
                                                     }
                                                 }
@@ -6579,6 +6595,64 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 #endif
 
                                     prevLogTick = __rdtsc();
+
+                                    if (system.ownComputorIndex >= 0)
+                                    {
+                                        struct
+                                        {
+                                            RequestResponseHeader header;
+                                            BroadcastTickEnding broadcastTickEnding;
+                                        } tickEnding;
+
+                                        tickEnding.header.size = sizeof(tickEnding);
+                                        tickEnding.header.protocol = PROTOCOL;
+                                        tickEnding.header.type = BROADCAST_TICK_ENDING;
+
+                                        tickEnding.broadcastTickEnding.tickEnding.computorIndex = system.ownComputorIndex;
+                                        tickEnding.broadcastTickEnding.tickEnding.epoch = 0;
+                                        tickEnding.broadcastTickEnding.tickEnding.tick = 0;
+
+                                        EFI_TIME time;
+                                        rs->GetTime(&time, NULL);
+                                        tickEnding.broadcastTickEnding.tickEnding.year = time.Year - 2000;
+                                        tickEnding.broadcastTickEnding.tickEnding.month = time.Month;
+                                        tickEnding.broadcastTickEnding.tickEnding.day = time.Day;
+                                        tickEnding.broadcastTickEnding.tickEnding.hour = time.Hour;
+                                        tickEnding.broadcastTickEnding.tickEnding.minute = time.Minute;
+                                        tickEnding.broadcastTickEnding.tickEnding.second = time.Second;
+                                        tickEnding.broadcastTickEnding.tickEnding.millisecond = time.Nanosecond / 1000000;
+
+                                        unsigned char digest[32];
+                                        KangarooTwelve((unsigned char*)&tickEnding.broadcastTickEnding.tickEnding, sizeof(tickEnding.broadcastTickEnding.tickEnding) - 64, digest, sizeof(digest));
+                                        sign(ownSubseed, ownPublicKey, digest, tickEnding.broadcastTickEnding.tickEnding.signature);
+
+                                        for (unsigned int i = 0; i < 0/*MAX_NUMBER_OF_PEERS*/; i++)
+                                        {
+                                            if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type > 0)
+                                            {
+                                                if (peers[i].isTransmitting)
+                                                {
+                                                    if (peers[i].dataToTransmitSize <= BUFFER_SIZE - solution.header.size)
+                                                    {
+                                                        bs->CopyMem(&peers[i].dataToTransmit[peers[i].dataToTransmitSize], &solution, solution.header.size);
+                                                        peers[i].dataToTransmitSize += solution.header.size;
+                                                    }
+                                                    else
+                                                    {
+                                                        forget(*((int*)peers[i].address));
+                                                        blacklist(*((int*)peers[i].address));
+                                                        close(&peers[i]);
+                                                        log(L"A peer incapable of receiving all the data is disconnected and blacklisted.");
+                                                    }
+                                                }
+                                                else
+                                                {
+                                                    bs->CopyMem(peers[i].transmitData.FragmentTable[0].FragmentBuffer, &solution, solution.header.size);
+                                                    transmit(&peers[i], solution.header.size);
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
 
                                 if (bs->CheckEvent(st->ConIn->WaitForKey) == EFI_SUCCESS)
