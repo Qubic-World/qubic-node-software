@@ -3481,7 +3481,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 
 #define VERSION_A 1
 #define VERSION_B 4
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define BUFFER_SIZE 4194304
 #define DEJAVU_SWAP_PERIOD 30
@@ -4556,7 +4556,9 @@ static void requestProcessor(void* ProcedureArgument)
                 if (latestComputorStates[NUMBER_OF_COMPUTORS].timestamp)
                 {
                     unsigned char digest[32];
+                    request->tickEnding.computorIndex ^= 4;
                     KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
+                    request->tickEnding.computorIndex ^= 4;
                     if (verify(latestComputorStates[NUMBER_OF_COMPUTORS].computorPublicKeys[request->tickEnding.computorIndex], digest, request->tickEnding.signature))
                     {
                         bs->CopyMem(&latestTickEndings[request->tickEnding.computorIndex], &request->tickEnding, sizeof(TickEnding));
@@ -5125,20 +5127,15 @@ static void close(Peer* peer)
             if (peer->acceptToken.NewChildHandle)
             {
                 bs->CloseProtocol(peer->acceptToken.NewChildHandle, &tcp4ProtocolGuid, ih, NULL);
-
-                peer->type = 0;
-                peer->tcp4Protocol = NULL;
-
-                accept();
             }
             else
             {
                 bs->CloseProtocol(peer->connectChildHandle, &tcp4ProtocolGuid, ih, NULL);
                 tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peer->connectChildHandle);
-
-                peer->type = 0;
-                peer->tcp4Protocol = NULL;
             }
+
+            peer->type = 0;
+            peer->tcp4Protocol = NULL;
         }
     }
 
@@ -5274,8 +5271,6 @@ static void acceptCallback(EFI_EVENT Event, void* Context)
         }
     }
 
-    accept();
-
     bs->RestoreTPL(tpl);
 }
 
@@ -5367,20 +5362,15 @@ static void closeCallback(EFI_EVENT Event, void* Context)
     if (peer->acceptToken.NewChildHandle)
     {
         bs->CloseProtocol(peer->acceptToken.NewChildHandle, &tcp4ProtocolGuid, ih, NULL);
-
-        peer->type = 0;
-        peer->tcp4Protocol = NULL;
-
-        accept();
     }
     else
     {
         bs->CloseProtocol(peer->connectChildHandle, &tcp4ProtocolGuid, ih, NULL);
         tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peer->connectChildHandle);
-
-        peer->type = 0;
-        peer->tcp4Protocol = NULL;
     }
+
+    peer->type = 0;
+    peer->tcp4Protocol = NULL;
 
     bs->RestoreTPL(tpl);
 }
@@ -6312,11 +6302,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                 {
                     if (getTcp4Protocol(NULL, &tcp4Protocol))
                     {
-                        for (unsigned int i = 0; i < NUMBER_OF_INCOMING_CONNECTIONS; i++)
-                        {
-                            accept();
-                        }
-
 #if NUMBER_OF_MINING_PROCESSORS
                         for (unsigned int i = 0; i < NUMBER_OF_MINING_PROCESSORS; i++)
                         {
@@ -6589,6 +6574,13 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         *((int*)address) = *((int*)publicPeers[random % numberOfPublicPeers].address);
                                         publicPeersLock = 0;
                                         connect(address);
+                                    }
+                                }
+                                for (unsigned int i = NUMBER_OF_OUTGOING_CONNECTIONS; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
+                                {
+                                    if (!peers[i].tcp4Protocol)
+                                    {
+                                        accept();
                                     }
                                 }
 
