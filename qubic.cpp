@@ -3481,7 +3481,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 
 #define VERSION_A 1
 #define VERSION_B 4
-#define VERSION_C 3
+#define VERSION_C 4
 
 #define BUFFER_SIZE 4194304
 #define DEJAVU_SWAP_PERIOD 30
@@ -4551,7 +4551,7 @@ static void requestProcessor(void* ProcedureArgument)
                         || (request->tickEnding.day == latestTickEndings[request->tickEnding.computorIndex].day && (request->tickEnding.hour > latestTickEndings[request->tickEnding.computorIndex].hour
                             || (request->tickEnding.hour == latestTickEndings[request->tickEnding.computorIndex].hour && (request->tickEnding.minute > latestTickEndings[request->tickEnding.computorIndex].minute
                                 || (request->tickEnding.minute == latestTickEndings[request->tickEnding.computorIndex].minute && (request->tickEnding.second > latestTickEndings[request->tickEnding.computorIndex].second
-                                    || (request->tickEnding.second == latestTickEndings[request->tickEnding.computorIndex].second && (request->tickEnding.millisecond > latestTickEndings[request->tickEnding.computorIndex].millisecond)))))))))))))
+                                    /*|| (request->tickEnding.second == latestTickEndings[request->tickEnding.computorIndex].second && (request->tickEnding.millisecond > latestTickEndings[request->tickEnding.computorIndex].millisecond)) */ )))))))))))
             {
                 if (latestComputorStates[NUMBER_OF_COMPUTORS].timestamp)
                 {
@@ -6489,6 +6489,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         unsigned long long minNumberOfTickEndings = 0xFFFFFFFFFFFFFFFF;
                                         unsigned long long maxNumberOfTickEndings = 0;
                                         unsigned long long totalNumberOfTickEndings = 0;
+                                        unsigned long long totalAmount = ISSUANCE_RATE / NUMBER_OF_COMPUTORS;
                                         for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
                                         {
                                             if (i != system.ownComputorIndex)
@@ -6504,14 +6505,24 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 totalNumberOfTickEndings += numberOfTickEndings[i];
                                             }
                                         }
+                                        if (maxNumberOfTickEndings)
+                                        {
+                                            for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                                            {
+                                                if (i != system.ownComputorIndex)
+                                                {
+                                                    totalAmount += (numberOfTickEndings[i] >= maxNumberOfTickEndings * 80 / 100 ? ISSUANCE_RATE / NUMBER_OF_COMPUTORS : (ISSUANCE_RATE / NUMBER_OF_COMPUTORS) * 100 * numberOfTickEndings[i] / maxNumberOfTickEndings / 80);
+                                                }
+                                            }
+                                        }
                                         appendNumber(message, minNumberOfTickEndings, TRUE);
                                         appendText(message, L"..");
                                         appendNumber(message, totalNumberOfTickEndings / (NUMBER_OF_COMPUTORS - 1), TRUE);
                                         appendText(message, L"..");
                                         appendNumber(message, maxNumberOfTickEndings, TRUE);
                                         appendText(message, L"] ");
-                                        appendNumber(message, totalNumberOfTickEndings, TRUE);
-                                        appendText(message, L" ticks.");
+                                        appendNumber(message, totalAmount, TRUE);
+                                        appendText(message, L" qus.");
                                     }
                                     log(message);
 
