@@ -3481,7 +3481,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 
 #define VERSION_A 1
 #define VERSION_B 4
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define BUFFER_SIZE 4194304
 #define DEJAVU_SWAP_PERIOD 30
@@ -3529,7 +3529,6 @@ typedef struct
     EFI_TCP4_IO_TOKEN transmitToken;
     char* dataToTransmit;
     unsigned int dataToTransmitSize;
-    EFI_TCP4_CLOSE_TOKEN closeToken;
     unsigned long long numberOfReceivedBytes, prevNumberOfReceivedBytes;
     unsigned long long numberOfTransmittedBytes, prevNumberOfTransmittedBytes;
     unsigned int id;
@@ -3856,7 +3855,6 @@ static void receive(Peer* peer);
 static void transmit(Peer* peer, unsigned int size);
 static void acceptCallback(EFI_EVENT Event, void* Context);
 static void connectCallback(EFI_EVENT Event, void* Context);
-static void closeCallback(EFI_EVENT Event, void* Context);
 static void receiveCallback(EFI_EVENT Event, void* Context);
 static void transmitCallback(EFI_EVENT Event, void* Context);
 
@@ -5117,26 +5115,24 @@ static void close(Peer* peer)
 
     if (((unsigned long long)peer->tcp4Protocol) > 1)
     {
-        bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, closeCallback, peer, &peer->closeToken.CompletionToken.Event);
         EFI_STATUS status;
-        if (status = peer->tcp4Protocol->Close(peer->tcp4Protocol, &peer->closeToken))
+        if (status = peer->tcp4Protocol->Configure(peer->tcp4Protocol, NULL))
         {
-            logStatus(L"EFI_TCP4_PROTOCOL.Close() fails", status);
-
-            bs->CloseEvent(peer->closeToken.CompletionToken.Event);
-            if (peer->acceptToken.NewChildHandle)
-            {
-                bs->CloseProtocol(peer->acceptToken.NewChildHandle, &tcp4ProtocolGuid, ih, NULL);
-            }
-            else
-            {
-                bs->CloseProtocol(peer->connectChildHandle, &tcp4ProtocolGuid, ih, NULL);
-                tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peer->connectChildHandle);
-            }
-
-            peer->type = 0;
-            peer->tcp4Protocol = NULL;
+            logStatus(L"EFI_TCP4_PROTOCOL.Configure() fails", status);
         }
+
+        if (peer->acceptToken.NewChildHandle)
+        {
+            bs->CloseProtocol(peer->acceptToken.NewChildHandle, &tcp4ProtocolGuid, ih, NULL);
+        }
+        else
+        {
+            bs->CloseProtocol(peer->connectChildHandle, &tcp4ProtocolGuid, ih, NULL);
+            tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peer->connectChildHandle);
+        }
+
+        peer->type = 0;
+        peer->tcp4Protocol = NULL;
     }
 
     bs->RestoreTPL(tpl);
@@ -5348,29 +5344,6 @@ static void connectCallback(EFI_EVENT Event, void* Context)
         peer->receiveData.FragmentTable[0].FragmentBuffer = peer->receiveBuffer;
         receive(peer);
     }
-
-    bs->RestoreTPL(tpl);
-}
-
-static void closeCallback(EFI_EVENT Event, void* Context)
-{
-    const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
-
-    bs->CloseEvent(Event);
-
-    Peer* peer = (Peer*)Context;
-    if (peer->acceptToken.NewChildHandle)
-    {
-        bs->CloseProtocol(peer->acceptToken.NewChildHandle, &tcp4ProtocolGuid, ih, NULL);
-    }
-    else
-    {
-        bs->CloseProtocol(peer->connectChildHandle, &tcp4ProtocolGuid, ih, NULL);
-        tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peer->connectChildHandle);
-    }
-
-    peer->type = 0;
-    peer->tcp4Protocol = NULL;
 
     bs->RestoreTPL(tpl);
 }
@@ -6083,7 +6056,6 @@ static BOOLEAN initialize()
         }
         peers[peerIndex].receiveToken.Packet.RxData = &peers[peerIndex].receiveData;
         peers[peerIndex].transmitToken.Packet.TxData = &peers[peerIndex].transmitData;
-        peers[peerIndex].closeToken.AbortOnClose = TRUE;
     }
 
     while (numberOfPublicPeers < NUMBER_OF_EXCHANGED_PEERS)
@@ -6647,9 +6619,13 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 }
                             }
 
-                            if (bs->CheckEvent(st->ConIn->WaitForKey) == EFI_SUCCESS)
+                            EFI_INPUT_KEY inputKey;
+                            if (!st->ConIn->ReadKeyStroke(st->ConIn, &inputKey))
                             {
-                                state = 1;
+                                if (inputKey.ScanCode == 0x17)
+                                {
+                                    state = 1;
+                                }
                             }
                         }
 
