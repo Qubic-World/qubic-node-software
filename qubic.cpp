@@ -3480,27 +3480,28 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 ////////// Qubic \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 3
-#define VERSION_C 5
+#define VERSION_B 4
+#define VERSION_C 0
 
-#define BUFFER_SIZE 1048576
+#define BUFFER_SIZE 4194304
 #define DEJAVU_SWAP_PERIOD 30
 #define ISSUANCE_RATE 1000000000000
 #define MAX_ENERGY_AMOUNT 9223372036854775807
 #define MAX_NUMBER_OF_MINERS 10000
-#define MAX_NUMBER_OF_PEERS 16
 #define MAX_NUMBER_OF_PROCESSORS 1024
 #define MAX_NUMBER_OF_PUBLIC_PEERS 64
 #define MAX_TIMESTAMP_VALUE 9223372036854775807
 #define MAX_TRANSMISSION_DURATION 100000
 #define MIN_ENERGY_AMOUNT 1000000
-#define MIN_NUMBER_OF_PEERS 4
 #define NUMBER_OF_COMPUTORS (26 * 26)
+#define NUMBER_OF_EXCHANGED_PEERS 4
+#define NUMBER_OF_OUTGOING_CONNECTIONS 4
+#define NUMBER_OF_INCOMING_CONNECTIONS 12
 #define NUMBER_OF_NEURONS 20000
-#define PEER_RATING_PERIOD 15
+#define PEER_RATING_PERIOD 5
 #define PORT 21841
-#define PROTOCOL 256
-#define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 60
+#define PROTOCOL 257
+#define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 90
 
 static __m256i ZERO;
 
@@ -3712,7 +3713,7 @@ typedef struct
 #define EXCHANGE_PUBLIC_PEERS 1
 typedef struct
 {
-    unsigned char peers[MIN_NUMBER_OF_PEERS][4];
+    unsigned char peers[NUMBER_OF_EXCHANGED_PEERS][4];
 } ExchangePublicPeers;
 
 #define BROADCAST_MESSAGE 2
@@ -3812,7 +3813,7 @@ static EFI_GUID tcp4ServiceBindingProtocolGuid = EFI_TCP4_SERVICE_BINDING_PROTOC
 static EFI_SERVICE_BINDING_PROTOCOL* tcp4ServiceBindingProtocol;
 static EFI_GUID tcp4ProtocolGuid = EFI_TCP4_PROTOCOL_GUID;
 static EFI_TCP4_PROTOCOL* tcp4Protocol;
-static Peer peers[MAX_NUMBER_OF_PEERS];
+static Peer peers[NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS];
 static unsigned int latestPeerId = 0;
 static volatile long long numberOfReceivedBytes = 0, prevNumberOfReceivedBytes = 0;
 static volatile long long numberOfTransmittedBytes = 0, prevNumberOfTransmittedBytes = 0;
@@ -4075,7 +4076,7 @@ static void forget(int address)
         while (_InterlockedCompareExchange8(&publicPeersLock, 1, 0))
         {
         }
-        for (unsigned int j = 0; numberOfPublicPeers > MIN_NUMBER_OF_PEERS && j < numberOfPublicPeers; j++)
+        for (unsigned int j = 0; numberOfPublicPeers > NUMBER_OF_EXCHANGED_PEERS && j < numberOfPublicPeers; j++)
         {
             if (*((int*)publicPeers[j].address) == address)
             {
@@ -4183,8 +4184,8 @@ static void requestProcessor(void* ProcedureArgument)
                         response->numberOfReceivedBytes = numberOfReceivedBytes;
                         response->numberOfTransmittedBytes = numberOfTransmittedBytes;
 
-                        response->numberOfPeers = MAX_NUMBER_OF_PEERS;
-                        for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
+                        response->numberOfPeers = NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS;
+                        for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
                         {
                             if (!peers[i].tcp4Protocol)
                             {
@@ -4256,7 +4257,7 @@ static void requestProcessor(void* ProcedureArgument)
             processor->peer->exchangedPublicPeers = TRUE;
 
             ExchangePublicPeers* response = (ExchangePublicPeers*)(((char*)processor->responseBuffer) + sizeof(RequestResponseHeader));
-            for (unsigned int i = 0; i < MIN_NUMBER_OF_PEERS; i++)
+            for (unsigned int i = 0; i < NUMBER_OF_EXCHANGED_PEERS; i++)
             {
                 unsigned int random;
                 _rdrand32_step(&random);
@@ -4294,7 +4295,7 @@ static void requestProcessor(void* ProcedureArgument)
         }
 
         ExchangePublicPeers* request = (ExchangePublicPeers*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
-        for (unsigned int i = 0; i < MIN_NUMBER_OF_PEERS && numberOfPublicPeers < MAX_NUMBER_OF_PUBLIC_PEERS; i++)
+        for (unsigned int i = 0; i < NUMBER_OF_EXCHANGED_PEERS && numberOfPublicPeers < MAX_NUMBER_OF_PUBLIC_PEERS; i++)
         {
             addPublicPeer(request->peers[i]);
         }
@@ -4685,7 +4686,7 @@ static void responseCallback(EFI_EVENT Event, void* Context)
 
         if (processor->responseTransmittingType)
         {
-            for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
+            for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
             {
                 if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type > 0
                     && (processor->responseTransmittingType > 0 || &peers[i] != processor->peer))
@@ -5015,14 +5016,14 @@ static BOOLEAN accept()
     const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
 
     unsigned int i;
-    for (i = 0; i < MAX_NUMBER_OF_PEERS; i++)
+    for (i = NUMBER_OF_OUTGOING_CONNECTIONS; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
     {
         if (!peers[i].tcp4Protocol)
         {
             break;
         }
     }
-    if (i != MAX_NUMBER_OF_PEERS)
+    if (i != NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS)
     {
         peers[i].tcp4Protocol = (EFI_TCP4_PROTOCOL*)1;
         *((int*)peers[i].address) = 0;
@@ -5062,7 +5063,7 @@ static void connect(unsigned char* address)
 
     int freePeerSlot = -1;
     unsigned int i;
-    for (i = 0; i < MAX_NUMBER_OF_PEERS; i++)
+    for (i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS; i++)
     {
         if (freePeerSlot < 0)
         {
@@ -5077,7 +5078,7 @@ static void connect(unsigned char* address)
             break;
         }
     }
-    if (freePeerSlot >= 0 && i == MAX_NUMBER_OF_PEERS)
+    if (freePeerSlot >= 0 && i == NUMBER_OF_OUTGOING_CONNECTIONS)
     {
         EFI_TCP4_PROTOCOL* tcp4Protocol;
         EFI_HANDLE childHandle = getTcp4Protocol(address, &tcp4Protocol);
@@ -5124,14 +5125,20 @@ static void close(Peer* peer)
             if (peer->acceptToken.NewChildHandle)
             {
                 bs->CloseProtocol(peer->acceptToken.NewChildHandle, &tcp4ProtocolGuid, ih, NULL);
+
+                peer->type = 0;
+                peer->tcp4Protocol = NULL;
+
+                accept();
             }
             else
             {
                 bs->CloseProtocol(peer->connectChildHandle, &tcp4ProtocolGuid, ih, NULL);
                 tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peer->connectChildHandle);
+
+                peer->type = 0;
+                peer->tcp4Protocol = NULL;
             }
-            peer->type = 0;
-            peer->tcp4Protocol = NULL;
         }
     }
 
@@ -5282,7 +5289,6 @@ static void connectCallback(EFI_EVENT Event, void* Context)
     if (peer->connectToken.CompletionToken.Status)
     {
         forget(*((int*)peer->address));
-
         close(peer);
     }
     else
@@ -5303,7 +5309,7 @@ static void connectCallback(EFI_EVENT Event, void* Context)
         while (_InterlockedCompareExchange8(&publicPeersLock, 1, 0))
         {
         }
-        for (; i < MIN_NUMBER_OF_PEERS; i++)
+        for (; i < NUMBER_OF_EXCHANGED_PEERS; i++)
         {
             unsigned int random;
             _rdrand32_step(&random);
@@ -5361,14 +5367,20 @@ static void closeCallback(EFI_EVENT Event, void* Context)
     if (peer->acceptToken.NewChildHandle)
     {
         bs->CloseProtocol(peer->acceptToken.NewChildHandle, &tcp4ProtocolGuid, ih, NULL);
+
+        peer->type = 0;
+        peer->tcp4Protocol = NULL;
+
+        accept();
     }
     else
     {
         bs->CloseProtocol(peer->connectChildHandle, &tcp4ProtocolGuid, ih, NULL);
         tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peer->connectChildHandle);
+
+        peer->type = 0;
+        peer->tcp4Protocol = NULL;
     }
-    peer->type = 0;
-    peer->tcp4Protocol = NULL;
 
     bs->RestoreTPL(tpl);
 }
@@ -5976,7 +5988,7 @@ static BOOLEAN initialize()
                     return FALSE;
                 }
 
-                miningData[0] ^= 24;
+                miningData[0] ^= 4;
 
                 unsigned char* miningDataBytes = (unsigned char*)miningData;
                 for (unsigned int i = 0; i < sizeof(computorPublicKey); i++)
@@ -6067,7 +6079,7 @@ static BOOLEAN initialize()
     bs->SetMem((void*)dejavu0, 536870912, 0);
     bs->SetMem((void*)dejavu1, 536870912, 0);
 
-    for (unsigned int peerIndex = 0; peerIndex < MAX_NUMBER_OF_PEERS; peerIndex++)
+    for (unsigned int peerIndex = 0; peerIndex < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; peerIndex++)
     {
         peers[peerIndex].receiveData.FragmentCount = 1;
         peers[peerIndex].transmitData.FragmentCount = 1;
@@ -6084,7 +6096,7 @@ static BOOLEAN initialize()
         peers[peerIndex].closeToken.AbortOnClose = TRUE;
     }
 
-    while (numberOfPublicPeers < MIN_NUMBER_OF_PEERS)
+    while (numberOfPublicPeers < NUMBER_OF_EXCHANGED_PEERS)
     {
         unsigned int random;
         _rdrand32_step(&random);
@@ -6134,7 +6146,7 @@ static void deinitialize()
         }
     }
 
-    for (unsigned int peerIndex = 0; peerIndex < MAX_NUMBER_OF_PEERS; peerIndex++)
+    for (unsigned int peerIndex = 0; peerIndex < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; peerIndex++)
     {
         if (peers[peerIndex].receiveBuffer)
         {
@@ -6300,333 +6312,241 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                 {
                     if (getTcp4Protocol(NULL, &tcp4Protocol))
                     {
-                        if (accept())
+                        for (unsigned int i = 0; i < NUMBER_OF_INCOMING_CONNECTIONS; i++)
                         {
+                            accept();
+                        }
+
 #if NUMBER_OF_MINING_PROCESSORS
-                            for (unsigned int i = 0; i < NUMBER_OF_MINING_PROCESSORS; i++)
-                            {
-                                processors[NUMBER_OF_COMPUTING_PROCESSORS + i].peer = (Peer*)1;
-                                bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, minerShutdownCallback, NULL, &minerEvents[i]);
-                                mpServicesProtocol->StartupThisAP(mpServicesProtocol, minerProcessor, processors[NUMBER_OF_COMPUTING_PROCESSORS + i].number, minerEvents[i], 0, (void*)i, NULL);
-                            }
+                        for (unsigned int i = 0; i < NUMBER_OF_MINING_PROCESSORS; i++)
+                        {
+                            processors[NUMBER_OF_COMPUTING_PROCESSORS + i].peer = (Peer*)1;
+                            bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, minerShutdownCallback, NULL, &minerEvents[i]);
+                            mpServicesProtocol->StartupThisAP(mpServicesProtocol, minerProcessor, processors[NUMBER_OF_COMPUTING_PROCESSORS + i].number, minerEvents[i], 0, (void*)i, NULL);
+                        }
 #endif
 
-                            for (unsigned int i = 0; i < numberOfPublicPeers; i++)
+                        unsigned long long prevDejavuSwapTick = __rdtsc();
+                        unsigned long long prevPeerRatingTick = __rdtsc();
+                        unsigned long long prevLogTick = __rdtsc();
+                        int knownMiningScore = 0;
+                        long long prevNumberOfMiningIterations = 0;
+                        unsigned long long prevMiningPerformanceTick = __rdtsc();
+                        unsigned long long prevResourceTestingSolutionPublicationTick = 0;
+                        while (!state)
+                        {
+                            for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
                             {
-                                connect(publicPeers[i].address);
+                                if (((unsigned long long)peers[i].tcp4Protocol) > 1)
+                                {
+                                    peers[i].tcp4Protocol->Poll(peers[i].tcp4Protocol);
+                                }
                             }
 
-                            unsigned long long prevDejavuSwapTick = __rdtsc();
-                            unsigned long long prevPeerRatingTick = __rdtsc();
-                            unsigned long long prevLogTick = __rdtsc();
-                            int knownMiningScore = 0;
-                            long long prevNumberOfMiningIterations = 0;
-                            unsigned long long prevMiningPerformanceTick = __rdtsc();
-                            unsigned long long prevResourceTestingSolutionPublicationTick = 0;
-                            while (!state)
+                            if (__rdtsc() - prevDejavuSwapTick >= DEJAVU_SWAP_PERIOD * frequency)
                             {
-                                for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
+                                volatile unsigned long long* tmp = dejavu1;
+                                dejavu1 = dejavu0;
+                                bs->SetMem((void*)tmp, 536870912, 0);
+                                dejavu0 = tmp;
+
+                                prevDejavuSwapTick = __rdtsc();
+                            }
+
+                            CHAR16 peersGraph[256];
+                            peersGraph[0] = 0;
+
+                            EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
+                            for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
+                            {
+                                if (!peers[i].tcp4Protocol)
                                 {
-                                    if (((unsigned long long)peers[i].tcp4Protocol) > 1)
-                                    {
-                                        peers[i].tcp4Protocol->Poll(peers[i].tcp4Protocol);
-                                    }
+                                    appendText(peersGraph, L"_");
                                 }
-
-                                if (__rdtsc() - prevDejavuSwapTick >= DEJAVU_SWAP_PERIOD * frequency)
+                                else
                                 {
-                                    volatile unsigned long long* tmp = dejavu1;
-                                    dejavu1 = dejavu0;
-                                    bs->SetMem((void*)tmp, 536870912, 0);
-                                    dejavu0 = tmp;
-
-                                    prevDejavuSwapTick = __rdtsc();
-                                }
-
-                                CHAR16 peersGraph[256];
-                                peersGraph[0] = 0;
-
-                                EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
-                                unsigned int numberOfFreePeerSlots = 0, numberOfAcceptingPeerSlots = 0, numberOfWebSocketClients = 0;
-                                for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
-                                {
-                                    if (!peers[i].tcp4Protocol)
+                                    if (((unsigned long long)peers[i].tcp4Protocol) == 1)
                                     {
-                                        numberOfFreePeerSlots++;
-
-                                        appendText(peersGraph, L"_");
+                                        appendText(peersGraph, L"?");
                                     }
                                     else
                                     {
-                                        if (((unsigned long long)peers[i].tcp4Protocol) == 1)
+                                        if (peers[i].acceptToken.NewChildHandle)
                                         {
-                                            numberOfAcceptingPeerSlots++;
-
-                                            appendText(peersGraph, L"?");
-                                        }
-                                        else
-                                        {
-                                            if (peers[i].acceptToken.NewChildHandle)
+                                            if (peers[i].type < 0)
                                             {
-                                                if (peers[i].type < 0)
-                                                {
-                                                    numberOfWebSocketClients++;
-
-                                                    appendText(peersGraph, L"W");
-                                                }
-                                                else
-                                                {
-                                                    appendText(peersGraph, peers[i].type ? L"X" : L".");
-                                                }
+                                                appendText(peersGraph, L"W");
                                             }
                                             else
                                             {
                                                 appendText(peersGraph, peers[i].type ? L"X" : L".");
                                             }
                                         }
+                                        else
+                                        {
+                                            appendText(peersGraph, peers[i].type ? L"X" : L".");
+                                        }
                                     }
                                 }
+                            }
+                            bs->RestoreTPL(tpl);
+                            appendText(peersGraph, L" ");
+
+                            if (__rdtsc() - prevPeerRatingTick >= PEER_RATING_PERIOD * frequency)
+                            {
+                                tpl = bs->RaiseTPL(TPL_NOTIFY);
+
+                                int worstNumberOfReceivedBytesPeerIndex = -1;
+                                unsigned long long worstNumberOfReceivedBytesDelta = 0xFFFFFFFFFFFFFFFF;
+                                unsigned long long numberOfReceivedBytesSumOfDeltas = 0;
+                                int worstNumberOfTransmittedBytesPeerIndex = -1;
+                                unsigned long long worstNumberOfTransmittedBytesDelta = 0xFFFFFFFFFFFFFFFF;
+                                unsigned long long numberOfTransmittedBytesSumOfDeltas = 0;
+                                unsigned long long numberOfDeltas = 0;
+
+                                for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
+                                {
+                                    if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type >= 0)
+                                    {
+                                        unsigned long long delta = peers[i].numberOfReceivedBytes - peers[i].prevNumberOfReceivedBytes;
+                                        peers[i].prevNumberOfReceivedBytes = peers[i].numberOfReceivedBytes;
+                                        if (delta < worstNumberOfReceivedBytesDelta)
+                                        {
+                                            worstNumberOfReceivedBytesPeerIndex = i;
+                                            worstNumberOfReceivedBytesDelta = delta;
+                                        }
+                                        numberOfReceivedBytesSumOfDeltas += delta;
+
+                                        delta = peers[i].numberOfTransmittedBytes - peers[i].prevNumberOfTransmittedBytes;
+                                        peers[i].prevNumberOfTransmittedBytes = peers[i].numberOfTransmittedBytes;
+                                        if (delta < worstNumberOfTransmittedBytesDelta)
+                                        {
+                                            worstNumberOfTransmittedBytesPeerIndex = i;
+                                            worstNumberOfTransmittedBytesDelta = delta;
+                                        }
+                                        numberOfTransmittedBytesSumOfDeltas += delta;
+
+                                        numberOfDeltas++;
+                                    }
+                                }
+                                if (worstNumberOfReceivedBytesPeerIndex >= 0 && worstNumberOfReceivedBytesDelta <= numberOfReceivedBytesSumOfDeltas / ((numberOfDeltas ? numberOfDeltas : 1) * 3))
+                                {
+                                    setText(message, L"A peer sending too few bytes (");
+                                    appendNumber(message, worstNumberOfReceivedBytesDelta, TRUE);
+                                    appendText(message, L" / ");
+                                    appendNumber(message, numberOfReceivedBytesSumOfDeltas / (numberOfDeltas ? numberOfDeltas : 1), TRUE);
+                                    appendText(message, L") is disconnected.");
+                                    log(message);
+
+                                    forget(*((int*)peers[worstNumberOfReceivedBytesPeerIndex].address));
+                                    if (!worstNumberOfReceivedBytesDelta)
+                                    {
+                                        blacklist(*((int*)peers[worstNumberOfReceivedBytesPeerIndex].address));
+                                    }
+                                    close(&peers[worstNumberOfReceivedBytesPeerIndex]);
+                                }
+                                else
+                                {
+                                    worstNumberOfReceivedBytesPeerIndex = -1;
+                                }
+                                if (worstNumberOfTransmittedBytesPeerIndex != worstNumberOfReceivedBytesPeerIndex && worstNumberOfTransmittedBytesPeerIndex >= 0 && worstNumberOfTransmittedBytesDelta <= numberOfTransmittedBytesSumOfDeltas / ((numberOfDeltas ? numberOfDeltas : 1) * 3))
+                                {
+                                    setText(message, L"A peer receiving too few bytes (");
+                                    appendNumber(message, worstNumberOfTransmittedBytesDelta, TRUE);
+                                    appendText(message, L" / ");
+                                    appendNumber(message, numberOfTransmittedBytesSumOfDeltas / (numberOfDeltas ? numberOfDeltas : 1), TRUE);
+                                    appendText(message, L") is disconnected.");
+                                    log(message);
+
+                                    forget(*((int*)peers[worstNumberOfTransmittedBytesPeerIndex].address));
+                                    if (!worstNumberOfTransmittedBytesDelta)
+                                    {
+                                        blacklist(*((int*)peers[worstNumberOfTransmittedBytesPeerIndex].address));
+                                    }
+                                    close(&peers[worstNumberOfTransmittedBytesPeerIndex]);
+                                }
+
                                 bs->RestoreTPL(tpl);
 
-                                if (MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots - numberOfWebSocketClients < MIN_NUMBER_OF_PEERS)
+                                prevPeerRatingTick = __rdtsc();
+                            }
+
+                            if (__rdtsc() - prevLogTick >= frequency)
+                            {
+                                unsigned long long numberOfWaitingBytes = 0;
+
+                                for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
                                 {
-                                    unsigned char address[4];
-
-                                    unsigned int random;
-                                    _rdrand32_step(&random);
-
-                                    while (_InterlockedCompareExchange8(&publicPeersLock, 1, 0))
+                                    if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type > 0)
                                     {
+                                        numberOfWaitingBytes += peers[i].dataToTransmitSize;
                                     }
-                                    *((int*)address) = *((int*)publicPeers[random % numberOfPublicPeers].address);
-                                    publicPeersLock = 0;
-
-                                    connect(address);
-                                }
-                                if (!numberOfAcceptingPeerSlots && numberOfFreePeerSlots)
-                                {
-                                    accept();
                                 }
 
-                                if (__rdtsc() - prevPeerRatingTick >= PEER_RATING_PERIOD * frequency)
+                                CHAR16 message[256]; setText(message, L"["); appendNumber(message, !numberOfBusyProcessorsNumberOfValues ? (numberOfBusyProcessors * 100 / numberOfProcessors) : ((numberOfBusyProcessorsSumOfValues * 100) / (numberOfBusyProcessorsNumberOfValues * numberOfProcessors)), FALSE); appendText(message, L"% CPU / "); appendNumber(message, numberOfProcessedRequests - prevNumberOfProcessedRequests, TRUE); appendText(message, L"] "); appendText(message, peersGraph); appendNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" known / "); appendNumber(message, numberOfBlacklistedPeers, TRUE); appendText(message, L" black ("); appendNumber(message, numberOfReceivedBytes - prevNumberOfReceivedBytes, TRUE); appendText(message, L" rx / "); appendNumber(message, numberOfTransmittedBytes - prevNumberOfTransmittedBytes, TRUE); appendText(message, L" tx / "); appendNumber(message, numberOfWaitingBytes, TRUE); appendText(message, L" wx)."); log(message);
+                                numberOfBusyProcessorsSumOfValues = 0;
+                                numberOfBusyProcessorsNumberOfValues = 0;
+                                prevNumberOfProcessedRequests = numberOfProcessedRequests;
+                                prevNumberOfReceivedBytes = numberOfReceivedBytes;
+                                prevNumberOfTransmittedBytes = numberOfTransmittedBytes;
+
+#if NUMBER_OF_MINING_PROCESSORS
+                                unsigned long long random;
+                                _rdrand64_step(&random);
+                                if (bestMiningScore >= 0 && !(random % 5))
                                 {
-                                    tpl = bs->RaiseTPL(TPL_NOTIFY);
-
-                                    int worstNumberOfReceivedBytesPeerIndex = -1;
-                                    unsigned long long worstNumberOfReceivedBytesDelta = 0xFFFFFFFFFFFFFFFF;
-                                    unsigned long long numberOfReceivedBytesSumOfDeltas = 0;
-                                    int worstNumberOfTransmittedBytesPeerIndex = -1;
-                                    unsigned long long worstNumberOfTransmittedBytesDelta = 0xFFFFFFFFFFFFFFFF;
-                                    unsigned long long numberOfTransmittedBytesSumOfDeltas = 0;
-                                    unsigned long long numberOfDeltas = 0;
-
-                                    for (unsigned int i = MAX_NUMBER_OF_PEERS; i-- > 0; )
+                                    unsigned int numberOfBetterScores = 1;
+                                    for (unsigned int i = 0; i < numberOfMiners; i++)
                                     {
-                                        if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type >= 0)
+                                        if (minerScores[i] >= bestMiningScore)
                                         {
-                                            unsigned long long delta = peers[i].numberOfReceivedBytes - peers[i].prevNumberOfReceivedBytes;
-                                            peers[i].prevNumberOfReceivedBytes = peers[i].numberOfReceivedBytes;
-                                            if (delta < worstNumberOfReceivedBytesDelta)
-                                            {
-                                                worstNumberOfReceivedBytesPeerIndex = i;
-                                                worstNumberOfReceivedBytesDelta = delta;
-                                            }
-                                            numberOfReceivedBytesSumOfDeltas += delta;
-
-                                            delta = peers[i].numberOfTransmittedBytes - peers[i].prevNumberOfTransmittedBytes;
-                                            peers[i].prevNumberOfTransmittedBytes = peers[i].numberOfTransmittedBytes;
-                                            if (delta < worstNumberOfTransmittedBytesDelta)
-                                            {
-                                                worstNumberOfTransmittedBytesPeerIndex = i;
-                                                worstNumberOfTransmittedBytesDelta = delta;
-                                            }
-                                            numberOfTransmittedBytesSumOfDeltas += delta;
-
-                                            numberOfDeltas++;
+                                            numberOfBetterScores++;
                                         }
                                     }
-                                    if (worstNumberOfReceivedBytesPeerIndex >= 0 && worstNumberOfReceivedBytesDelta <= numberOfReceivedBytesSumOfDeltas / ((numberOfDeltas ? numberOfDeltas : 1) * 3))
-                                    {
-                                        setText(message, L"A peer sending too few bytes (");
-                                        appendNumber(message, worstNumberOfReceivedBytesDelta, TRUE);
-                                        appendText(message, L" / ");
-                                        appendNumber(message, numberOfReceivedBytesSumOfDeltas / (numberOfDeltas ? numberOfDeltas : 1), TRUE);
-                                        appendText(message, L") is disconnected.");
-                                        log(message);
 
-                                        forget(*((int*)peers[worstNumberOfReceivedBytesPeerIndex].address));
-                                        if (!worstNumberOfReceivedBytesDelta)
-                                        {
-                                            blacklist(*((int*)peers[worstNumberOfReceivedBytesPeerIndex].address));
-                                        }
-                                        close(&peers[worstNumberOfReceivedBytesPeerIndex]);
+                                    setText(message, L"Score = ");
+                                    appendNumber(message, bestMiningScore, TRUE);
+                                    appendText(message, L" (");
+                                    appendNumber(message, (numberOfMiningIterations - prevNumberOfMiningIterations) * frequency / (__rdtsc() - prevMiningPerformanceTick), TRUE);
+                                    prevMiningPerformanceTick = __rdtsc();
+                                    prevNumberOfMiningIterations = numberOfMiningIterations;
+                                    appendText(message, L" it/s); rating = ");
+                                    appendNumber(message, numberOfBetterScores, TRUE);
+                                    appendText(message, L" of ");
+                                    appendNumber(message, numberOfMiners, TRUE);
+                                    appendText(message, L"; own computor index = ");
+                                    if (system.ownComputorIndex < 0)
+                                    {
+                                        appendText(message, L"n/a.");
                                     }
                                     else
                                     {
-                                        worstNumberOfReceivedBytesPeerIndex = -1;
+                                        appendNumber(message, system.ownComputorIndex, FALSE);
+                                        appendText(message, L".");
                                     }
-                                    if (worstNumberOfTransmittedBytesPeerIndex != worstNumberOfReceivedBytesPeerIndex && worstNumberOfTransmittedBytesPeerIndex >= 0 && worstNumberOfTransmittedBytesDelta <= numberOfTransmittedBytesSumOfDeltas / ((numberOfDeltas ? numberOfDeltas : 1) * 3))
+                                    log(message);
+
+                                    if (bestMiningScore > knownMiningScore || __rdtsc() - prevResourceTestingSolutionPublicationTick >= RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD * frequency)
                                     {
-                                        setText(message, L"A peer receiving too few bytes (");
-                                        appendNumber(message, worstNumberOfTransmittedBytesDelta, TRUE);
-                                        appendText(message, L" / ");
-                                        appendNumber(message, numberOfTransmittedBytesSumOfDeltas / (numberOfDeltas ? numberOfDeltas : 1), TRUE);
-                                        appendText(message, L") is disconnected.");
-                                        log(message);
-
-                                        forget(*((int*)peers[worstNumberOfTransmittedBytesPeerIndex].address));
-                                        if (!worstNumberOfTransmittedBytesDelta)
+                                        if (bestMiningScore > knownMiningScore)
                                         {
-                                            blacklist(*((int*)peers[worstNumberOfTransmittedBytesPeerIndex].address));
-                                        }
-                                        close(&peers[worstNumberOfTransmittedBytesPeerIndex]);
-                                    }
+                                            knownMiningScore = bestMiningScore;
 
-                                    prevPeerRatingTick = __rdtsc();
-
-                                    bs->RestoreTPL(tpl);
-                                }
-
-                                if (__rdtsc() - prevLogTick >= frequency)
-                                {
-                                    unsigned long long numberOfWaitingBytes = 0;
-
-                                    for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
-                                    {
-                                        if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type > 0)
-                                        {
-                                            numberOfWaitingBytes += peers[i].dataToTransmitSize;
-                                        }
-                                    }
-
-                                    CHAR16 message[256]; setText(message, L"["); appendNumber(message, !numberOfBusyProcessorsNumberOfValues ? (numberOfBusyProcessors * 100 / numberOfProcessors) : ((numberOfBusyProcessorsSumOfValues * 100) / (numberOfBusyProcessorsNumberOfValues * numberOfProcessors)), FALSE); appendText(message, L"% CPU / "); appendNumber(message, numberOfProcessedRequests - prevNumberOfProcessedRequests, TRUE); appendText(message, L"] "); appendNumber(message, MAX_NUMBER_OF_PEERS - numberOfFreePeerSlots - numberOfAcceptingPeerSlots - numberOfWebSocketClients, TRUE); appendText(message, L"/"); appendNumber(message, numberOfPublicPeers, TRUE); appendText(message, L"/"); appendNumber(message, numberOfBlacklistedPeers, TRUE); appendText(message, L" peers ("); appendNumber(message, numberOfReceivedBytes - prevNumberOfReceivedBytes, TRUE); appendText(message, L" rx / "); appendNumber(message, numberOfTransmittedBytes - prevNumberOfTransmittedBytes, TRUE); appendText(message, L" tx / "); appendNumber(message, numberOfWaitingBytes, TRUE); appendText(message, L" wx)."); log(message);
-                                    numberOfBusyProcessorsSumOfValues = 0;
-                                    numberOfBusyProcessorsNumberOfValues = 0;
-                                    prevNumberOfProcessedRequests = numberOfProcessedRequests;
-                                    prevNumberOfReceivedBytes = numberOfReceivedBytes;
-                                    prevNumberOfTransmittedBytes = numberOfTransmittedBytes;
-
-                                    log(peersGraph);
-
-#if NUMBER_OF_MINING_PROCESSORS
-                                    unsigned long long random;
-                                    _rdrand64_step(&random);
-                                    if (bestMiningScore >= 0 && !(random % 5))
-                                    {
-                                        unsigned int numberOfBetterScores = 1;
-                                        for (unsigned int i = 0; i < numberOfMiners; i++)
-                                        {
-                                            if (minerScores[i] >= bestMiningScore)
-                                            {
-                                                numberOfBetterScores++;
-                                            }
-                                        }
-
-                                        setText(message, L"Score = ");
-                                        appendNumber(message, bestMiningScore, TRUE);
-                                        appendText(message, L" (");
-                                        appendNumber(message, (numberOfMiningIterations - prevNumberOfMiningIterations) * frequency / (__rdtsc() - prevMiningPerformanceTick), TRUE);
-                                        prevMiningPerformanceTick = __rdtsc();
-                                        prevNumberOfMiningIterations = numberOfMiningIterations;
-                                        appendText(message, L" it/s); rating = ");
-                                        appendNumber(message, numberOfBetterScores, TRUE);
-                                        appendText(message, L" of ");
-                                        appendNumber(message, numberOfMiners, TRUE);
-                                        appendText(message, L"; own computor index = ");
-                                        if (system.ownComputorIndex < 0)
-                                        {
-                                            appendText(message, L"n/a.");
+                                            saveSolution();
                                         }
                                         else
                                         {
-                                            appendNumber(message, system.ownComputorIndex, FALSE);
-                                            appendText(message, L".");
+                                            prevResourceTestingSolutionPublicationTick = __rdtsc();
                                         }
-                                        log(message);
 
-                                        if (bestMiningScore > knownMiningScore || __rdtsc() - prevResourceTestingSolutionPublicationTick >= RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD * frequency)
-                                        {
-                                            if (bestMiningScore > knownMiningScore)
-                                            {
-                                                knownMiningScore = bestMiningScore;
+                                        solution.header.size = sizeof(solution);
+                                        solution.header.protocol = PROTOCOL;
+                                        solution.header.type = BROADCAST_RESOURCE_TESTING_SOLUTION;
+                                        bs->CopyMem(solution.broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey, computorPublicKey, 32);
+                                        solution.broadcastResourceTestingSolution.resourceTestingSolution.score = knownMiningScore;
+                                        bs->CopyMem(solution.broadcastResourceTestingSolution.resourceTestingSolution.neuronLinks, bestNeuronLinks, sizeof(solution.broadcastResourceTestingSolution.resourceTestingSolution.neuronLinks));
 
-                                                saveSolution();
-                                            }
-                                            else
-                                            {
-                                                prevResourceTestingSolutionPublicationTick = __rdtsc();
-                                            }
-
-                                            solution.header.size = sizeof(solution);
-                                            solution.header.protocol = PROTOCOL;
-                                            solution.header.type = BROADCAST_RESOURCE_TESTING_SOLUTION;
-                                            bs->CopyMem(solution.broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey, computorPublicKey, 32);
-                                            solution.broadcastResourceTestingSolution.resourceTestingSolution.score = knownMiningScore;
-                                            bs->CopyMem(solution.broadcastResourceTestingSolution.resourceTestingSolution.neuronLinks, bestNeuronLinks, sizeof(solution.broadcastResourceTestingSolution.resourceTestingSolution.neuronLinks));
-
-                                            for (unsigned int i = 0; i < MAX_NUMBER_OF_PEERS; i++)
-                                            {
-                                                if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type > 0)
-                                                {
-                                                    if (peers[i].isTransmitting)
-                                                    {
-                                                        if (peers[i].dataToTransmitSize <= BUFFER_SIZE - solution.header.size)
-                                                        {
-                                                            bs->CopyMem(&peers[i].dataToTransmit[peers[i].dataToTransmitSize], &solution, solution.header.size);
-                                                            peers[i].dataToTransmitSize += solution.header.size;
-                                                        }
-                                                        else
-                                                        {
-                                                            forget(*((int*)peers[i].address));
-                                                            blacklist(*((int*)peers[i].address));
-                                                            close(&peers[i]);
-                                                            log(L"A peer incapable of receiving all the data is disconnected and blacklisted.");
-                                                        }
-                                                    }
-                                                    else
-                                                    {
-                                                        bs->CopyMem(peers[i].transmitData.FragmentTable[0].FragmentBuffer, &solution, solution.header.size);
-                                                        transmit(&peers[i], solution.header.size);
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-#endif
-
-                                    prevLogTick = __rdtsc();
-
-                                    if (system.ownComputorIndex >= 0)
-                                    {
-                                        struct
-                                        {
-                                            RequestResponseHeader header;
-                                            BroadcastTickEnding broadcastTickEnding;
-                                        } tickEnding;
-
-                                        tickEnding.header.size = sizeof(tickEnding);
-                                        tickEnding.header.protocol = PROTOCOL;
-                                        tickEnding.header.type = BROADCAST_TICK_ENDING;
-
-                                        tickEnding.broadcastTickEnding.tickEnding.computorIndex = system.ownComputorIndex;
-                                        tickEnding.broadcastTickEnding.tickEnding.epoch = 0;
-                                        tickEnding.broadcastTickEnding.tickEnding.tick = 0;
-
-                                        EFI_TIME time;
-                                        rs->GetTime(&time, NULL);
-                                        tickEnding.broadcastTickEnding.tickEnding.year = time.Year - 2000;
-                                        tickEnding.broadcastTickEnding.tickEnding.month = time.Month;
-                                        tickEnding.broadcastTickEnding.tickEnding.day = time.Day;
-                                        tickEnding.broadcastTickEnding.tickEnding.hour = time.Hour;
-                                        tickEnding.broadcastTickEnding.tickEnding.minute = time.Minute;
-                                        tickEnding.broadcastTickEnding.tickEnding.second = time.Second;
-                                        tickEnding.broadcastTickEnding.tickEnding.millisecond = time.Nanosecond / 1000000;
-
-                                        unsigned char digest[32];
-                                        KangarooTwelve((unsigned char*)&tickEnding.broadcastTickEnding.tickEnding, sizeof(tickEnding.broadcastTickEnding.tickEnding) - 64, digest, sizeof(digest));
-                                        sign(ownSubseed, ownPublicKey, digest, tickEnding.broadcastTickEnding.tickEnding.signature);
-
-                                        for (unsigned int i = 0; i < 0/*MAX_NUMBER_OF_PEERS*/; i++)
+                                        for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
                                         {
                                             if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type > 0)
                                             {
@@ -6654,19 +6574,98 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         }
                                     }
                                 }
+#endif
 
-                                if (bs->CheckEvent(st->ConIn->WaitForKey) == EFI_SUCCESS)
+                                for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS; i++)
                                 {
-                                    state = 1;
+                                    if (!peers[i].tcp4Protocol)
+                                    {
+                                        unsigned char address[4];
+                                        unsigned int random;
+                                        _rdrand32_step(&random);
+                                        while (_InterlockedCompareExchange8(&publicPeersLock, 1, 0))
+                                        {
+                                        }
+                                        *((int*)address) = *((int*)publicPeers[random % numberOfPublicPeers].address);
+                                        publicPeersLock = 0;
+                                        connect(address);
+                                    }
+                                }
+
+                                prevLogTick = __rdtsc();
+
+                                if (system.ownComputorIndex >= 0)
+                                {
+                                    struct
+                                    {
+                                        RequestResponseHeader header;
+                                        BroadcastTickEnding broadcastTickEnding;
+                                    } tickEnding;
+
+                                    tickEnding.header.size = sizeof(tickEnding);
+                                    tickEnding.header.protocol = PROTOCOL;
+                                    tickEnding.header.type = BROADCAST_TICK_ENDING;
+
+                                    tickEnding.broadcastTickEnding.tickEnding.computorIndex = system.ownComputorIndex;
+                                    tickEnding.broadcastTickEnding.tickEnding.epoch = 0;
+                                    tickEnding.broadcastTickEnding.tickEnding.tick = 0;
+
+                                    EFI_TIME time;
+                                    rs->GetTime(&time, NULL);
+                                    tickEnding.broadcastTickEnding.tickEnding.year = time.Year - 2000;
+                                    tickEnding.broadcastTickEnding.tickEnding.month = time.Month;
+                                    tickEnding.broadcastTickEnding.tickEnding.day = time.Day;
+                                    tickEnding.broadcastTickEnding.tickEnding.hour = time.Hour;
+                                    tickEnding.broadcastTickEnding.tickEnding.minute = time.Minute;
+                                    tickEnding.broadcastTickEnding.tickEnding.second = time.Second;
+                                    tickEnding.broadcastTickEnding.tickEnding.millisecond = time.Nanosecond / 1000000;
+
+                                    unsigned char digest[32];
+                                    tickEnding.broadcastTickEnding.tickEnding.computorIndex ^= 4;
+                                    KangarooTwelve((unsigned char*)&tickEnding.broadcastTickEnding.tickEnding, sizeof(tickEnding.broadcastTickEnding.tickEnding) - 64, digest, sizeof(digest));
+                                    tickEnding.broadcastTickEnding.tickEnding.computorIndex ^= 4;
+                                    sign(ownSubseed, ownPublicKey, digest, tickEnding.broadcastTickEnding.tickEnding.signature);
+
+                                    for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
+                                    {
+                                        if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type > 0)
+                                        {
+                                            if (peers[i].isTransmitting)
+                                            {
+                                                if (peers[i].dataToTransmitSize <= BUFFER_SIZE - tickEnding.header.size)
+                                                {
+                                                    bs->CopyMem(&peers[i].dataToTransmit[peers[i].dataToTransmitSize], &tickEnding, tickEnding.header.size);
+                                                    peers[i].dataToTransmitSize += tickEnding.header.size;
+                                                }
+                                                else
+                                                {
+                                                    forget(*((int*)peers[i].address));
+                                                    blacklist(*((int*)peers[i].address));
+                                                    close(&peers[i]);
+                                                    log(L"A peer incapable of receiving all the data is disconnected and blacklisted.");
+                                                }
+                                            }
+                                            else
+                                            {
+                                                bs->CopyMem(peers[i].transmitData.FragmentTable[0].FragmentBuffer, &tickEnding, tickEnding.header.size);
+                                                transmit(&peers[i], tickEnding.header.size);
+                                            }
+                                        }
+                                    }
                                 }
                             }
 
+                            if (bs->CheckEvent(st->ConIn->WaitForKey) == EFI_SUCCESS)
+                            {
+                                state = 1;
+                            }
+                        }
+
 #if NUMBER_OF_COMPUTING_PROCESSORS
-                            saveSystem();
+                        saveSystem();
 #endif
 
-                            log(L"The node can now be shut down.");
-                        }
+                        log(L"The node can now be shut down.");
                     }
                 }
             }
