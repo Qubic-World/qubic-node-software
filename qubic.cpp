@@ -3481,7 +3481,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 
 #define VERSION_A 1
 #define VERSION_B 4
-#define VERSION_C 2
+#define VERSION_C 3
 
 #define BUFFER_SIZE 4194304
 #define DEJAVU_SWAP_PERIOD 30
@@ -3840,6 +3840,8 @@ static volatile long long numberOfMiningIterations = 0;
 static unsigned int numberOfMiners = 0;
 static __m256i minerPublicKeys[MAX_NUMBER_OF_MINERS];
 static unsigned int minerScores[MAX_NUMBER_OF_MINERS];
+
+static long long numberOfTickEndings[NUMBER_OF_COMPUTORS];
 
 struct
 {
@@ -4559,6 +4561,8 @@ static void requestProcessor(void* ProcedureArgument)
                     request->tickEnding.computorIndex ^= 4;
                     if (verify(latestComputorStates[NUMBER_OF_COMPUTORS].computorPublicKeys[request->tickEnding.computorIndex], digest, request->tickEnding.signature))
                     {
+                        numberOfTickEndings[request->tickEnding.computorIndex]++;
+
                         bs->CopyMem(&latestTickEndings[request->tickEnding.computorIndex], &request->tickEnding, sizeof(TickEnding));
 
                         bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
@@ -6065,6 +6069,8 @@ static BOOLEAN initialize()
         addPublicPeer((unsigned char*)knownPublicPeers[random % (sizeof(knownPublicPeers) / sizeof(knownPublicPeers[0]))]);
     }
 
+    bs->SetMem(numberOfTickEndings, sizeof(numberOfTickEndings), 0);
+
     return TRUE;
 }
 
@@ -6479,7 +6485,33 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     else
                                     {
                                         appendNumber(message, system.ownComputorIndex, FALSE);
-                                        appendText(message, L".");
+                                        appendText(message, L" [");
+                                        unsigned long long minNumberOfTickEndings = 0xFFFFFFFFFFFFFFFF;
+                                        unsigned long long maxNumberOfTickEndings = 0;
+                                        unsigned long long totalNumberOfTickEndings = 0;
+                                        for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                                        {
+                                            if (i != system.ownComputorIndex)
+                                            {
+                                                if (numberOfTickEndings[i] < minNumberOfTickEndings)
+                                                {
+                                                    minNumberOfTickEndings = numberOfTickEndings[i];
+                                                }
+                                                if (numberOfTickEndings[i] > maxNumberOfTickEndings)
+                                                {
+                                                    maxNumberOfTickEndings = numberOfTickEndings[i];
+                                                }
+                                                totalNumberOfTickEndings += numberOfTickEndings[i];
+                                            }
+                                        }
+                                        appendNumber(message, minNumberOfTickEndings, TRUE);
+                                        appendText(message, L"..");
+                                        appendNumber(message, totalNumberOfTickEndings / (NUMBER_OF_COMPUTORS - 1), TRUE);
+                                        appendText(message, L"..");
+                                        appendNumber(message, maxNumberOfTickEndings, TRUE);
+                                        appendText(message, L"] ");
+                                        appendNumber(message, totalNumberOfTickEndings, TRUE);
+                                        appendText(message, L" ticks.");
                                     }
                                     log(message);
 
