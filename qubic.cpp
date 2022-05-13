@@ -976,25 +976,21 @@ static void log(const CHAR16* message)
 
     EFI_TIME time;
     rs->GetTime(&time, NULL);
-    timestampedMessage[0] = time.Year / 1000 + L'0';
-    timestampedMessage[1] = (time.Year %= 1000) / 100 + L'0';
-    timestampedMessage[2] = (time.Year %= 100) / 10 + L'0';
-    timestampedMessage[3] = time.Year % 10 + L'0';
-    timestampedMessage[4] = time.Month / 10 + L'0';
-    timestampedMessage[5] = time.Month % 10 + L'0';
-    timestampedMessage[6] = time.Day / 10 + L'0';
-    timestampedMessage[7] = time.Day % 10 + L'0';
-    timestampedMessage[8] = ' ';
-    timestampedMessage[9] = time.Hour / 10 + L'0';
-    timestampedMessage[10] = time.Hour % 10 + L'0';
-    timestampedMessage[11] = time.Minute / 10 + L'0';
-    timestampedMessage[12] = time.Minute % 10 + L'0';
-    timestampedMessage[13] = time.Second / 10 + L'0';
-    timestampedMessage[14] = time.Second % 10 + L'0';
-    timestampedMessage[15] = ' ';
-    timestampedMessage[16] = '|';
-    timestampedMessage[17] = ' ';
-    timestampedMessage[18] = 0;
+    timestampedMessage[0] = (time.Year %= 100) / 10 + L'0';
+    timestampedMessage[1] = time.Year % 10 + L'0';
+    timestampedMessage[2] = time.Month / 10 + L'0';
+    timestampedMessage[3] = time.Month % 10 + L'0';
+    timestampedMessage[4] = time.Day / 10 + L'0';
+    timestampedMessage[5] = time.Day % 10 + L'0';
+    timestampedMessage[6] = time.Hour / 10 + L'0';
+    timestampedMessage[7] = time.Hour % 10 + L'0';
+    timestampedMessage[8] = time.Minute / 10 + L'0';
+    timestampedMessage[9] = time.Minute % 10 + L'0';
+    timestampedMessage[10] = time.Second / 10 + L'0';
+    timestampedMessage[11] = time.Second % 10 + L'0';
+    timestampedMessage[12] = ':';
+    timestampedMessage[13] = ' ';
+    timestampedMessage[14] = 0;
 
     appendText(timestampedMessage, message);
     appendText(timestampedMessage, L"\r\n");
@@ -3477,7 +3473,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 
 #define VERSION_A 1
 #define VERSION_B 4
-#define VERSION_C 6
+#define VERSION_C 7
 
 #define BUFFER_SIZE 4194304
 #define DEJAVU_SWAP_PERIOD 30
@@ -3536,7 +3532,7 @@ typedef struct
 
 typedef struct
 {
-    unsigned long long rating;
+    bool isVerified;
     unsigned char address[4];
 } PublicPeer;
 
@@ -4071,9 +4067,12 @@ static void forget(int address)
         {
             if (*((int*)publicPeers[j].address) == address)
             {
-                if (j != --numberOfPublicPeers)
+                if (!publicPeers[j].isVerified)
                 {
-                    bs->CopyMem(&publicPeers[j], &publicPeers[numberOfPublicPeers], sizeof(PublicPeer));
+                    if (j != --numberOfPublicPeers)
+                    {
+                        bs->CopyMem(&publicPeers[j], &publicPeers[numberOfPublicPeers], sizeof(PublicPeer));
+                    }
                 }
 
                 break;
@@ -4097,7 +4096,7 @@ static void addPublicPeer(unsigned char address[4])
         }
         if (i == numberOfPublicPeers)
         {
-            publicPeers[numberOfPublicPeers].rating = 1;
+            publicPeers[numberOfPublicPeers].isVerified = false;
             *((int*)publicPeers[numberOfPublicPeers++].address) = *((int*)address);
             totalRatingOfPublicPeers++;
         }
@@ -4252,7 +4251,8 @@ static void requestProcessor(void* ProcedureArgument)
             {
                 unsigned int random;
                 _rdrand32_step(&random);
-                *((int*)response->peers[i]) = *((int*)publicPeers[random % numberOfPublicPeers].address);
+                const unsigned int publicPeerIndex = random % numberOfPublicPeers;
+                *((int*)response->peers[i]) = publicPeers[publicPeerIndex].isVerified ? *((int*)publicPeers[publicPeerIndex].address) : 0;
             }
 
             responseHeader->size = sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers) + 1 + 8 + (VERSION_A > 9 ? 2 : 1) + (VERSION_B > 9 ? 2 : 1) + (VERSION_C > 9 ? 2 : 1);
@@ -4532,33 +4532,52 @@ static void requestProcessor(void* ProcedureArgument)
             && request->tickEnding.second <= 59
             && request->tickEnding.millisecond <= 999)
         {
-            while (_InterlockedCompareExchange8(&latestTickEndingsLock, 1, 0))
-            {
-            }
+            const int month = (request->tickEnding.month + 9) % 12;
+            const int year = 2000 + request->tickEnding.year - month / 10;
+            const int dayIndex = year * 365 + year / 4 - year / 100 + year / 400 + (month * 306 + 5) / 10 + request->tickEnding.day - 1;
 
-            if (request->tickEnding.year > latestTickEndings[request->tickEnding.computorIndex].year
-                || (request->tickEnding.year == latestTickEndings[request->tickEnding.computorIndex].year && (request->tickEnding.month > latestTickEndings[request->tickEnding.computorIndex].month
-                    || (request->tickEnding.month == latestTickEndings[request->tickEnding.computorIndex].month && (request->tickEnding.day > latestTickEndings[request->tickEnding.computorIndex].day
-                        || (request->tickEnding.day == latestTickEndings[request->tickEnding.computorIndex].day && (request->tickEnding.hour > latestTickEndings[request->tickEnding.computorIndex].hour
-                            || (request->tickEnding.hour == latestTickEndings[request->tickEnding.computorIndex].hour && (request->tickEnding.minute > latestTickEndings[request->tickEnding.computorIndex].minute
-                                || (request->tickEnding.minute == latestTickEndings[request->tickEnding.computorIndex].minute && (request->tickEnding.second > latestTickEndings[request->tickEnding.computorIndex].second
-                                    /*|| (request->tickEnding.second == latestTickEndings[request->tickEnding.computorIndex].second && (request->tickEnding.millisecond > latestTickEndings[request->tickEnding.computorIndex].millisecond)) */ )))))))))))
+            EFI_TIME time;
+
+            rs->GetTime(&time, NULL);
+
+            const int ownMonth = (time.Month + 9) % 12;
+            const int ownYear = time.Year - ownMonth / 10;
+            const int ownDayIndex = ownYear * 365 + ownYear / 4 - ownYear / 100 + ownYear / 400 + (ownMonth * 306 + 5) / 10 + time.Day - 1;
+
+            if ((((((long long)dayIndex) * 24 + request->tickEnding.hour) * 60 + request->tickEnding.minute) * 60 + request->tickEnding.second) * 1000 + request->tickEnding.millisecond
+                <= (((((long long)ownDayIndex) * 24 + time.Hour) * 60 + time.Minute) * 60 + time.Second + 1) * 1000 + time.Nanosecond / 1000000)
             {
                 if (latestComputorStates[NUMBER_OF_COMPUTORS].timestamp)
                 {
-                    unsigned char digest[32];
-                    request->tickEnding.computorIndex ^= 4;
-                    KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
-                    request->tickEnding.computorIndex ^= 4;
-                    if (verify(latestComputorStates[NUMBER_OF_COMPUTORS].computorPublicKeys[request->tickEnding.computorIndex], digest, request->tickEnding.signature))
+                    // TODO: Reset [latestTickEndings] when an epoch ends
+
+                    while (_InterlockedCompareExchange8(&latestTickEndingsLock, 1, 0))
                     {
-                        numberOfTickEndings[request->tickEnding.computorIndex]++;
-
-                        bs->CopyMem(&latestTickEndings[request->tickEnding.computorIndex], &request->tickEnding, sizeof(TickEnding));
-
-                        bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
-                        processor->responseTransmittingType = -1;
                     }
+
+                    const int prevMonth = (latestTickEndings[request->tickEnding.computorIndex].month + 9) % 12;
+                    const int prevYear = 2000 + latestTickEndings[request->tickEnding.computorIndex].year - prevMonth / 10;
+                    const int prevDayIndex = prevYear * 365 + prevYear / 4 - prevYear / 100 + prevYear / 400 + (prevMonth * 306 + 5) / 10 + latestTickEndings[request->tickEnding.computorIndex].day - 1;
+
+                    if ((((((long long)dayIndex) * 24 + request->tickEnding.hour) * 60 + request->tickEnding.minute) * 60 + request->tickEnding.second) * 1000 + request->tickEnding.millisecond
+                        >= (((((long long)prevDayIndex) * 24 + latestTickEndings[request->tickEnding.computorIndex].hour) * 60 + latestTickEndings[request->tickEnding.computorIndex].minute) * 60 + latestTickEndings[request->tickEnding.computorIndex].second + 1) * 1000 + latestTickEndings[request->tickEnding.computorIndex].millisecond)
+                    {
+                        unsigned char digest[32];
+                        request->tickEnding.computorIndex ^= 4;
+                        KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
+                        request->tickEnding.computorIndex ^= 4;
+                        if (verify(latestComputorStates[NUMBER_OF_COMPUTORS].computorPublicKeys[request->tickEnding.computorIndex], digest, request->tickEnding.signature))
+                        {
+                            numberOfTickEndings[request->tickEnding.computorIndex]++;
+
+                            bs->CopyMem(&latestTickEndings[request->tickEnding.computorIndex], &request->tickEnding, sizeof(TickEnding));
+
+                            bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
+                            processor->responseTransmittingType = -1;
+                        }
+                    }
+
+                    latestTickEndingsLock = 0;
                 }
                 else
                 {
@@ -4566,8 +4585,6 @@ static void requestProcessor(void* ProcedureArgument)
                     processor->responseTransmittingType = -1;
                 }
             }
-
-            latestTickEndingsLock = 0;
         }
     }
     break;
@@ -5151,6 +5168,16 @@ static void connectCallback(EFI_EVENT Event, void* Context)
     }
     else
     {
+        for (unsigned int i = 0; i < numberOfPublicPeers; i++)
+        {
+            if (*((int*)peer->address) == *((int*)publicPeers[i].address))
+            {
+                publicPeers[i].isVerified = true;
+
+                break;
+            }
+        }
+
         peer->exchangedPublicPeers = TRUE;
 
         ExchangePublicPeers* request = (ExchangePublicPeers*)((char*)peer->transmitData.FragmentTable[0].FragmentBuffer + sizeof(RequestResponseHeader));
@@ -5171,7 +5198,8 @@ static void connectCallback(EFI_EVENT Event, void* Context)
         {
             unsigned int random;
             _rdrand32_step(&random);
-            *((int*)request->peers[i]) = *((int*)publicPeers[random % numberOfPublicPeers].address);
+            const unsigned int publicPeerIndex = random % numberOfPublicPeers;
+            *((int*)request->peers[i]) = publicPeers[publicPeerIndex].isVerified ? *((int*)publicPeers[publicPeerIndex].address) : 0;
         }
         publicPeersLock = 0;
 
@@ -6404,7 +6432,17 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     }
                                 }
 
-                                CHAR16 message[256]; setText(message, L"["); appendNumber(message, !numberOfBusyProcessorsNumberOfValues ? (numberOfBusyProcessors * 100 / numberOfProcessors) : ((numberOfBusyProcessorsSumOfValues * 100) / (numberOfBusyProcessorsNumberOfValues * numberOfProcessors)), FALSE); appendText(message, L"% CPU / "); appendNumber(message, numberOfProcessedRequests - prevNumberOfProcessedRequests, TRUE); appendText(message, L"] "); appendText(message, peersGraph); appendNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" known / "); appendNumber(message, numberOfBlacklistedPeers, TRUE); appendText(message, L" black ("); appendNumber(message, numberOfReceivedBytes - prevNumberOfReceivedBytes, TRUE); appendText(message, L" rx / "); appendNumber(message, numberOfTransmittedBytes - prevNumberOfTransmittedBytes, TRUE); appendText(message, L" tx / "); appendNumber(message, numberOfWaitingBytes, TRUE); appendText(message, L" wx)."); log(message);
+                                unsigned int numberOfVerifiedPublicPeers = 0;
+
+                                for (unsigned int i = 0; i < numberOfPublicPeers; i++)
+                                {
+                                    if (publicPeers[i].isVerified)
+                                    {
+                                        numberOfVerifiedPublicPeers++;
+                                    }
+                                }
+
+                                CHAR16 message[256]; setText(message, L"["); appendNumber(message, !numberOfBusyProcessorsNumberOfValues ? (numberOfBusyProcessors * 100 / numberOfProcessors) : ((numberOfBusyProcessorsSumOfValues * 100) / (numberOfBusyProcessorsNumberOfValues * numberOfProcessors)), FALSE); appendText(message, L"% CPU / "); appendNumber(message, numberOfProcessedRequests - prevNumberOfProcessedRequests, TRUE); appendText(message, L"] "); appendText(message, peersGraph); appendNumber(message, numberOfVerifiedPublicPeers, TRUE); appendText(message, L" ver'd / "); appendNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" known / "); appendNumber(message, numberOfBlacklistedPeers, TRUE); appendText(message, L" black'd ("); appendNumber(message, numberOfReceivedBytes - prevNumberOfReceivedBytes, TRUE); appendText(message, L" rx / "); appendNumber(message, numberOfTransmittedBytes - prevNumberOfTransmittedBytes, TRUE); appendText(message, L" tx / "); appendNumber(message, numberOfWaitingBytes, TRUE); appendText(message, L" wx)."); log(message);
                                 numberOfBusyProcessorsSumOfValues = 0;
                                 numberOfBusyProcessorsNumberOfValues = 0;
                                 prevNumberOfProcessedRequests = numberOfProcessedRequests;
