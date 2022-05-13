@@ -3473,7 +3473,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 
 #define VERSION_A 1
 #define VERSION_B 4
-#define VERSION_C 7
+#define VERSION_C 8
 
 #define BUFFER_SIZE 4194304
 #define DEJAVU_SWAP_PERIOD 30
@@ -4039,6 +4039,13 @@ static void blacklist(int address)
 {
     if (address && numberOfBlacklistedPeers < sizeof(blacklistedPeers) / sizeof(blacklistedPeers[0]) && !isWhitelisted(address))
     {
+        for (unsigned int i = 0; i < numberOfBlacklistedPeers; i++)
+        {
+            if (blacklistedPeers[i] == address)
+            {
+                return;
+            }
+        }
         blacklistedPeers[numberOfBlacklistedPeers++] = address;
     }
 }
@@ -4902,6 +4909,8 @@ static EFI_HANDLE getTcp4Protocol(const unsigned char* remoteAddress, EFI_TCP4_P
             bs->SetMem(&option, sizeof(option), 0);
             option.ReceiveBufferSize = BUFFER_SIZE;
             option.SendBufferSize = BUFFER_SIZE;
+            option.MaxSynBackLog = 1;
+            option.ConnectionTimeout = 1;
             option.EnableWindowScaling = TRUE;
             configData.ControlOption = &option;
 
