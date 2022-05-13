@@ -980,25 +980,21 @@ static void log(const CHAR16* message)
     timestampedMessage[1] = (time.Year %= 1000) / 100 + L'0';
     timestampedMessage[2] = (time.Year %= 100) / 10 + L'0';
     timestampedMessage[3] = time.Year % 10 + L'0';
-    timestampedMessage[4] = '-';
-    timestampedMessage[5] = time.Month / 10 + L'0';
-    timestampedMessage[6] = time.Month % 10 + L'0';
-    timestampedMessage[7] = '-';
-    timestampedMessage[8] = time.Day / 10 + L'0';
-    timestampedMessage[9] = time.Day % 10 + L'0';
-    timestampedMessage[10] = ' ';
-    timestampedMessage[11] = time.Hour / 10 + L'0';
-    timestampedMessage[12] = time.Hour % 10 + L'0';
-    timestampedMessage[13] = ':';
-    timestampedMessage[14] = time.Minute / 10 + L'0';
-    timestampedMessage[15] = time.Minute % 10 + L'0';
-    timestampedMessage[16] = ':';
-    timestampedMessage[17] = time.Second / 10 + L'0';
-    timestampedMessage[18] = time.Second % 10 + L'0';
-    timestampedMessage[19] = ' ';
-    timestampedMessage[20] = '|';
-    timestampedMessage[21] = ' ';
-    timestampedMessage[22] = 0;
+    timestampedMessage[4] = time.Month / 10 + L'0';
+    timestampedMessage[5] = time.Month % 10 + L'0';
+    timestampedMessage[6] = time.Day / 10 + L'0';
+    timestampedMessage[7] = time.Day % 10 + L'0';
+    timestampedMessage[8] = ' ';
+    timestampedMessage[9] = time.Hour / 10 + L'0';
+    timestampedMessage[10] = time.Hour % 10 + L'0';
+    timestampedMessage[11] = time.Minute / 10 + L'0';
+    timestampedMessage[12] = time.Minute % 10 + L'0';
+    timestampedMessage[13] = time.Second / 10 + L'0';
+    timestampedMessage[14] = time.Second % 10 + L'0';
+    timestampedMessage[15] = ' ';
+    timestampedMessage[16] = '|';
+    timestampedMessage[17] = ' ';
+    timestampedMessage[18] = 0;
 
     appendText(timestampedMessage, message);
     appendText(timestampedMessage, L"\r\n");
@@ -3481,7 +3477,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 
 #define VERSION_A 1
 #define VERSION_B 4
-#define VERSION_C 5
+#define VERSION_C 6
 
 #define BUFFER_SIZE 4194304
 #define DEJAVU_SWAP_PERIOD 30
@@ -3535,7 +3531,7 @@ typedef struct
     unsigned int id;
     char type;
     BOOLEAN exchangedPublicPeers;
-    BOOLEAN isTransmitting;
+    BOOLEAN isReceiving, isTransmitting;
 } Peer;
 
 typedef struct
@@ -5023,17 +5019,18 @@ static void receive(Peer* peer)
         }
         else
         {
+            peer->isReceiving = TRUE;
+
             EFI_STATUS status;
             bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, receiveCallback, peer, &peer->receiveToken.CompletionToken.Event);
             peer->receiveData.DataLength = peer->receiveData.FragmentTable[0].FragmentLength = BUFFER_SIZE - (unsigned int)((unsigned long long)peer->receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peer->receiveBuffer);
             if (status = peer->tcp4Protocol->Receive(peer->tcp4Protocol, &peer->receiveToken))
             {
-                if (status != EFI_ACCESS_DENIED)
-                {
-                    logStatus(L"EFI_TCP4_PROTOCOL.Receive() fails", status);
-                }
+                logStatus(L"EFI_TCP4_PROTOCOL.Receive() fails", status);
 
                 bs->CloseEvent(peer->receiveToken.CompletionToken.Event);
+
+                peer->isReceiving = FALSE;
 
                 close(peer);
             }
@@ -5051,10 +5048,10 @@ static void transmit(Peer* peer, unsigned int size)
 {
     const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
 
-    peer->isTransmitting = TRUE;
-
     if (((unsigned long long)peer->tcp4Protocol) > 1)
     {
+        peer->isTransmitting = TRUE;
+
         EFI_STATUS status;
         bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, transmitCallback, peer, &peer->transmitToken.CompletionToken.Event);
 
@@ -5094,12 +5091,11 @@ static void transmit(Peer* peer, unsigned int size)
         peer->transmitData.DataLength = peer->transmitData.FragmentTable[0].FragmentLength = size;
         if (status = peer->tcp4Protocol->Transmit(peer->tcp4Protocol, &peer->transmitToken))
         {
-            if (status != EFI_ACCESS_DENIED)
-            {
-                logStatus(L"EFI_TCP4_PROTOCOL.Transmit() fails", status);
-            }
+            logStatus(L"EFI_TCP4_PROTOCOL.Transmit() fails", status);
 
             bs->CloseEvent(peer->transmitToken.CompletionToken.Event);
+
+            peer->isTransmitting = FALSE;
 
             close(peer);
         }
@@ -5226,6 +5222,7 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
     bs->CloseEvent(Event);
 
     Peer* peer = (Peer*)Context;
+    peer->isReceiving = FALSE;
     if (peer->receiveToken.CompletionToken.Status)
     {
         close(peer);
@@ -5558,12 +5555,11 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                         EFI_STATUS status;
                         if (status = peer->tcp4Protocol->Transmit(peer->tcp4Protocol, &peer->transmitToken))
                         {
-                            if (status != EFI_ACCESS_DENIED)
-                            {
-                                logStatus(L"EFI_TCP4_PROTOCOL.Transmit() fails", status);
-                            }
+                            logStatus(L"EFI_TCP4_PROTOCOL.Transmit() fails", status);
 
                             bs->CloseEvent(peer->transmitToken.CompletionToken.Event);
+
+                            peer->isTransmitting = FALSE;
 
                             close(peer);
                         }
@@ -5660,6 +5656,8 @@ static void transmitCallback(EFI_EVENT Event, void* Context)
     Peer* peer = (Peer*)Context;
     if (peer->transmitToken.CompletionToken.Status)
     {
+        peer->isTransmitting = FALSE;
+
         close(peer);
     }
     else
@@ -6076,7 +6074,7 @@ static void connectAndAccept()
 {
     for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS; i++)
     {
-        if (!peers[i].tcp4Protocol)
+        if (!peers[i].tcp4Protocol && !peers[i].isReceiving && !peers[i].isTransmitting)
         {
             unsigned int random;
             _rdrand32_step(&random);
@@ -6124,7 +6122,7 @@ static void connectAndAccept()
     }
     for (unsigned int i = NUMBER_OF_OUTGOING_CONNECTIONS; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
     {
-        if (!peers[i].tcp4Protocol)
+        if (!peers[i].tcp4Protocol && !peers[i].isReceiving && !peers[i].isTransmitting)
         {
             peers[i].tcp4Protocol = (EFI_TCP4_PROTOCOL*)1;
             *((int*)peers[i].address) = 0;
@@ -6135,7 +6133,6 @@ static void connectAndAccept()
             peers[i].prevNumberOfTransmittedBytes = peers[i].numberOfTransmittedBytes = 0;
             peers[i].id = ++latestPeerId;
             peers[i].exchangedPublicPeers = FALSE;
-            peers[i].isTransmitting = FALSE;
             bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, acceptCallback, &peers[i], &peers[i].acceptToken.CompletionToken.Event);
             EFI_STATUS status;
             if (status = tcp4Protocol->Accept(tcp4Protocol, &peers[i].acceptToken))
