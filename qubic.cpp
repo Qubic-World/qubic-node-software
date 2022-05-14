@@ -32,9 +32,75 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 #define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
 
 static const unsigned char knownPublicPeers[][4] = {
+    { 2, 139, 196, 162 },
+    { 5, 39, 218, 46 },
+    { 37, 48, 102, 161 },
+    { 46, 140, 52, 174 },
+    { 65, 108, 100, 43 },
+    { 65, 108, 140, 15 },
+    { 78, 94, 64, 185 },
+    { 78, 159, 108, 162 },
+    { 82, 114, 88, 225 },
+    { 84, 147, 172, 34 },
+    { 84, 208, 169, 239 },
+    { 88, 99, 67, 51 },
+    { 88, 153, 194, 78 },
+    { 90, 163, 132, 86 },
+    { 91, 5, 122, 76 },
+    { 92, 186, 12, 120 },
+    { 93, 125, 10, 240 },
+    { 93, 125, 105, 208 },
+    { 95, 168, 174, 218 },
+    { 95, 216, 66, 164},
+    { 95, 216, 243, 217 },
+    { 95, 217, 33, 155 },
+    { 134, 17, 25, 28 },
+    { 178, 13, 73, 101 },
+    { 178, 168, 208, 71 },
+    { 178, 172, 194, 143 },
+    { 178, 172, 194, 149 },
+    { 185, 130, 226, 27 },
+    { 185, 130, 226, 102 },
+    { 212, 40, 234, 76 },
+    { 213, 127, 147, 70 },
+    { 213, 184, 249, 83 },
+    { 217, 92, 76, 28 }
 };
 
 static const unsigned char whitelistedPeers[][4] = {
+    { 2, 139, 196, 162 },
+    { 5, 39, 218, 46 },
+    { 37, 48, 102, 161 },
+    { 46, 140, 52, 174 },
+    { 65, 108, 100, 43 },
+    { 65, 108, 140, 15 },
+    { 78, 94, 64, 185 },
+    { 78, 159, 108, 162 },
+    { 82, 114, 88, 225 },
+    { 84, 147, 172, 34 },
+    { 84, 208, 169, 239 },
+    { 88, 99, 67, 51 },
+    { 88, 153, 194, 78 },
+    { 90, 163, 132, 86 },
+    { 91, 5, 122, 76 },
+    { 92, 186, 12, 120 },
+    { 93, 125, 10, 240 },
+    { 93, 125, 105, 208 },
+    { 95, 168, 174, 218 },
+    { 95, 216, 66, 164},
+    { 95, 216, 243, 217 },
+    { 95, 217, 33, 155 },
+    { 134, 17, 25, 28 },
+    { 178, 13, 73, 101 },
+    { 178, 168, 208, 71 },
+    { 178, 172, 194, 143 },
+    { 178, 172, 194, 149 },
+    { 185, 130, 226, 27 },
+    { 185, 130, 226, 102 },
+    { 212, 40, 234, 76 },
+    { 213, 127, 147, 70 },
+    { 213, 184, 249, 83 },
+    { 217, 92, 76, 28 }
 };
 
 static unsigned int numberOfBlacklistedPeers = 0;
@@ -3473,9 +3539,9 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 
 #define VERSION_A 1
 #define VERSION_B 4
-#define VERSION_C 8
+#define VERSION_C 9
 
-#define BUFFER_SIZE 4194304
+#define BUFFER_SIZE 1048576
 #define DEJAVU_SWAP_PERIOD 30
 #define ISSUANCE_RATE 1000000000000
 #define MAX_ENERGY_AMOUNT 9223372036854775807
@@ -4037,7 +4103,8 @@ static BOOLEAN isWhitelisted(int address)
 
 static void blacklist(int address)
 {
-    if (address && numberOfBlacklistedPeers < sizeof(blacklistedPeers) / sizeof(blacklistedPeers[0]) && !isWhitelisted(address))
+    return;
+    /*if (address && numberOfBlacklistedPeers < sizeof(blacklistedPeers) / sizeof(blacklistedPeers[0]) && !isWhitelisted(address))
     {
         for (unsigned int i = 0; i < numberOfBlacklistedPeers; i++)
         {
@@ -4047,7 +4114,7 @@ static void blacklist(int address)
             }
         }
         blacklistedPeers[numberOfBlacklistedPeers++] = address;
-    }
+    }*/
 }
 
 static BOOLEAN isBlacklisted(int address)
@@ -4273,23 +4340,23 @@ static void requestProcessor(void* ProcedureArgument)
             *software++ = 'i';
             *software++ = 'c';
             *software++ = ' ';
-            *software++ = (VERSION_A % 10) + '0';
             if (VERSION_A > 9)
             {
                 *software++ = (VERSION_A / 10) + '0';
             }
+            *software++ = (VERSION_A % 10) + '0';
             *software++ = '.';
-            *software++ = (VERSION_B % 10) + '0';
             if (VERSION_B > 9)
             {
                 *software++ = (VERSION_B / 10) + '0';
             }
+            *software++ = (VERSION_B % 10) + '0';
             *software++ = '.';
-            *software++ = (VERSION_C % 10) + '0';
             if (VERSION_C > 9)
             {
-                *software = (VERSION_C / 10) + '0';
+                *software++ = (VERSION_C / 10) + '0';
             }
+            *software = (VERSION_C % 10) + '0';
         }
 
         ExchangePublicPeers* request = (ExchangePublicPeers*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
@@ -5225,23 +5292,23 @@ static void connectCallback(EFI_EVENT Event, void* Context)
         *software++ = 'i';
         *software++ = 'c';
         *software++ = ' ';
-        *software++ = (VERSION_A % 10) + '0';
         if (VERSION_A > 9)
         {
             *software++ = (VERSION_A / 10) + '0';
         }
+        *software++ = (VERSION_A % 10) + '0';
         *software++ = '.';
-        *software++ = (VERSION_B % 10) + '0';
         if (VERSION_B > 9)
         {
             *software++ = (VERSION_B / 10) + '0';
         }
+        *software++ = (VERSION_B % 10) + '0';
         *software++ = '.';
-        *software++ = (VERSION_C % 10) + '0';
         if (VERSION_C > 9)
         {
-            *software = (VERSION_C / 10) + '0';
+            *software++ = (VERSION_C / 10) + '0';
         }
+        *software = (VERSION_C % 10) + '0';
 
         transmit(peer, requestHeader->size);
 
@@ -6651,12 +6718,14 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 }
                             }
 
+#if NUMBER_OF_COMPUTING_PROCESSORS
                             if (__rdtsc() - prevSystemDataSavingTick >= SYSTEM_DATA_SAVING_PERIOD * frequency)
                             {
                                 saveSystem();
 
                                 prevSystemDataSavingTick = __rdtsc();
                             }
+#endif
 
                             EFI_INPUT_KEY inputKey;
                             if (!st->ConIn->ReadKeyStroke(st->ConIn, &inputKey))
