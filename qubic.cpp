@@ -65,13 +65,6 @@ static const unsigned char knownPublicPeers[][4] = {
     { 217, 92, 76, 28 }
 };
 
-static const unsigned char whitelistedPeers[][4] = {
-    { 88, 99, 67, 51 }
-};
-
-static unsigned int numberOfBlacklistedPeers = 0;
-static unsigned int blacklistedPeers[1000000];
-
 
 
 ////////// UEFI \\\\\\\\\\
@@ -3505,7 +3498,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 
 #define VERSION_A 1
 #define VERSION_B 4
-#define VERSION_C 12
+#define VERSION_C 13
 
 #define BUFFER_SIZE 1048576
 #define DEJAVU_SWAP_PERIOD 30
@@ -4047,85 +4040,32 @@ static void updateTransferStatus(TransferStatus* status)
     transferSuperstatuses[index].lock = 0;
 }
 
-static BOOLEAN isWhitelisted(int address)
-{
-    for (unsigned int i = 0; i < sizeof(whitelistedPeers) / sizeof(whitelistedPeers[0]); i++)
-    {
-        if (*((int*)whitelistedPeers[i]) == address)
-        {
-            return TRUE;
-        }
-    }
-
-    return FALSE;
-}
-
-static void blacklist(int address)
-{
-    if (address && numberOfBlacklistedPeers < sizeof(blacklistedPeers) / sizeof(blacklistedPeers[0]) && !isWhitelisted(address))
-    {
-        for (unsigned int i = 0; i < numberOfBlacklistedPeers; i++)
-        {
-            if (blacklistedPeers[i] == address)
-            {
-                return;
-            }
-        }
-
-        for (unsigned int i = 0; i < numberOfPublicPeers; i++)
-        {
-            if (address == *((int*)publicPeers[i].address) && publicPeers[i].isVerified)
-            {
-                return;
-            }
-        }
-
-        blacklistedPeers[numberOfBlacklistedPeers++] = address;
-    }
-}
-
-static BOOLEAN isBlacklisted(int address)
-{
-    for (unsigned int i = 0; i < sizeof(blacklistedPeers) / sizeof(blacklistedPeers[0]); i++)
-    {
-        if (blacklistedPeers[i] == address)
-        {
-            return TRUE;
-        }
-    }
-
-    return FALSE;
-}
-
 static void forget(int address)
 {
-    if (!isWhitelisted(address))
+    while (_InterlockedCompareExchange8(&publicPeersLock, 1, 0))
     {
-        while (_InterlockedCompareExchange8(&publicPeersLock, 1, 0))
-        {
-        }
-        for (unsigned int j = 0; numberOfPublicPeers > NUMBER_OF_EXCHANGED_PEERS && j < numberOfPublicPeers; j++)
-        {
-            if (*((int*)publicPeers[j].address) == address)
-            {
-                if (!publicPeers[j].isVerified)
-                {
-                    if (j != --numberOfPublicPeers)
-                    {
-                        bs->CopyMem(&publicPeers[j], &publicPeers[numberOfPublicPeers], sizeof(PublicPeer));
-                    }
-                }
-
-                break;
-            }
-        }
-        publicPeersLock = 0;
     }
+    for (unsigned int j = 0; numberOfPublicPeers > NUMBER_OF_EXCHANGED_PEERS && j < numberOfPublicPeers; j++)
+    {
+        if (*((int*)publicPeers[j].address) == address)
+        {
+            if (!publicPeers[j].isVerified)
+            {
+                if (j != --numberOfPublicPeers)
+                {
+                    bs->CopyMem(&publicPeers[j], &publicPeers[numberOfPublicPeers], sizeof(PublicPeer));
+                }
+            }
+
+            break;
+        }
+    }
+    publicPeersLock = 0;
 }
 
 static void addPublicPeer(unsigned char address[4])
 {
-    if ((*((int*)address)) && *((int*)address) != *((int*)ownPublicAddress) && !isBlacklisted(*((int*)address)))
+    if ((*((int*)address)) && *((int*)address) != *((int*)ownPublicAddress))
     {
         unsigned int i;
         for (i = 0; i < numberOfPublicPeers; i++)
@@ -4658,6 +4598,15 @@ static void requestProcessorShutdownCallback(EFI_EVENT Event, void* Context)
     bs->CloseEvent(Event);
 }
 
+static void push(Peer* peer, RequestResponseHeader* requestResponseHeader)
+{
+    if (peer->dataToTransmitSize + requestResponseHeader->size <= BUFFER_SIZE - 10) // Extra 10 bytes are required by WebSocket protocol
+    {
+        bs->CopyMem(&peer->dataToTransmit[peer->dataToTransmitSize], requestResponseHeader, requestResponseHeader->size);
+        peer->dataToTransmitSize += requestResponseHeader->size;
+    }
+}
+
 static void processResponses()
 {
     for (unsigned int i = 0; i < numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS); i++)
@@ -4731,40 +4680,20 @@ static void processResponses()
 
                 if (processor->responseTransmittingType)
                 {
-                    for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
+                    for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
                     {
-                        if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type > 0
-                            && (processor->responseTransmittingType > 0 || &peers[i] != processor->peer))
+                        if (((unsigned long long)peers[j].tcp4Protocol) > 1 && peers[j].isConnectedOrAccepted && !peers[j].closingStage && peers[j].type > 0
+                            && (processor->responseTransmittingType > 0 || &peers[j] != processor->peer))
                         {
-                            if (peers[i].dataToTransmitSize + responseHeader->size <= BUFFER_SIZE)
-                            {
-                                bs->CopyMem(&peers[i].dataToTransmit[peers[i].dataToTransmitSize], processor->responseBuffer, responseHeader->size);
-                                peers[i].dataToTransmitSize += responseHeader->size;
-                            }
-                            else
-                            {
-                                forget(*((int*)processor->peer->address));
-                                _InterlockedCompareExchange8(&processor->peer->closingStage, 1, 0);
-                                log(L"A peer incapable of receiving all the data is disconnected and blacklisted.");
-                            }
+                            push(&peers[j], responseHeader);
                         }
                     }
                 }
                 else
                 {
-                    if (processor->peerId == processor->peer->id && ((unsigned long long)processor->peer->tcp4Protocol) > 1)
+                    if (processor->peerId == processor->peer->id && ((unsigned long long)processor->peer->tcp4Protocol) > 1 && processor->peer->isConnectedOrAccepted && !processor->peer->closingStage)
                     {
-                        if (processor->peer->dataToTransmitSize + responseHeader->size <= BUFFER_SIZE - 10) // 10 bytes are required by WebSocket protocol
-                        {
-                            bs->CopyMem(&processor->peer->dataToTransmit[processor->peer->dataToTransmitSize], processor->responseBuffer, responseHeader->size);
-                            processor->peer->dataToTransmitSize += responseHeader->size;
-                        }
-                        else
-                        {
-                            forget(*((int*)processor->peer->address));
-                            _InterlockedCompareExchange8(&processor->peer->closingStage, 1, 0);
-                            log(L"A peer incapable of receiving all the data is disconnected and blacklisted.");
-                        }
+                        push(processor->peer, responseHeader);
                     }
                 }
             }
@@ -6125,7 +6054,6 @@ static void close()
         {
             if (!peers[i].exchangedPublicPeers && peers[i].handshakingBeginningTick && peers[i].numberOfPendingCallbacks && __rdtsc() - peers[i].handshakingBeginningTick > MAX_HANDSHAKING_DURATION * frequency)
             {
-                blacklist(*((int*)peers[i].address));
                 _InterlockedCompareExchange8(&peers[i].closingStage, 1, 0);
             }
 
@@ -6436,7 +6364,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     }
                                 }
 
-                                setText(message, L"["); appendNumber(message, numberOfProcessedRequests - prevNumberOfProcessedRequests, TRUE); appendText(message, L" req's] "); appendText(message, peersGraph); appendNumber(message, numberOfVerifiedPublicPeers, TRUE); appendText(message, L" ver'd / "); appendNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" known / "); appendNumber(message, numberOfBlacklistedPeers, TRUE); appendText(message, L" black'd ("); appendNumber(message, numberOfReceivedBytes - prevNumberOfReceivedBytes, TRUE); appendText(message, L" rx / "); appendNumber(message, numberOfTransmittedBytes - prevNumberOfTransmittedBytes, TRUE); appendText(message, L" tx / "); appendNumber(message, numberOfWaitingBytes, TRUE); appendText(message, L" wx)."); log(message);
+                                setText(message, L"["); appendNumber(message, numberOfProcessedRequests - prevNumberOfProcessedRequests, TRUE); appendText(message, L" req's] "); appendText(message, peersGraph); appendNumber(message, numberOfVerifiedPublicPeers, TRUE); appendText(message, L" ver'd / "); appendNumber(message, numberOfPublicPeers, TRUE); appendText(message, L" known ("); appendNumber(message, numberOfReceivedBytes - prevNumberOfReceivedBytes, TRUE); appendText(message, L" rx / "); appendNumber(message, numberOfTransmittedBytes - prevNumberOfTransmittedBytes, TRUE); appendText(message, L" tx / "); appendNumber(message, numberOfWaitingBytes, TRUE); appendText(message, L" wx)."); log(message);
                                 prevNumberOfProcessedRequests = numberOfProcessedRequests;
                                 prevNumberOfReceivedBytes = numberOfReceivedBytes;
                                 prevNumberOfTransmittedBytes = numberOfTransmittedBytes;
@@ -6542,19 +6470,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                         for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
                                         {
-                                            if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type > 0)
+                                            if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].isConnectedOrAccepted && !peers[i].closingStage && peers[i].type > 0)
                                             {
-                                                if (peers[i].dataToTransmitSize <= BUFFER_SIZE - solution.header.size)
-                                                {
-                                                    bs->CopyMem(&peers[i].dataToTransmit[peers[i].dataToTransmitSize], &solution, solution.header.size);
-                                                    peers[i].dataToTransmitSize += solution.header.size;
-                                                }
-                                                else
-                                                {
-                                                    forget(*((int*)peers[i].address));
-                                                    _InterlockedCompareExchange8(&peers[i].closingStage, 1, 0);
-                                                    log(L"A peer incapable of receiving all the data is disconnected and blacklisted.");
-                                                }
+                                                push(&peers[i], &solution.header);
                                             }
                                         }
                                     }
@@ -6597,19 +6515,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                     for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
                                     {
-                                        if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type > 0)
+                                        if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].isConnectedOrAccepted && !peers[i].closingStage && peers[i].type > 0)
                                         {
-                                            if (peers[i].dataToTransmitSize <= BUFFER_SIZE - tickEnding.header.size)
-                                            {
-                                                bs->CopyMem(&peers[i].dataToTransmit[peers[i].dataToTransmitSize], &tickEnding, tickEnding.header.size);
-                                                peers[i].dataToTransmitSize += tickEnding.header.size;
-                                            }
-                                            else
-                                            {
-                                                forget(*((int*)peers[i].address));
-                                                _InterlockedCompareExchange8(&peers[i].closingStage, 1, 0);
-                                                log(L"A peer incapable of receiving all the data is disconnected and blacklisted.");
-                                            }
+                                            push(&peers[i], &tickEnding.header);
                                         }
                                     }
                                 }
