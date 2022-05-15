@@ -66,39 +66,7 @@ static const unsigned char knownPublicPeers[][4] = {
 };
 
 static const unsigned char whitelistedPeers[][4] = {
-    { 2, 139, 196, 162 },
-    { 5, 39, 218, 46 },
-    { 37, 48, 102, 161 },
-    { 46, 140, 52, 174 },
-    { 65, 108, 100, 43 },
-    { 65, 108, 140, 15 },
-    { 78, 94, 64, 185 },
-    { 78, 159, 108, 162 },
-    { 82, 114, 88, 225 },
-    { 84, 147, 172, 34 },
-    { 84, 208, 169, 239 },
-    { 88, 99, 67, 51 },
-    { 88, 153, 194, 78 },
-    { 90, 163, 132, 86 },
-    { 91, 5, 122, 76 },
-    { 92, 186, 12, 120 },
-    { 93, 125, 10, 240 },
-    { 93, 125, 105, 208 },
-    { 95, 168, 174, 218 },
-    { 95, 216, 66, 164},
-    { 95, 216, 243, 217 },
-    { 95, 217, 33, 155 },
-    { 134, 17, 25, 28 },
-    { 178, 13, 73, 101 },
-    { 178, 168, 208, 71 },
-    { 178, 172, 194, 143 },
-    { 178, 172, 194, 149 },
-    { 185, 130, 226, 27 },
-    { 185, 130, 226, 102 },
-    { 212, 40, 234, 76 },
-    { 213, 127, 147, 70 },
-    { 213, 184, 249, 83 },
-    { 217, 92, 76, 28 }
+    { 88, 99, 67, 51 }
 };
 
 static unsigned int numberOfBlacklistedPeers = 0;
@@ -3537,17 +3505,17 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 
 #define VERSION_A 1
 #define VERSION_B 4
-#define VERSION_C 11
+#define VERSION_C 12
 
 #define BUFFER_SIZE 1048576
 #define DEJAVU_SWAP_PERIOD 30
 #define ISSUANCE_RATE 1000000000000
 #define MAX_ENERGY_AMOUNT 9223372036854775807
+#define MAX_HANDSHAKING_DURATION 5
 #define MAX_NUMBER_OF_MINERS 10000
 #define MAX_NUMBER_OF_PROCESSORS 1024
 #define MAX_NUMBER_OF_PUBLIC_PEERS 64
 #define MAX_TIMESTAMP_VALUE 9223372036854775807
-#define MAX_TRANSMISSION_DURATION 100000
 #define MIN_ENERGY_AMOUNT 1000000
 #define NUMBER_OF_COMPUTORS (26 * 26)
 #define NUMBER_OF_EXCHANGED_PEERS 4
@@ -3579,6 +3547,7 @@ typedef struct
     EFI_TCP4_CONNECTION_TOKEN connectToken;
     unsigned char address[4];
     EFI_HANDLE connectChildHandle;
+    unsigned long long handshakingBeginningTick;
     void* receiveBuffer;
     EFI_TCP4_RECEIVE_DATA receiveData;
     EFI_TCP4_IO_TOKEN receiveToken;
@@ -4102,6 +4071,15 @@ static void blacklist(int address)
                 return;
             }
         }
+
+        for (unsigned int i = 0; i < numberOfPublicPeers; i++)
+        {
+            if (address == *((int*)publicPeers[i].address) && publicPeers[i].isVerified)
+            {
+                return;
+            }
+        }
+
         blacklistedPeers[numberOfBlacklistedPeers++] = address;
     }
 }
@@ -4308,45 +4286,58 @@ static void requestProcessor(void* ProcedureArgument)
 
             if (!processor->peer->exchangedPublicPeers)
             {
+                for (unsigned int i = 0; i < numberOfPublicPeers; i++)
+                {
+                    if (*((int*)processor->peer->address) == *((int*)publicPeers[i].address))
+                    {
+                        publicPeers[i].isVerified = true;
+
+                        break;
+                    }
+                }
+
                 processor->peer->exchangedPublicPeers = TRUE;
 
-                ExchangePublicPeers* response = (ExchangePublicPeers*)(((char*)processor->responseBuffer) + sizeof(RequestResponseHeader));
-                for (unsigned int i = 0; i < NUMBER_OF_EXCHANGED_PEERS; i++)
+                if (processor->peer->acceptToken.NewChildHandle)
                 {
-                    unsigned int random;
-                    _rdrand32_step(&random);
-                    const unsigned int publicPeerIndex = random % numberOfPublicPeers;
-                    *((int*)response->peers[i]) = publicPeers[publicPeerIndex].isVerified ? *((int*)publicPeers[publicPeerIndex].address) : 0;
-                }
+                    ExchangePublicPeers* response = (ExchangePublicPeers*)(((char*)processor->responseBuffer) + sizeof(RequestResponseHeader));
+                    for (unsigned int i = 0; i < NUMBER_OF_EXCHANGED_PEERS; i++)
+                    {
+                        unsigned int random;
+                        _rdrand32_step(&random);
+                        const unsigned int publicPeerIndex = random % numberOfPublicPeers;
+                        *((int*)response->peers[i]) = publicPeers[publicPeerIndex].isVerified ? *((int*)publicPeers[publicPeerIndex].address) : 0;
+                    }
 
-                responseHeader->size = sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers) + 1 + 8 + (VERSION_A > 9 ? 2 : 1) + (VERSION_B > 9 ? 2 : 1) + (VERSION_C > 9 ? 2 : 1);
-                responseHeader->type = EXCHANGE_PUBLIC_PEERS;
+                    responseHeader->size = sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers) + 1 + 8 + (VERSION_A > 9 ? 2 : 1) + (VERSION_B > 9 ? 2 : 1) + (VERSION_C > 9 ? 2 : 1);
+                    responseHeader->type = EXCHANGE_PUBLIC_PEERS;
 
-                char* software = ((char*)processor->responseBuffer) + (sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers));
-                *software++ = 8 + (VERSION_A > 9 ? 2 : 1) + (VERSION_B > 9 ? 2 : 1) + (VERSION_C > 9 ? 2 : 1);
-                *software++ = 'Q';
-                *software++ = 'u';
-                *software++ = 'b';
-                *software++ = 'i';
-                *software++ = 'c';
-                *software++ = ' ';
-                if (VERSION_A > 9)
-                {
-                    *software++ = (VERSION_A / 10) + '0';
+                    char* software = ((char*)processor->responseBuffer) + (sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers));
+                    *software++ = 8 + (VERSION_A > 9 ? 2 : 1) + (VERSION_B > 9 ? 2 : 1) + (VERSION_C > 9 ? 2 : 1);
+                    *software++ = 'Q';
+                    *software++ = 'u';
+                    *software++ = 'b';
+                    *software++ = 'i';
+                    *software++ = 'c';
+                    *software++ = ' ';
+                    if (VERSION_A > 9)
+                    {
+                        *software++ = (VERSION_A / 10) + '0';
+                    }
+                    *software++ = (VERSION_A % 10) + '0';
+                    *software++ = '.';
+                    if (VERSION_B > 9)
+                    {
+                        *software++ = (VERSION_B / 10) + '0';
+                    }
+                    *software++ = (VERSION_B % 10) + '0';
+                    *software++ = '.';
+                    if (VERSION_C > 9)
+                    {
+                        *software++ = (VERSION_C / 10) + '0';
+                    }
+                    *software = (VERSION_C % 10) + '0';
                 }
-                *software++ = (VERSION_A % 10) + '0';
-                *software++ = '.';
-                if (VERSION_B > 9)
-                {
-                    *software++ = (VERSION_B / 10) + '0';
-                }
-                *software++ = (VERSION_B % 10) + '0';
-                *software++ = '.';
-                if (VERSION_C > 9)
-                {
-                    *software++ = (VERSION_C / 10) + '0';
-                }
-                *software = (VERSION_C % 10) + '0';
             }
 
             ExchangePublicPeers* request = (ExchangePublicPeers*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
@@ -4753,7 +4744,6 @@ static void processResponses()
                             else
                             {
                                 forget(*((int*)processor->peer->address));
-                                blacklist(*((int*)processor->peer->address));
                                 _InterlockedCompareExchange8(&processor->peer->closingStage, 1, 0);
                                 log(L"A peer incapable of receiving all the data is disconnected and blacklisted.");
                             }
@@ -4772,7 +4762,6 @@ static void processResponses()
                         else
                         {
                             forget(*((int*)processor->peer->address));
-                            blacklist(*((int*)processor->peer->address));
                             _InterlockedCompareExchange8(&processor->peer->closingStage, 1, 0);
                             log(L"A peer incapable of receiving all the data is disconnected and blacklisted.");
                         }
@@ -5060,6 +5049,7 @@ static void acceptCallback(EFI_EVENT Event, void* Context)
         }
         else
         {
+            peer->handshakingBeginningTick = __rdtsc();
             peer->isConnectedOrAccepted = TRUE;
         }
     }
@@ -5079,18 +5069,6 @@ static void connectCallback(EFI_EVENT Event, void* Context)
     else
     {
         peer->isConnectedOrAccepted = TRUE;
-
-        for (unsigned int i = 0; i < numberOfPublicPeers; i++)
-        {
-            if (*((int*)peer->address) == *((int*)publicPeers[i].address))
-            {
-                publicPeers[i].isVerified = true;
-
-                break;
-            }
-        }
-
-        peer->exchangedPublicPeers = TRUE;
 
         ExchangePublicPeers* request = (ExchangePublicPeers*)((char*)peer->transmitData.FragmentTable[0].FragmentBuffer + sizeof(RequestResponseHeader));
         unsigned int i;
@@ -5742,16 +5720,15 @@ static BOOLEAN initialize()
     }
 #endif
 
-    if (NUMBER_OF_COMPUTING_PROCESSORS > 0)
+#if NUMBER_OF_COMPUTING_PROCESSORS
+    if (status = bs->AllocatePool(EfiRuntimeServicesData, 0x1000000 * sizeof(Entity), (void**)&entities))
     {
-        if (status = bs->AllocatePool(EfiRuntimeServicesData, 0x1000000 * sizeof(Entity), (void**)&entities))
-        {
-            logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status);
+        logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status);
 
-            return FALSE;
-        }
-        bs->SetMem(entities, 0x1000000 * sizeof(Entity), 0);
+        return FALSE;
     }
+    bs->SetMem(entities, 0x1000000 * sizeof(Entity), 0);
+#endif
     if (status = bs->AllocatePool(EfiRuntimeServicesData, 0x10000 * sizeof(TransferSuperstatus), (void**)&transferSuperstatuses))
     {
         logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status);
@@ -5786,14 +5763,12 @@ static BOOLEAN initialize()
         peers[peerIndex].transmitToken.Packet.TxData = &peers[peerIndex].transmitData;
     }
 
-    while (numberOfPublicPeers < sizeof(knownPublicPeers) / sizeof(knownPublicPeers[0]) && numberOfPublicPeers < MAX_NUMBER_OF_PUBLIC_PEERS)
+    for (unsigned int i = 0; i < sizeof(knownPublicPeers) / sizeof(knownPublicPeers[0]) && numberOfPublicPeers < MAX_NUMBER_OF_PUBLIC_PEERS; i++)
     {
-        unsigned int random;
-        _rdrand32_step(&random);
-        addPublicPeer((unsigned char*)knownPublicPeers[random % (sizeof(knownPublicPeers) / sizeof(knownPublicPeers[0]))]);
+        addPublicPeer((unsigned char*)knownPublicPeers[i]);
     }
 
-#if NUMBER_OF_COMPUTING_RPOCESSORS
+#if NUMBER_OF_COMPUTING_PROCESSORS
     bs->SetMem(numberOfTickEndings, sizeof(numberOfTickEndings), 0);
 #endif
 
@@ -5807,13 +5782,12 @@ static void deinitialize()
     bs->SetMem(ownPrivateKey, sizeof(ownPrivateKey), 0);
     bs->SetMem(ownPublicKey, sizeof(ownPublicKey), 0);
 
-    if (NUMBER_OF_COMPUTING_PROCESSORS > 0)
+#if NUMBER_OF_COMPUTING_PROCESSORS
+    if (entities)
     {
-        if (entities)
-        {
-            bs->FreePool(entities);
-        }
+        bs->FreePool(entities);
     }
+#endif
     if (transferSuperstatuses)
     {
         bs->FreePool(transferSuperstatuses);
@@ -5971,6 +5945,7 @@ static void connectAndAccept()
                     peers[i].prevNumberOfTransmittedBytes = peers[i].numberOfTransmittedBytes = 0;
                     peers[i].id = ++latestPeerId;
                     peers[i].closingStage = 0;
+                    peers[i].exchangedPublicPeers = FALSE;
                     peers[i].tcp4Protocol = tcp4Protocol;
 
                     EFI_STATUS status;
@@ -5980,6 +5955,7 @@ static void connectAndAccept()
                     }
                     else
                     {
+                        peers[i].handshakingBeginningTick = __rdtsc();
                         peers[i].numberOfPendingCallbacks = 1;
                         if (status = peers[i].tcp4Protocol->Connect(peers[i].tcp4Protocol, &peers[i].connectToken))
                         {
@@ -6019,6 +5995,7 @@ static void connectAndAccept()
             }
             else
             {
+                peers[i].handshakingBeginningTick = 0;
                 peers[i].numberOfPendingCallbacks = 1;
                 if (status = tcp4Protocol->Accept(tcp4Protocol, &peers[i].acceptToken))
                 {
@@ -6146,6 +6123,12 @@ static void close()
     {
         if (((unsigned long long)peers[i].tcp4Protocol) > 1)
         {
+            if (!peers[i].exchangedPublicPeers && peers[i].handshakingBeginningTick && peers[i].numberOfPendingCallbacks && __rdtsc() - peers[i].handshakingBeginningTick > MAX_HANDSHAKING_DURATION * frequency)
+            {
+                blacklist(*((int*)peers[i].address));
+                _InterlockedCompareExchange8(&peers[i].closingStage, 1, 0);
+            }
+
             if (_InterlockedCompareExchange8(&peers[i].closingStage, 2, 1) == 1)
             {
                 EFI_STATUS status;
@@ -6408,10 +6391,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         log(message);
 
                                         forget(*((int*)peers[worstNumberOfReceivedBytesPeerIndex].address));
-                                        if (!worstNumberOfReceivedBytesDelta)
-                                        {
-                                            blacklist(*((int*)peers[worstNumberOfReceivedBytesPeerIndex].address));
-                                        }
                                         _InterlockedCompareExchange8(&peers[worstNumberOfReceivedBytesPeerIndex].closingStage, 1, 0);
                                     }
                                     else
@@ -6428,10 +6407,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         log(message);
 
                                         forget(*((int*)peers[worstNumberOfTransmittedBytesPeerIndex].address));
-                                        if (!worstNumberOfTransmittedBytesDelta)
-                                        {
-                                            blacklist(*((int*)peers[worstNumberOfTransmittedBytesPeerIndex].address));
-                                        }
                                         _InterlockedCompareExchange8(&peers[worstNumberOfTransmittedBytesPeerIndex].closingStage, 1, 0);
                                     }
                                 }
@@ -6577,7 +6552,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 else
                                                 {
                                                     forget(*((int*)peers[i].address));
-                                                    blacklist(*((int*)peers[i].address));
                                                     _InterlockedCompareExchange8(&peers[i].closingStage, 1, 0);
                                                     log(L"A peer incapable of receiving all the data is disconnected and blacklisted.");
                                                 }
@@ -6633,7 +6607,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             else
                                             {
                                                 forget(*((int*)peers[i].address));
-                                                blacklist(*((int*)peers[i].address));
                                                 _InterlockedCompareExchange8(&peers[i].closingStage, 1, 0);
                                                 log(L"A peer incapable of receiving all the data is disconnected and blacklisted.");
                                             }
