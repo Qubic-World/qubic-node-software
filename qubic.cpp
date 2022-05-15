@@ -3537,7 +3537,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 
 #define VERSION_A 1
 #define VERSION_B 4
-#define VERSION_C 10
+#define VERSION_C 11
 
 #define BUFFER_SIZE 1048576
 #define DEJAVU_SWAP_PERIOD 30
@@ -3591,7 +3591,10 @@ typedef struct
     unsigned int id;
     char type;
     BOOLEAN exchangedPublicPeers;
-    BOOLEAN isReceiving, isTransmitting, isClosing;
+    BOOLEAN isConnectedOrAccepted;
+    BOOLEAN isReceiving, isTransmitting;
+    volatile char closingStage;
+    volatile short numberOfPendingCallbacks;
 } Peer;
 
 typedef struct
@@ -3899,11 +3902,6 @@ struct
     BroadcastResourceTestingSolution broadcastResourceTestingSolution;
 } solution;
 #endif
-
-static void acceptCallback(EFI_EVENT Event, void* Context);
-static void connectCallback(EFI_EVENT Event, void* Context);
-static void receiveCallback(EFI_EVENT Event, void* Context);
-static void transmitCallback(EFI_EVENT Event, void* Context);
 
 static void increaseEnergy(unsigned char* publicKey, long long amount)
 {
@@ -4756,7 +4754,7 @@ static void processResponses()
                             {
                                 forget(*((int*)processor->peer->address));
                                 blacklist(*((int*)processor->peer->address));
-                                processor->peer->isClosing = TRUE;
+                                _InterlockedCompareExchange8(&processor->peer->closingStage, 1, 0);
                                 log(L"A peer incapable of receiving all the data is disconnected and blacklisted.");
                             }
                         }
@@ -4775,7 +4773,7 @@ static void processResponses()
                         {
                             forget(*((int*)processor->peer->address));
                             blacklist(*((int*)processor->peer->address));
-                            processor->peer->isClosing = TRUE;
+                            _InterlockedCompareExchange8(&processor->peer->closingStage, 1, 0);
                             log(L"A peer incapable of receiving all the data is disconnected and blacklisted.");
                         }
                     }
@@ -5046,6 +5044,7 @@ static void acceptCallback(EFI_EVENT Event, void* Context)
     bs->CloseEvent(Event);
 
     Peer* peer = (Peer*)Context;
+    _InterlockedDecrement16(&peer->numberOfPendingCallbacks);
     if (peer->acceptToken.CompletionToken.Status)
     {
         peer->tcp4Protocol = NULL;
@@ -5059,6 +5058,10 @@ static void acceptCallback(EFI_EVENT Event, void* Context)
 
             peer->tcp4Protocol = NULL;
         }
+        else
+        {
+            peer->isConnectedOrAccepted = TRUE;
+        }
     }
 }
 
@@ -5067,13 +5070,16 @@ static void connectCallback(EFI_EVENT Event, void* Context)
     bs->CloseEvent(Event);
 
     Peer* peer = (Peer*)Context;
+    _InterlockedDecrement16(&peer->numberOfPendingCallbacks);
     if (peer->connectToken.CompletionToken.Status)
     {
         forget(*((int*)peer->address));
-        peer->isClosing = TRUE;
+        _InterlockedCompareExchange8(&peer->closingStage, 1, 0);
     }
     else
     {
+        peer->isConnectedOrAccepted = TRUE;
+
         for (unsigned int i = 0; i < numberOfPublicPeers; i++)
         {
             if (*((int*)peer->address) == *((int*)publicPeers[i].address))
@@ -5148,9 +5154,10 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
 
     Peer* peer = (Peer*)Context;
     peer->isReceiving = FALSE;
+    _InterlockedDecrement16(&peer->numberOfPendingCallbacks);
     if (peer->receiveToken.CompletionToken.Status)
     {
-        peer->isClosing = TRUE;
+        _InterlockedCompareExchange8(&peer->closingStage, 1, 0);
     }
     else
     {
@@ -5185,7 +5192,7 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                         || requestResponseHeader->size < requestResponseMinSizes[requestResponseHeader->type]
                         || receivedDataSize < ptr + requestResponseHeader->size)
                     {
-                        peer->isClosing = TRUE;
+                        _InterlockedCompareExchange8(&peer->closingStage, 1, 0);
                     }
                     else
                     {
@@ -5459,7 +5466,7 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                     }
                     else
                     {
-                        peer->isClosing = TRUE;
+                        _InterlockedCompareExchange8(&peer->closingStage, 1, 0);
                     }
                 }
             }
@@ -5477,7 +5484,7 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                         || requestResponseHeader->type >= sizeof(requestResponseMinSizes) / sizeof(requestResponseMinSizes[0])
                         || requestResponseHeader->size < requestResponseMinSizes[requestResponseHeader->type])
                     {
-                        peer->isClosing = TRUE;
+                        _InterlockedCompareExchange8(&peer->closingStage, 1, 0);
                     }
                     else
                     {
@@ -5527,9 +5534,10 @@ static void transmitCallback(EFI_EVENT Event, void* Context)
 
     Peer* peer = (Peer*)Context;
     peer->isTransmitting = FALSE;
+    _InterlockedDecrement16(&peer->numberOfPendingCallbacks);
     if (peer->transmitToken.CompletionToken.Status)
     {
-        peer->isClosing = TRUE;
+        _InterlockedCompareExchange8(&peer->closingStage, 1, 0);
     }
     else
     {
@@ -5931,7 +5939,7 @@ static void connectAndAccept()
 {
     for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS; i++)
     {
-        if (!peers[i].tcp4Protocol && !peers[i].isReceiving && !peers[i].isTransmitting)
+        if (!peers[i].tcp4Protocol && !peers[i].isConnectedOrAccepted)
         {
             unsigned int random;
             _rdrand32_step(&random);
@@ -5962,21 +5970,28 @@ static void connectAndAccept()
                     peers[i].prevNumberOfReceivedBytes = peers[i].numberOfReceivedBytes = 0;
                     peers[i].prevNumberOfTransmittedBytes = peers[i].numberOfTransmittedBytes = 0;
                     peers[i].id = ++latestPeerId;
-                    peers[i].isClosing = FALSE;
+                    peers[i].closingStage = 0;
                     peers[i].tcp4Protocol = tcp4Protocol;
+
                     EFI_STATUS status;
                     if (status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, connectCallback, &peers[i], &peers[i].connectToken.CompletionToken.Event))
                     {
                         logStatus(L"EFI_BOOT_SERVICES.CreateEvent() fails", status);
                     }
-                    if (status = peers[i].tcp4Protocol->Connect(peers[i].tcp4Protocol, &peers[i].connectToken))
+                    else
                     {
-                        logStatus(L"EFI_TCP4_PROTOCOL.Connect() fails", status);
+                        peers[i].numberOfPendingCallbacks = 1;
+                        if (status = peers[i].tcp4Protocol->Connect(peers[i].tcp4Protocol, &peers[i].connectToken))
+                        {
+                            logStatus(L"EFI_TCP4_PROTOCOL.Connect() fails", status);
 
-                        bs->CloseEvent(peers[i].connectToken.CompletionToken.Event);
-                        bs->CloseProtocol(peers[i].connectChildHandle, &tcp4ProtocolGuid, ih, NULL);
-                        tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peers[i].connectChildHandle);
-                        peers[i].tcp4Protocol = NULL;
+                            peers[i].numberOfPendingCallbacks = 0;
+
+                            bs->CloseEvent(peers[i].connectToken.CompletionToken.Event);
+                            bs->CloseProtocol(peers[i].connectChildHandle, &tcp4ProtocolGuid, ih, NULL);
+                            tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peers[i].connectChildHandle);
+                            peers[i].tcp4Protocol = NULL;
+                        }
                     }
                 }
             }
@@ -5984,7 +5999,7 @@ static void connectAndAccept()
     }
     for (unsigned int i = NUMBER_OF_OUTGOING_CONNECTIONS; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
     {
-        if (!peers[i].tcp4Protocol && !peers[i].isReceiving && !peers[i].isTransmitting)
+        if (!peers[i].tcp4Protocol && !peers[i].isConnectedOrAccepted)
         {
             peers[i].tcp4Protocol = (EFI_TCP4_PROTOCOL*)1;
             *((int*)peers[i].address) = 0;
@@ -5994,19 +6009,26 @@ static void connectAndAccept()
             peers[i].prevNumberOfReceivedBytes = peers[i].numberOfReceivedBytes = 0;
             peers[i].prevNumberOfTransmittedBytes = peers[i].numberOfTransmittedBytes = 0;
             peers[i].id = ++latestPeerId;
-            peers[i].isClosing = FALSE;
+            peers[i].closingStage = 0;
             peers[i].exchangedPublicPeers = FALSE;
+
             EFI_STATUS status;
             if (status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, acceptCallback, &peers[i], &peers[i].acceptToken.CompletionToken.Event))
             {
                 logStatus(L"EFI_BOOT_SERVICES.CreateEvent() fails", status);
             }
-            if (status = tcp4Protocol->Accept(tcp4Protocol, &peers[i].acceptToken))
+            else
             {
-                logStatus(L"EFI_TCP4_PROTOCOL.Accept() fails", status);
+                peers[i].numberOfPendingCallbacks = 1;
+                if (status = tcp4Protocol->Accept(tcp4Protocol, &peers[i].acceptToken))
+                {
+                    logStatus(L"EFI_TCP4_PROTOCOL.Accept() fails", status);
 
-                bs->CloseEvent(peers[i].acceptToken.CompletionToken.Event);
-                peers[i].tcp4Protocol = NULL;
+                    peers[i].numberOfPendingCallbacks = 0;
+
+                    bs->CloseEvent(peers[i].acceptToken.CompletionToken.Event);
+                    peers[i].tcp4Protocol = NULL;
+                }
             }
         }
     }
@@ -6018,7 +6040,7 @@ static void receiveAndTransmit()
     {
         if (((unsigned long long)peers[i].tcp4Protocol) > 1)
         {
-            if (!peers[i].isReceiving)
+            if (!peers[i].isReceiving && !peers[i].closingStage && peers[i].isConnectedOrAccepted)
             {
                 if (((unsigned long long)peers[i].receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peers[i].receiveBuffer) < BUFFER_SIZE)
                 {
@@ -6029,6 +6051,8 @@ static void receiveAndTransmit()
                     }
                     else
                     {
+                        _InterlockedIncrement16(&peers[i].numberOfPendingCallbacks);
+
                         peers[i].receiveData.DataLength = peers[i].receiveData.FragmentTable[0].FragmentLength = BUFFER_SIZE - (unsigned int)((unsigned long long)peers[i].receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peers[i].receiveBuffer);
                         if (status = peers[i].tcp4Protocol->Receive(peers[i].tcp4Protocol, &peers[i].receiveToken))
                         {
@@ -6036,7 +6060,8 @@ static void receiveAndTransmit()
 
                             bs->CloseEvent(peers[i].receiveToken.CompletionToken.Event);
 
-                            peers[i].isClosing = TRUE;
+                            _InterlockedDecrement16(&peers[i].numberOfPendingCallbacks);
+                            _InterlockedCompareExchange8(&peers[i].closingStage, 1, 0);
                         }
                         else
                         {
@@ -6045,7 +6070,7 @@ static void receiveAndTransmit()
                     }
                 }
             }
-            if (!peers[i].isTransmitting && peers[i].dataToTransmitSize)
+            if (peers[i].dataToTransmitSize && !peers[i].isTransmitting && !peers[i].closingStage && peers[i].isConnectedOrAccepted)
             {
                 EFI_STATUS status;
                 if (status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, transmitCallback, &peers[i], &peers[i].transmitToken.CompletionToken.Event))
@@ -6093,6 +6118,8 @@ static void receiveAndTransmit()
                         ((unsigned char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[0] = 0x82;
                     }
 
+                    _InterlockedIncrement16(&peers[i].numberOfPendingCallbacks);
+
                     peers[i].transmitData.DataLength = peers[i].transmitData.FragmentTable[0].FragmentLength = size;
                     if (status = peers[i].tcp4Protocol->Transmit(peers[i].tcp4Protocol, &peers[i].transmitToken))
                     {
@@ -6100,7 +6127,8 @@ static void receiveAndTransmit()
 
                         bs->CloseEvent(peers[i].transmitToken.CompletionToken.Event);
 
-                        peers[i].isClosing = TRUE;
+                        _InterlockedDecrement16(&peers[i].numberOfPendingCallbacks);
+                        _InterlockedCompareExchange8(&peers[i].closingStage, 1, 0);
                     }
                     else
                     {
@@ -6116,26 +6144,35 @@ static void close()
 {
     for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
     {
-        if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].isClosing)
+        if (((unsigned long long)peers[i].tcp4Protocol) > 1)
         {
-            EFI_STATUS status;
-            if (status = peers[i].tcp4Protocol->Configure(peers[i].tcp4Protocol, NULL))
+            if (_InterlockedCompareExchange8(&peers[i].closingStage, 2, 1) == 1)
             {
-                logStatus(L"EFI_TCP4_PROTOCOL.Configure() fails", status);
-            }
-
-            if (peers[i].acceptToken.NewChildHandle)
-            {
-                bs->CloseProtocol(peers[i].acceptToken.NewChildHandle, &tcp4ProtocolGuid, ih, NULL);
+                EFI_STATUS status;
+                if (status = peers[i].tcp4Protocol->Configure(peers[i].tcp4Protocol, NULL))
+                {
+                    logStatus(L"EFI_TCP4_PROTOCOL.Configure() fails", status);
+                }
             }
             else
             {
-                bs->CloseProtocol(peers[i].connectChildHandle, &tcp4ProtocolGuid, ih, NULL);
-                tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peers[i].connectChildHandle);
-            }
+                if (!peers[i].isReceiving && !peers[i].isTransmitting && !peers[i].numberOfPendingCallbacks && _InterlockedCompareExchange8(&peers[i].closingStage, 0, 2) == 2)
+                {
+                    if (peers[i].acceptToken.NewChildHandle)
+                    {
+                        bs->CloseProtocol(peers[i].acceptToken.NewChildHandle, &tcp4ProtocolGuid, ih, NULL);
+                    }
+                    else
+                    {
+                        bs->CloseProtocol(peers[i].connectChildHandle, &tcp4ProtocolGuid, ih, NULL);
+                        tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peers[i].connectChildHandle);
+                    }
 
-            peers[i].type = 0;
-            peers[i].tcp4Protocol = NULL;
+                    peers[i].type = 0;
+                    peers[i].isConnectedOrAccepted = FALSE;
+                    peers[i].tcp4Protocol = NULL;
+                }
+            }
         }
     }
 }
@@ -6375,7 +6412,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         {
                                             blacklist(*((int*)peers[worstNumberOfReceivedBytesPeerIndex].address));
                                         }
-                                        peers[worstNumberOfReceivedBytesPeerIndex].isClosing = TRUE;
+                                        _InterlockedCompareExchange8(&peers[worstNumberOfReceivedBytesPeerIndex].closingStage, 1, 0);
                                     }
                                     else
                                     {
@@ -6395,7 +6432,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         {
                                             blacklist(*((int*)peers[worstNumberOfTransmittedBytesPeerIndex].address));
                                         }
-                                        peers[worstNumberOfTransmittedBytesPeerIndex].isClosing = TRUE;
+                                        _InterlockedCompareExchange8(&peers[worstNumberOfTransmittedBytesPeerIndex].closingStage, 1, 0);
                                     }
                                 }
 
@@ -6541,7 +6578,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 {
                                                     forget(*((int*)peers[i].address));
                                                     blacklist(*((int*)peers[i].address));
-                                                    peers[i].isClosing = TRUE;
+                                                    _InterlockedCompareExchange8(&peers[i].closingStage, 1, 0);
                                                     log(L"A peer incapable of receiving all the data is disconnected and blacklisted.");
                                                 }
                                             }
@@ -6597,7 +6634,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             {
                                                 forget(*((int*)peers[i].address));
                                                 blacklist(*((int*)peers[i].address));
-                                                peers[i].isClosing = TRUE;
+                                                _InterlockedCompareExchange8(&peers[i].closingStage, 1, 0);
                                                 log(L"A peer incapable of receiving all the data is disconnected and blacklisted.");
                                             }
                                         }
