@@ -3497,8 +3497,8 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 ////////// Qubic \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 4
-#define VERSION_C 15
+#define VERSION_B 5
+#define VERSION_C 0
 
 #define BUFFER_SIZE 1048576
 #define DEJAVU_SWAP_PERIOD 30
@@ -3559,6 +3559,7 @@ typedef struct
     BOOLEAN isReceiving, isTransmitting;
     BOOLEAN isClosing;
     volatile char closingStage;
+    volatile char lock;
 } Peer;
 
 typedef struct
@@ -3874,6 +3875,7 @@ static void increaseEnergy(unsigned char* publicKey, long long amount)
 iteration:
     while (_InterlockedCompareExchange8(&entities[index].lock, 1, 0))
     {
+        _mm_pause();
     }
 
     if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)entities[index].publicKey), *((__m256i*)publicKey))) == 0xFFFFFFFF)
@@ -3889,7 +3891,7 @@ iteration:
         }
         else
         {
-            entities[index].lock = 0;
+            _InterlockedCompareExchange8(&entities[index].lock, 0, 1);
 
             index = (index + 1) & 0xFFFFFF;
 
@@ -3897,7 +3899,7 @@ iteration:
         }
     }
 
-    entities[index].lock = 0;
+    _InterlockedCompareExchange8(&entities[index].lock, 0, 1);
 }
 
 static BOOLEAN decreaseEnergy(unsigned char* publicKey, unsigned long long timestamp, long long amount)
@@ -3907,6 +3909,7 @@ static BOOLEAN decreaseEnergy(unsigned char* publicKey, unsigned long long times
 iteration:
     while (_InterlockedCompareExchange8(&entities[index].lock, 1, 0))
     {
+        _mm_pause();
     }
 
     if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)entities[index].publicKey), *((__m256i*)publicKey))) == 0xFFFFFFFF)
@@ -3925,7 +3928,7 @@ iteration:
                     entities[index].amount -= amount;
                 }
 
-                entities[index].lock = 0;
+                _InterlockedCompareExchange8(&entities[index].lock, 0, 1);
 
                 return TRUE;
             }
@@ -3935,7 +3938,7 @@ iteration:
     {
         if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)entities[index].publicKey), ZERO)) != 0xFFFFFFFF)
         {
-            entities[index].lock = 0;
+            _InterlockedCompareExchange8(&entities[index].lock, 0, 1);
 
             index = (index + 1) & 0xFFFFFF;
 
@@ -3943,7 +3946,7 @@ iteration:
         }
     }
 
-    entities[index].lock = 0;
+    _InterlockedCompareExchange8(&entities[index].lock, 0, 1);
 
     return FALSE;
 }
@@ -3958,6 +3961,7 @@ static void getTransferStatus(TransferStatus* status)
 
     while (_InterlockedCompareExchange8(&transferSuperstatuses[index].lock, 1, 0))
     {
+        _mm_pause();
     }
 
     if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)transferSuperstatuses[index].digest), *((__m256i*)status->digest))) == 0xFFFFFFFF)
@@ -3979,7 +3983,7 @@ static void getTransferStatus(TransferStatus* status)
     status->padding[0] = 0;
     *((short*)&status->padding[1]) = 0;
 
-    transferSuperstatuses[index].lock = 0;
+    _InterlockedCompareExchange8(&transferSuperstatuses[index].lock, 0, 1);
 }
 
 static void updateTransferStatus(TransferStatus* status)
@@ -3992,6 +3996,7 @@ static void updateTransferStatus(TransferStatus* status)
 
     while (_InterlockedCompareExchange8(&transferSuperstatuses[index].lock, 1, 0))
     {
+        _mm_pause();
     }
 
     if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)transferSuperstatuses[index].digest), *((__m256i*)status->digest))) == 0xFFFFFFFF)
@@ -4039,27 +4044,27 @@ static void updateTransferStatus(TransferStatus* status)
         }
     }
 
-    transferSuperstatuses[index].lock = 0;
+    _InterlockedCompareExchange8(&transferSuperstatuses[index].lock, 0, 1);
 }
 
 static void forget(int address)
 {
-    while (_InterlockedCompareExchange8(&publicPeersLock, 1, 0))
+    if (!_InterlockedCompareExchange8(&publicPeersLock, 1, 0))
     {
-    }
-    for (unsigned int i = 0; numberOfPublicPeers > NUMBER_OF_EXCHANGED_PEERS && i < numberOfPublicPeers; i++)
-    {
-        if (*((int*)publicPeers[i].address) == address)
+        for (unsigned int i = 0; numberOfPublicPeers > (MAX_NUMBER_OF_PUBLIC_PEERS / 4) && i < numberOfPublicPeers; i++)
         {
-            if (!publicPeers[i].isVerified && i != --numberOfPublicPeers)
+            if (*((int*)publicPeers[i].address) == address)
             {
-                bs->CopyMem(&publicPeers[i], &publicPeers[numberOfPublicPeers], sizeof(PublicPeer));
-            }
+                if (!publicPeers[i].isVerified && i != --numberOfPublicPeers)
+                {
+                    bs->CopyMem(&publicPeers[i], &publicPeers[numberOfPublicPeers], sizeof(PublicPeer));
+                }
 
-            break;
+                break;
+            }
         }
+        _InterlockedCompareExchange8(&publicPeersLock, 0, 1);
     }
-    publicPeersLock = 0;
 }
 
 static void addPublicPeer(unsigned char address[4])
@@ -4099,106 +4104,107 @@ static void requestProcessor(void* ProcedureArgument)
 
     while (!state)
     {
-        if (processor->stage == 1)
+        while (_InterlockedCompareExchange8(&processor->stage, 3, 2) != 2)
         {
-            processor->responseTransmittingType = 0;
-            responseHeader->size = 0;
+            _mm_pause();
+        }
 
-            switch (requestHeader->type)
+        processor->responseTransmittingType = 0;
+        responseHeader->size = 0;
+
+        switch (requestHeader->type)
+        {
+        case PROCESS_WEBSOCKET_CLIENT_REQUEST:
+        {
+            responseHeader->type = PROCESS_WEBSOCKET_CLIENT_REQUEST;
+
+            ProcessWebSocketClientRequest* request = (ProcessWebSocketClientRequest*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
+            if (request->type < 0)
             {
-            case PROCESS_WEBSOCKET_CLIENT_REQUEST:
-            {
-                responseHeader->type = PROCESS_WEBSOCKET_CLIENT_REQUEST;
-
-                ProcessWebSocketClientRequest* request = (ProcessWebSocketClientRequest*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
-                if (request->type < 0)
-                {
-                    if (request->timestamp > latestOperatorTimestamp)
-                    {
-                        switch (request->type)
-                        {
-                        case PROCESS_WEBSOCKET_CLIENT_REQUEST_SHUT_NODE_DOWN:
-                        {
-                            ProcessWebSocketClientRequest_ShutNodeDown_Request* request = (ProcessWebSocketClientRequest_ShutNodeDown_Request*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
-                            unsigned char digest[32];
-                            KangarooTwelve((unsigned char*)request, sizeof(ProcessWebSocketClientRequest_ShutNodeDown_Request) - 64, digest, 32);
-                            if (verify(operatorPublicKey, digest, request->signature))
-                            {
-                                latestOperatorTimestamp = request->timestamp;
-
-                                state = 1;
-                            }
-                        }
-                        break;
-
-                        case PROCESS_WEBSOCKET_CLIENT_REQUEST_GET_NODE_INFO:
-                        {
-                            ProcessWebSocketClientRequest_GetNodeInfo_Request* request = (ProcessWebSocketClientRequest_GetNodeInfo_Request*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
-                            unsigned char digest[32];
-                            KangarooTwelve((unsigned char*)request, sizeof(ProcessWebSocketClientRequest_GetNodeInfo_Request) - 64, digest, 32);
-                            if (verify(operatorPublicKey, digest, request->signature))
-                            {
-                                latestOperatorTimestamp = request->timestamp;
-
-                                ProcessWebSocketClientRequest_GetNodeInfo_Response* response = (ProcessWebSocketClientRequest_GetNodeInfo_Response*)((char*)processor->responseBuffer + sizeof(RequestResponseHeader));
-
-                                response->type = PROCESS_WEBSOCKET_CLIENT_REQUEST_GET_NODE_INFO;
-                                response->role = 0;
-                                response->padding = 0;
-                                *((__m256i*)response->ownPublicKey) = *((__m256i*)ownPublicKey);
-                                response->numberOfProcessors = numberOfProcessors;
-                                response->numberOfBusyProcessors = 0;
-                                response->launchTime = launchTime;
-                                response->numberOfProcessedRequests = numberOfProcessedRequests;
-                                response->numberOfReceivedBytes = numberOfReceivedBytes;
-                                response->numberOfTransmittedBytes = numberOfTransmittedBytes;
-                                response->numberOfPeers = 0; // TODO: Count
-
-                                responseHeader->size = sizeof(RequestResponseHeader) + sizeof(ProcessWebSocketClientRequest_GetNodeInfo_Response);
-                            }
-                        }
-                        break;
-                        }
-                    }
-                }
-                else
+                if (request->timestamp > latestOperatorTimestamp)
                 {
                     switch (request->type)
                     {
-                    case PROCESS_WEBSOCKET_CLIENT_REQUEST_GET_COMPUTER_STATE:
+                    case PROCESS_WEBSOCKET_CLIENT_REQUEST_SHUT_NODE_DOWN:
                     {
-                        ProcessWebSocketClientRequest_GetComputerState_Request* request = (ProcessWebSocketClientRequest_GetComputerState_Request*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
-                        ProcessWebSocketClientRequest_GetComputerState_Response* response = (ProcessWebSocketClientRequest_GetComputerState_Response*)((char*)processor->responseBuffer + sizeof(RequestResponseHeader));
-                        response->type = PROCESS_WEBSOCKET_CLIENT_REQUEST_GET_COMPUTER_STATE;
-                        response->timestamp = request->timestamp;
-                        bs->CopyMem(&response->computorState, &latestComputorStates[NUMBER_OF_COMPUTORS], sizeof(ComputorState));
-                        responseHeader->size = sizeof(RequestResponseHeader) + sizeof(ProcessWebSocketClientRequest_GetComputerState_Response);
+                        ProcessWebSocketClientRequest_ShutNodeDown_Request* request = (ProcessWebSocketClientRequest_ShutNodeDown_Request*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
+                        unsigned char digest[32];
+                        KangarooTwelve((unsigned char*)request, sizeof(ProcessWebSocketClientRequest_ShutNodeDown_Request) - 64, digest, 32);
+                        if (verify(operatorPublicKey, digest, request->signature))
+                        {
+                            latestOperatorTimestamp = request->timestamp;
+
+                            state = 1;
+                        }
                     }
                     break;
 
-                    case PROCESS_WEBSOCKET_CLIENT_REQUEST_GET_TRANSFER_STATUS:
+                    case PROCESS_WEBSOCKET_CLIENT_REQUEST_GET_NODE_INFO:
                     {
-                        ProcessWebSocketClientRequest_GetTransferStatus_Request* request = (ProcessWebSocketClientRequest_GetTransferStatus_Request*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
-                        ProcessWebSocketClientRequest_GetTransferStatus_Response* response = (ProcessWebSocketClientRequest_GetTransferStatus_Response*)((char*)processor->responseBuffer + sizeof(RequestResponseHeader));
-                        response->type = PROCESS_WEBSOCKET_CLIENT_REQUEST_GET_TRANSFER_STATUS;
-                        response->timestamp = request->timestamp;
-                        *((__m256i*)response->status.digest) = *((__m256i*)request->digest);
-                        response->status.computorIndex = request->computorIndex;
-                        getTransferStatus(&response->status);
-                        responseHeader->size = sizeof(RequestResponseHeader) + sizeof(ProcessWebSocketClientRequest_GetTransferStatus_Response);
+                        ProcessWebSocketClientRequest_GetNodeInfo_Request* request = (ProcessWebSocketClientRequest_GetNodeInfo_Request*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
+                        unsigned char digest[32];
+                        KangarooTwelve((unsigned char*)request, sizeof(ProcessWebSocketClientRequest_GetNodeInfo_Request) - 64, digest, 32);
+                        if (verify(operatorPublicKey, digest, request->signature))
+                        {
+                            latestOperatorTimestamp = request->timestamp;
+
+                            ProcessWebSocketClientRequest_GetNodeInfo_Response* response = (ProcessWebSocketClientRequest_GetNodeInfo_Response*)((char*)processor->responseBuffer + sizeof(RequestResponseHeader));
+
+                            response->type = PROCESS_WEBSOCKET_CLIENT_REQUEST_GET_NODE_INFO;
+                            response->role = 0;
+                            response->padding = 0;
+                            *((__m256i*)response->ownPublicKey) = *((__m256i*)ownPublicKey);
+                            response->numberOfProcessors = numberOfProcessors;
+                            response->numberOfBusyProcessors = 0;
+                            response->launchTime = launchTime;
+                            response->numberOfProcessedRequests = numberOfProcessedRequests;
+                            response->numberOfReceivedBytes = numberOfReceivedBytes;
+                            response->numberOfTransmittedBytes = numberOfTransmittedBytes;
+                            response->numberOfPeers = 0; // TODO: Count
+
+                            responseHeader->size = sizeof(RequestResponseHeader) + sizeof(ProcessWebSocketClientRequest_GetNodeInfo_Response);
+                        }
                     }
                     break;
                     }
                 }
             }
-            break;
-
-            case EXCHANGE_PUBLIC_PEERS:
+            else
             {
-                while (_InterlockedCompareExchange8(&publicPeersLock, 1, 0))
+                switch (request->type)
                 {
+                case PROCESS_WEBSOCKET_CLIENT_REQUEST_GET_COMPUTER_STATE:
+                {
+                    ProcessWebSocketClientRequest_GetComputerState_Request* request = (ProcessWebSocketClientRequest_GetComputerState_Request*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
+                    ProcessWebSocketClientRequest_GetComputerState_Response* response = (ProcessWebSocketClientRequest_GetComputerState_Response*)((char*)processor->responseBuffer + sizeof(RequestResponseHeader));
+                    response->type = PROCESS_WEBSOCKET_CLIENT_REQUEST_GET_COMPUTER_STATE;
+                    response->timestamp = request->timestamp;
+                    bs->CopyMem(&response->computorState, &latestComputorStates[NUMBER_OF_COMPUTORS], sizeof(ComputorState));
+                    responseHeader->size = sizeof(RequestResponseHeader) + sizeof(ProcessWebSocketClientRequest_GetComputerState_Response);
                 }
+                break;
 
+                case PROCESS_WEBSOCKET_CLIENT_REQUEST_GET_TRANSFER_STATUS:
+                {
+                    ProcessWebSocketClientRequest_GetTransferStatus_Request* request = (ProcessWebSocketClientRequest_GetTransferStatus_Request*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
+                    ProcessWebSocketClientRequest_GetTransferStatus_Response* response = (ProcessWebSocketClientRequest_GetTransferStatus_Response*)((char*)processor->responseBuffer + sizeof(RequestResponseHeader));
+                    response->type = PROCESS_WEBSOCKET_CLIENT_REQUEST_GET_TRANSFER_STATUS;
+                    response->timestamp = request->timestamp;
+                    *((__m256i*)response->status.digest) = *((__m256i*)request->digest);
+                    response->status.computorIndex = request->computorIndex;
+                    getTransferStatus(&response->status);
+                    responseHeader->size = sizeof(RequestResponseHeader) + sizeof(ProcessWebSocketClientRequest_GetTransferStatus_Response);
+                }
+                break;
+                }
+            }
+        }
+        break;
+
+        case EXCHANGE_PUBLIC_PEERS:
+        {
+            if (!_InterlockedCompareExchange8(&publicPeersLock, 1, 0))
+            {
                 if (!processor->peer->exchangedPublicPeers)
                 {
                     for (unsigned int i = 0; i < numberOfPublicPeers; i++)
@@ -4261,115 +4267,114 @@ static void requestProcessor(void* ProcedureArgument)
                     addPublicPeer(request->peers[i]);
                 }
 
-                publicPeersLock = 0;
+                _InterlockedCompareExchange8(&publicPeersLock, 0, 1);
             }
-            break;
+        }
+        break;
 
-            case BROADCAST_MESSAGE:
+        case BROADCAST_MESSAGE:
+        {
+            BroadcastMessage* request = (BroadcastMessage*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
+            if (requestHeader->size == sizeof(RequestResponseHeader) + sizeof(BroadcastMessage) + request->message.messageSize + 64
+                && request->message.timestamp <= MAX_TIMESTAMP_VALUE)
             {
-                BroadcastMessage* request = (BroadcastMessage*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
-                if (requestHeader->size == sizeof(RequestResponseHeader) + sizeof(BroadcastMessage) + request->message.messageSize + 64
-                    && request->message.timestamp <= MAX_TIMESTAMP_VALUE)
+                unsigned int saltedId;
+
+                const long long tmp = *((long long*)requestHeader);
+                *((long long*)requestHeader) = salt;
+                KangarooTwelve((unsigned char*)requestHeader, ((RequestResponseHeader*)&tmp)->size, (unsigned char*)&saltedId, sizeof(saltedId));
+                *((long long*)requestHeader) = tmp;
+
+                if (!((dejavu0[saltedId >> 6] | dejavu1[saltedId >> 6]) & (((unsigned long long)1) << (saltedId & 63))))
                 {
-                    unsigned int saltedId;
+                    dejavu0[saltedId >> 6] |= (((unsigned long long)1) << (saltedId & 63));
 
-                    const long long tmp = *((long long*)requestHeader);
-                    *((long long*)requestHeader) = salt;
-                    KangarooTwelve((unsigned char*)requestHeader, ((RequestResponseHeader*)&tmp)->size, (unsigned char*)&saltedId, sizeof(saltedId));
-                    *((long long*)requestHeader) = tmp;
-
-                    if (!((dejavu0[saltedId >> 6] | dejavu1[saltedId >> 6]) & (((unsigned long long)1) << (saltedId & 63))))
+                    unsigned char digest[32];
+                    KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
+                    if (verify(request->message.sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastMessage) + request->message.messageSize)))
                     {
-                        dejavu0[saltedId >> 6] |= (((unsigned long long)1) << (saltedId & 63));
-
-                        unsigned char digest[32];
-                        KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
-                        if (verify(request->message.sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastMessage) + request->message.messageSize)))
+                        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->message.destinationPublicKey), *((__m256i*)ownPublicKey))) == 0xFFFFFFFF)
                         {
-                            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->message.destinationPublicKey), *((__m256i*)ownPublicKey))) == 0xFFFFFFFF)
-                            {
-                                //log(L"Receives a message for self.");
-                            }
-
-                            bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
-                            processor->responseTransmittingType = -1;
+                            //log(L"Receives a message for self.");
                         }
+
+                        bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
+                        processor->responseTransmittingType = -1;
                     }
                 }
             }
-            break;
+        }
+        break;
 
-            case BROADCAST_TRANSFER:
+        case BROADCAST_TRANSFER:
+        {
+            BroadcastTransfer* request = (BroadcastTransfer*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
+            if (request->transfer.timestamp >= launchTime && request->transfer.timestamp <= MAX_TIMESTAMP_VALUE
+                && request->transfer.amount >= MIN_ENERGY_AMOUNT && request->transfer.amount <= MAX_ENERGY_AMOUNT)
             {
-                BroadcastTransfer* request = (BroadcastTransfer*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
-                if (request->transfer.timestamp >= launchTime && request->transfer.timestamp <= MAX_TIMESTAMP_VALUE
-                    && request->transfer.amount >= MIN_ENERGY_AMOUNT && request->transfer.amount <= MAX_ENERGY_AMOUNT)
+                unsigned int saltedId;
+
+                const long long tmp = *((long long*)requestHeader);
+                *((long long*)requestHeader) = salt;
+                KangarooTwelve((unsigned char*)requestHeader, ((RequestResponseHeader*)&tmp)->size, (unsigned char*)&saltedId, sizeof(saltedId));
+                *((long long*)requestHeader) = tmp;
+
+                if (!((dejavu0[saltedId >> 6] | dejavu1[saltedId >> 6]) & (((unsigned long long)1) << (saltedId & 63))))
                 {
-                    unsigned int saltedId;
+                    dejavu0[saltedId >> 6] |= (((unsigned long long)1) << (saltedId & 63));
 
-                    const long long tmp = *((long long*)requestHeader);
-                    *((long long*)requestHeader) = salt;
-                    KangarooTwelve((unsigned char*)requestHeader, ((RequestResponseHeader*)&tmp)->size, (unsigned char*)&saltedId, sizeof(saltedId));
-                    *((long long*)requestHeader) = tmp;
-
-                    if (!((dejavu0[saltedId >> 6] | dejavu1[saltedId >> 6]) & (((unsigned long long)1) << (saltedId & 63))))
+                    unsigned char digest[32];
+                    request->transfer.sourcePublicKey[0] ^= 1;
+                    KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
+                    request->transfer.sourcePublicKey[0] ^= 1;
+                    if (verify(request->transfer.sourcePublicKey, digest, request->transfer.signature))
                     {
-                        dejavu0[saltedId >> 6] |= (((unsigned long long)1) << (saltedId & 63));
-
-                        unsigned char digest[32];
-                        request->transfer.sourcePublicKey[0] ^= 1;
-                        KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
-                        request->transfer.sourcePublicKey[0] ^= 1;
-                        if (verify(request->transfer.sourcePublicKey, digest, request->transfer.signature))
-                        {
-                            bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
-                            processor->responseTransmittingType = -1;
-                        }
+                        bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
+                        processor->responseTransmittingType = -1;
                     }
                 }
             }
-            break;
+        }
+        break;
 
-            case BROADCAST_EFFECT:
+        case BROADCAST_EFFECT:
+        {
+            BroadcastEffect* request = (BroadcastEffect*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
+            if (requestHeader->size == sizeof(RequestResponseHeader) + sizeof(BroadcastEffect) + request->effect.effectSize + 64
+                && request->effect.timestamp <= MAX_TIMESTAMP_VALUE)
             {
-                BroadcastEffect* request = (BroadcastEffect*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
-                if (requestHeader->size == sizeof(RequestResponseHeader) + sizeof(BroadcastEffect) + request->effect.effectSize + 64
-                    && request->effect.timestamp <= MAX_TIMESTAMP_VALUE)
+                unsigned int saltedId;
+
+                const long long tmp = *((long long*)requestHeader);
+                *((long long*)requestHeader) = salt;
+                KangarooTwelve((unsigned char*)requestHeader, ((RequestResponseHeader*)&tmp)->size, (unsigned char*)&saltedId, sizeof(saltedId));
+                *((long long*)requestHeader) = tmp;
+
+                if (!((dejavu0[saltedId >> 6] | dejavu1[saltedId >> 6]) & (((unsigned long long)1) << (saltedId & 63))))
                 {
-                    unsigned int saltedId;
+                    dejavu0[saltedId >> 6] |= (((unsigned long long)1) << (saltedId & 63));
 
-                    const long long tmp = *((long long*)requestHeader);
-                    *((long long*)requestHeader) = salt;
-                    KangarooTwelve((unsigned char*)requestHeader, ((RequestResponseHeader*)&tmp)->size, (unsigned char*)&saltedId, sizeof(saltedId));
-                    *((long long*)requestHeader) = tmp;
-
-                    if (!((dejavu0[saltedId >> 6] | dejavu1[saltedId >> 6]) & (((unsigned long long)1) << (saltedId & 63))))
+                    unsigned char digest[32];
+                    request->effect.sourcePublicKey[0] ^= 2;
+                    KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
+                    request->effect.sourcePublicKey[0] ^= 2;
+                    if (verify(request->effect.sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastEffect) + request->effect.effectSize)))
                     {
-                        dejavu0[saltedId >> 6] |= (((unsigned long long)1) << (saltedId & 63));
-
-                        unsigned char digest[32];
-                        request->effect.sourcePublicKey[0] ^= 2;
-                        KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
-                        request->effect.sourcePublicKey[0] ^= 2;
-                        if (verify(request->effect.sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastEffect) + request->effect.effectSize)))
-                        {
-                            bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
-                            processor->responseTransmittingType = -1;
-                        }
+                        bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
+                        processor->responseTransmittingType = -1;
                     }
                 }
             }
-            break;
+        }
+        break;
 
-            case BROADCAST_COMPUTOR_STATE:
+        case BROADCAST_COMPUTOR_STATE:
+        {
+            BroadcastComputorState* request = (BroadcastComputorState*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
+            if (request->computorState.timestamp <= MAX_TIMESTAMP_VALUE)
             {
-                BroadcastComputorState* request = (BroadcastComputorState*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
-                if (request->computorState.timestamp <= MAX_TIMESTAMP_VALUE)
+                if (!_InterlockedCompareExchange8(&latestComputorStatesLock, 1, 0))
                 {
-                    while (_InterlockedCompareExchange8(&latestComputorStatesLock, 1, 0))
-                    {
-                    }
-
                     if (request->computorState.computorIndex < NUMBER_OF_COMPUTORS)
                     {
                         if (request->computorState.timestamp > latestComputorStates[request->computorState.computorIndex].timestamp && latestComputorStates[NUMBER_OF_COMPUTORS].timestamp)
@@ -4411,120 +4416,119 @@ static void requestProcessor(void* ProcedureArgument)
                         }
                     }
 
-                    latestComputorStatesLock = 0;
+                    _InterlockedCompareExchange8(&latestComputorStatesLock, 0, 1);
                 }
             }
-            break;
+        }
+        break;
 
-            case BROADCAST_TRANSFER_STATUS:
+        case BROADCAST_TRANSFER_STATUS:
+        {
+            BroadcastTransferStatus* request = (BroadcastTransferStatus*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
+
+            unsigned int saltedId;
+
+            const long long tmp = *((long long*)requestHeader);
+            *((long long*)requestHeader) = salt;
+            KangarooTwelve((unsigned char*)requestHeader, ((RequestResponseHeader*)&tmp)->size, (unsigned char*)&saltedId, sizeof(saltedId));
+            *((long long*)requestHeader) = tmp;
+
+            if (!((dejavu0[saltedId >> 6] | dejavu1[saltedId >> 6]) & (((unsigned long long)1) << (saltedId & 63))))
             {
-                BroadcastTransferStatus* request = (BroadcastTransferStatus*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
+                dejavu0[saltedId >> 6] |= (((unsigned long long)1) << (saltedId & 63));
 
-                unsigned int saltedId;
-
-                const long long tmp = *((long long*)requestHeader);
-                *((long long*)requestHeader) = salt;
-                KangarooTwelve((unsigned char*)requestHeader, ((RequestResponseHeader*)&tmp)->size, (unsigned char*)&saltedId, sizeof(saltedId));
-                *((long long*)requestHeader) = tmp;
-
-                if (!((dejavu0[saltedId >> 6] | dejavu1[saltedId >> 6]) & (((unsigned long long)1) << (saltedId & 63))))
+                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->transferStatus.digest), ZERO)) != 0xFFFFFFFF
+                    && !request->transferStatus.padding[0] && !(*((short*)&request->transferStatus.padding[1]))
+                    && request->transferStatus.computorIndex < NUMBER_OF_COMPUTORS)
                 {
-                    dejavu0[saltedId >> 6] |= (((unsigned long long)1) << (saltedId & 63));
-
-                    if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->transferStatus.digest), ZERO)) != 0xFFFFFFFF
-                        && !request->transferStatus.padding[0] && !(*((short*)&request->transferStatus.padding[1]))
-                        && request->transferStatus.computorIndex < NUMBER_OF_COMPUTORS)
+                    unsigned int i;
+                    for (i = 0; i < sizeof(request->transferStatus.status); i++)
                     {
-                        unsigned int i;
-                        for (i = 0; i < sizeof(request->transferStatus.status); i++)
+                        if ((request->transferStatus.status[i] & 3) == 3 || (request->transferStatus.status[i] & (3 << 2)) == (3 << 2) || (request->transferStatus.status[i] & (3 << 4)) == (3 << 4) || (request->transferStatus.status[i] & (3 << 6)) == (3 << 6))
                         {
-                            if ((request->transferStatus.status[i] & 3) == 3 || (request->transferStatus.status[i] & (3 << 2)) == (3 << 2) || (request->transferStatus.status[i] & (3 << 4)) == (3 << 4) || (request->transferStatus.status[i] & (3 << 6)) == (3 << 6))
-                            {
-                                break;
-                            }
+                            break;
                         }
-                        if (i == sizeof(request->transferStatus.status))
+                    }
+                    if (i == sizeof(request->transferStatus.status))
+                    {
+                        if (latestComputorStates[NUMBER_OF_COMPUTORS].timestamp && request->transferStatus.epoch == latestComputorStates[NUMBER_OF_COMPUTORS].epoch)
                         {
-                            if (latestComputorStates[NUMBER_OF_COMPUTORS].timestamp && request->transferStatus.epoch == latestComputorStates[NUMBER_OF_COMPUTORS].epoch)
+                            unsigned char digest[32];
+                            request->transferStatus.digest[0] ^= 3;
+                            KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
+                            request->transferStatus.digest[0] ^= 3;
+                            if (verify(latestComputorStates[NUMBER_OF_COMPUTORS].computorPublicKeys[request->transferStatus.computorIndex], digest, request->transferStatus.signature))
                             {
-                                unsigned char digest[32];
-                                request->transferStatus.digest[0] ^= 3;
-                                KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
-                                request->transferStatus.digest[0] ^= 3;
-                                if (verify(latestComputorStates[NUMBER_OF_COMPUTORS].computorPublicKeys[request->transferStatus.computorIndex], digest, request->transferStatus.signature))
-                                {
-                                    updateTransferStatus(&request->transferStatus);
+                                updateTransferStatus(&request->transferStatus);
 
-                                    bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
-                                    processor->responseTransmittingType = -1;
-                                }
-                            }
-                            else
-                            {
                                 bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
                                 processor->responseTransmittingType = -1;
                             }
                         }
+                        else
+                        {
+                            bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
+                            processor->responseTransmittingType = -1;
+                        }
                     }
                 }
             }
-            break;
+        }
+        break;
 
-            case BROADCAST_RESOURCE_TESTING_SOLUTION:
+        case BROADCAST_RESOURCE_TESTING_SOLUTION:
+        {
+            BroadcastResourceTestingSolution* request = (BroadcastResourceTestingSolution*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
+
+            unsigned int saltedId;
+
+            const long long tmp = *((long long*)requestHeader);
+            *((long long*)requestHeader) = salt;
+            KangarooTwelve((unsigned char*)requestHeader, ((RequestResponseHeader*)&tmp)->size, (unsigned char*)&saltedId, sizeof(saltedId));
+            *((long long*)requestHeader) = tmp;
+
+            if (!((dejavu0[saltedId >> 6] | dejavu1[saltedId >> 6]) & (((unsigned long long)1) << (saltedId & 63))))
             {
-                BroadcastResourceTestingSolution* request = (BroadcastResourceTestingSolution*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
+                dejavu0[saltedId >> 6] |= (((unsigned long long)1) << (saltedId & 63));
 
-                unsigned int saltedId;
-
-                const long long tmp = *((long long*)requestHeader);
-                *((long long*)requestHeader) = salt;
-                KangarooTwelve((unsigned char*)requestHeader, ((RequestResponseHeader*)&tmp)->size, (unsigned char*)&saltedId, sizeof(saltedId));
-                *((long long*)requestHeader) = tmp;
-
-                if (!((dejavu0[saltedId >> 6] | dejavu1[saltedId >> 6]) & (((unsigned long long)1) << (saltedId & 63))))
-                {
-                    dejavu0[saltedId >> 6] |= (((unsigned long long)1) << (saltedId & 63));
-
-                    bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
-                    processor->responseTransmittingType = -1;
-                }
+                bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
+                processor->responseTransmittingType = -1;
             }
-            break;
+        }
+        break;
 
-            case BROADCAST_TICK_ENDING:
+        case BROADCAST_TICK_ENDING:
+        {
+            BroadcastTickEnding* request = (BroadcastTickEnding*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
+            if (request->tickEnding.computorIndex < NUMBER_OF_COMPUTORS
+                && request->tickEnding.month >= 1 && request->tickEnding.month <= 12
+                && request->tickEnding.day >= 1 && request->tickEnding.day <= 31
+                && request->tickEnding.hour <= 23
+                && request->tickEnding.minute <= 59
+                && request->tickEnding.second <= 59
+                && request->tickEnding.millisecond <= 999)
             {
-                BroadcastTickEnding* request = (BroadcastTickEnding*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
-                if (request->tickEnding.computorIndex < NUMBER_OF_COMPUTORS
-                    && request->tickEnding.month >= 1 && request->tickEnding.month <= 12
-                    && request->tickEnding.day >= 1 && request->tickEnding.day <= 31
-                    && request->tickEnding.hour <= 23
-                    && request->tickEnding.minute <= 59
-                    && request->tickEnding.second <= 59
-                    && request->tickEnding.millisecond <= 999)
+                const int month = (request->tickEnding.month + 9) % 12;
+                const int year = 2000 + request->tickEnding.year - month / 10;
+                const int dayIndex = year * 365 + year / 4 - year / 100 + year / 400 + (month * 306 + 5) / 10 + request->tickEnding.day - 1;
+
+                EFI_TIME time;
+
+                rs->GetTime(&time, NULL);
+
+                const int ownMonth = (time.Month + 9) % 12;
+                const int ownYear = time.Year - ownMonth / 10;
+                const int ownDayIndex = ownYear * 365 + ownYear / 4 - ownYear / 100 + ownYear / 400 + (ownMonth * 306 + 5) / 10 + time.Day - 1;
+
+                if ((((((long long)dayIndex) * 24 + request->tickEnding.hour) * 60 + request->tickEnding.minute) * 60 + request->tickEnding.second) * 1000 + request->tickEnding.millisecond
+                    <= (((((long long)ownDayIndex) * 24 + time.Hour) * 60 + time.Minute) * 60 + time.Second + 1) * 1000 + time.Nanosecond / 1000000)
                 {
-                    const int month = (request->tickEnding.month + 9) % 12;
-                    const int year = 2000 + request->tickEnding.year - month / 10;
-                    const int dayIndex = year * 365 + year / 4 - year / 100 + year / 400 + (month * 306 + 5) / 10 + request->tickEnding.day - 1;
-
-                    EFI_TIME time;
-
-                    rs->GetTime(&time, NULL);
-
-                    const int ownMonth = (time.Month + 9) % 12;
-                    const int ownYear = time.Year - ownMonth / 10;
-                    const int ownDayIndex = ownYear * 365 + ownYear / 4 - ownYear / 100 + ownYear / 400 + (ownMonth * 306 + 5) / 10 + time.Day - 1;
-
-                    if ((((((long long)dayIndex) * 24 + request->tickEnding.hour) * 60 + request->tickEnding.minute) * 60 + request->tickEnding.second) * 1000 + request->tickEnding.millisecond
-                        <= (((((long long)ownDayIndex) * 24 + time.Hour) * 60 + time.Minute) * 60 + time.Second + 1) * 1000 + time.Nanosecond / 1000000)
+                    if (latestComputorStates[NUMBER_OF_COMPUTORS].timestamp)
                     {
-                        if (latestComputorStates[NUMBER_OF_COMPUTORS].timestamp)
+                        // TODO: Reset [latestTickEndings] when an epoch ends
+
+                        if (!_InterlockedCompareExchange8(&latestTickEndingsLock, 1, 0))
                         {
-                            // TODO: Reset [latestTickEndings] when an epoch ends
-
-                            while (_InterlockedCompareExchange8(&latestTickEndingsLock, 1, 0))
-                            {
-                            }
-
                             const int prevMonth = (latestTickEndings[request->tickEnding.computorIndex].month + 9) % 12;
                             const int prevYear = 2000 + latestTickEndings[request->tickEnding.computorIndex].year - prevMonth / 10;
                             const int prevDayIndex = prevYear * 365 + prevYear / 4 - prevYear / 100 + prevYear / 400 + (prevMonth * 306 + 5) / 10 + latestTickEndings[request->tickEnding.computorIndex].day - 1;
@@ -4549,23 +4553,23 @@ static void requestProcessor(void* ProcedureArgument)
                                 }
                             }
 
-                            latestTickEndingsLock = 0;
+                            _InterlockedCompareExchange8(&latestTickEndingsLock, 0, 1);
                         }
-                        else
-                        {
-                            bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
-                            processor->responseTransmittingType = -1;
-                        }
+                    }
+                    else
+                    {
+                        bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
+                        processor->responseTransmittingType = -1;
                     }
                 }
             }
-            break;
-            }
-
-            _InterlockedIncrement64(&numberOfProcessedRequests);
-
-            processor->stage = 2;
         }
+        break;
+        }
+
+        _InterlockedIncrement64(&numberOfProcessedRequests);
+
+        _InterlockedCompareExchange8(&processor->stage, 4, 3);
     }
 }
 
@@ -4588,7 +4592,7 @@ static void processResponses()
     for (unsigned int i = 0; i < numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS); i++)
     {
         Processor* processor = &processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i];
-        if (processor->stage == 2)
+        if (_InterlockedCompareExchange8(&processor->stage, 5, 4) == 4)
         {
             RequestResponseHeader* responseHeader = (RequestResponseHeader*)processor->responseBuffer;
             if (responseHeader->size)
@@ -4645,10 +4649,11 @@ static void processResponses()
                         {
                             while (_InterlockedCompareExchange8(&neuronNetworkLock, 1, 0))
                             {
+                                _mm_pause();
                             }
                             bestMiningScore = broadcastResourceTestingSolution->resourceTestingSolution.score;
                             bs->CopyMem(bestNeuronLinks, broadcastResourceTestingSolution->resourceTestingSolution.neuronLinks, sizeof(bestNeuronLinks));
-                            neuronNetworkLock = 0;
+                            _InterlockedCompareExchange8(&neuronNetworkLock, 0, 1);
                         }
                     }
                 }
@@ -4674,7 +4679,7 @@ static void processResponses()
                 }
             }
 
-            processor->stage = 0;
+            _InterlockedCompareExchange8(&processor->stage, 0, 5);
             processor->peer = NULL;
         }
     }
@@ -4705,9 +4710,10 @@ static void minerProcessor(void* ProcedureArgument)
 
     while (_InterlockedCompareExchange8(&neuronNetworkLock, 1, 0))
     {
+        _mm_pause();
     }
     bs->CopyMem(neuronLinks[miningProcessorIndex], bestNeuronLinks, sizeof(bestNeuronLinks));
-    neuronNetworkLock = 0;
+    _InterlockedCompareExchange8(&neuronNetworkLock, 0, 1);
 
     unsigned int miningScore = 0;
     while (!state)
@@ -4781,10 +4787,11 @@ static void minerProcessor(void* ProcedureArgument)
         {
             while (_InterlockedCompareExchange8(&neuronNetworkLock, 1, 0))
             {
+                _mm_pause();
             }
             bestMiningScore = miningScore;
             bs->CopyMem(bestNeuronLinks, neuronLinks[miningProcessorIndex], sizeof(bestNeuronLinks));
-            neuronNetworkLock = 0;
+            _InterlockedCompareExchange8(&neuronNetworkLock, 0, 1);
         }
     }
 }
@@ -4841,8 +4848,6 @@ static EFI_HANDLE getTcp4Protocol(const unsigned char* remoteAddress, EFI_TCP4_P
             bs->SetMem(&option, sizeof(option), 0);
             option.ReceiveBufferSize = BUFFER_SIZE;
             option.SendBufferSize = BUFFER_SIZE;
-            option.MaxSynBackLog = 1;
-            option.ConnectionTimeout = 1;
             option.EnableWindowScaling = TRUE;
             configData.ControlOption = &option;
 
@@ -4976,7 +4981,7 @@ static void connectCallback(EFI_EVENT Event, void* Context)
     {
         peer->isConnectedOrAccepted = TRUE;
 
-        ExchangePublicPeers* request = (ExchangePublicPeers*)((char*)peer->transmitData.FragmentTable[0].FragmentBuffer + sizeof(RequestResponseHeader));
+        ExchangePublicPeers* request = (ExchangePublicPeers*)&peer->dataToTransmit[sizeof(RequestResponseHeader)];
         unsigned int i;
         if (*((int*)ownPublicAddress))
         {
@@ -4989,6 +4994,7 @@ static void connectCallback(EFI_EVENT Event, void* Context)
         }
         while (_InterlockedCompareExchange8(&publicPeersLock, 1, 0))
         {
+            _mm_pause();
         }
         for (; i < NUMBER_OF_EXCHANGED_PEERS; i++)
         {
@@ -4997,13 +5003,13 @@ static void connectCallback(EFI_EVENT Event, void* Context)
             const unsigned int publicPeerIndex = random % numberOfPublicPeers;
             *((int*)request->peers[i]) = publicPeers[publicPeerIndex].isVerified ? *((int*)publicPeers[publicPeerIndex].address) : 0;
         }
-        publicPeersLock = 0;
+        _InterlockedCompareExchange8(&publicPeersLock, 0, 1);
 
-        RequestResponseHeader* requestHeader = (RequestResponseHeader*)peer->transmitData.FragmentTable[0].FragmentBuffer;
+        RequestResponseHeader* requestHeader = (RequestResponseHeader*)peer->dataToTransmit;
         requestHeader->size = sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers) + 1 + 8 + (VERSION_A > 9 ? 2 : 1) + (VERSION_B > 9 ? 2 : 1) + (VERSION_C > 9 ? 2 : 1);
         requestHeader->protocol = PROTOCOL;
         requestHeader->type = EXCHANGE_PUBLIC_PEERS;
-        char* software = ((char*)peer->transmitData.FragmentTable[0].FragmentBuffer) + (sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers));
+        char* software = (char*)&peer->dataToTransmit[sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers)];
         *software++ = 8 + (VERSION_A > 9 ? 2 : 1) + (VERSION_B > 9 ? 2 : 1) + (VERSION_C > 9 ? 2 : 1);
         *software++ = 'Q';
         *software++ = 'u';
@@ -5081,12 +5087,12 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                     {
                         for (unsigned int i = 0; i < numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS); i++)
                         {
-                            if (!processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].peer)
+                            if (!_InterlockedCompareExchange8(&processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].stage, 1, 0))
                             {
                                 processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].peer = peer;
                                 processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].peerId = peer->id;
                                 bs->CopyMem(processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].requestBuffer, &((char*)peer->receiveBuffer)[ptr], requestResponseHeader->size);
-                                processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].stage = 1;
+                                _InterlockedCompareExchange8(&processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].stage, 2, 1);
 
                                 bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + ptr + requestResponseHeader->size, receivedDataSize -= (ptr + requestResponseHeader->size));
                                 peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + receivedDataSize;
@@ -5367,30 +5373,21 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                         {
                             for (unsigned int i = 0; i < numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS); i++)
                             {
-                                if (!processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].peer)
+                                if (!_InterlockedCompareExchange8(&processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].stage, 1, 0))
                                 {
                                     processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].peer = peer;
                                     processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].peerId = peer->id;
-                                    if (receivedDataSize == requestResponseHeader->size)
-                                    {
-                                        void* tmp = processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].requestBuffer;
-                                        processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].requestBuffer = peer->receiveBuffer;
-                                        peer->receiveData.FragmentTable[0].FragmentBuffer = peer->receiveBuffer = tmp;
-                                    }
-                                    else
-                                    {
-                                        bs->CopyMem(processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].requestBuffer, peer->receiveBuffer, requestResponseHeader->size);
+                                    bs->CopyMem(processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].requestBuffer, peer->receiveBuffer, requestResponseHeader->size);
+                                    _InterlockedCompareExchange8(&processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].stage, 2, 1);
 
-                                        bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + requestResponseHeader->size, receivedDataSize -= requestResponseHeader->size);
-                                        peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + receivedDataSize;
-                                    }
-                                    processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].stage = 1;
+                                    bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + requestResponseHeader->size, receivedDataSize -= requestResponseHeader->size);
+                                    peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + receivedDataSize;
 
                                     goto iteration;
                                 }
                             }
 
-                            if (requestResponseHeader->type != EXCHANGE_PUBLIC_PEERS)
+                            if (receivedDataSize > (BUFFER_SIZE / 2) && requestResponseHeader->type != EXCHANGE_PUBLIC_PEERS)
                             {
                                 peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + (receivedDataSize - requestResponseHeader->size);
                                 _InterlockedIncrement64(&numberOfDiscardedRequests);
@@ -5664,7 +5661,6 @@ static BOOLEAN initialize()
         }
         peers[peerIndex].receiveToken.Packet.RxData = &peers[peerIndex].receiveData;
         peers[peerIndex].transmitToken.Packet.TxData = &peers[peerIndex].transmitData;
-        peers[peerIndex].closeToken.AbortOnClose = TRUE;
     }
 
     for (unsigned int i = 0; i < sizeof(knownPublicPeers) / sizeof(knownPublicPeers[0]) && numberOfPublicPeers < MAX_NUMBER_OF_PUBLIC_PEERS; i++)
@@ -5755,9 +5751,10 @@ static void saveSystem()
         {
             while (_InterlockedCompareExchange8(&systemLock, 1, 0))
             {
+                _mm_pause();
             }
             bs->CopyMem(&systemToSave, &system, sizeof(systemToSave));
-            systemLock = 0;
+            _InterlockedCompareExchange8(&systemLock, 0, 1);
             unsigned long long size = sizeof(systemToSave);
             status = dataFile->Write(dataFile, &size, &systemToSave);
             dataFile->Close(dataFile);
@@ -5799,9 +5796,10 @@ static void saveSolution()
             unsigned long long size = sizeof(bestNeuronLinks);
             while (_InterlockedCompareExchange8(&neuronNetworkLock, 1, 0))
             {
+                _mm_pause();
             }
             status = dataFile->Write(dataFile, &size, &bestNeuronLinks);
-            neuronNetworkLock = 0;
+            _InterlockedCompareExchange8(&neuronNetworkLock, 0, 1);
             dataFile->Close(dataFile);
             if (status)
             {
@@ -5823,9 +5821,10 @@ static void connectAndAccept()
             _rdrand32_step(&random);
             while (_InterlockedCompareExchange8(&publicPeersLock, 1, 0))
             {
+                _mm_pause();
             }
             *((int*)peers[i].address) = *((int*)publicPeers[random % numberOfPublicPeers].address);
-            publicPeersLock = 0;
+            _InterlockedCompareExchange8(&publicPeersLock, 0, 1);
 
             unsigned int j;
             for (j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS; j++)
@@ -5958,10 +5957,10 @@ static void receiveAndTransmit()
             }
             else
             {
+                unsigned int size = peers[i].dataToTransmitSize;
                 void* tmp = peers[i].dataToTransmit;
                 peers[i].dataToTransmit = (char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer;
                 peers[i].transmitData.FragmentTable[0].FragmentBuffer = tmp;
-                unsigned int size = peers[i].dataToTransmitSize;
                 peers[i].dataToTransmitSize = 0;
 
                 if (peers[i].type < 0)
@@ -6021,7 +6020,7 @@ static void close()
     {
         if (((unsigned long long)peers[i].tcp4Protocol) > 1)
         {
-            if (!peers[i].exchangedPublicPeers && peers[i].handshakingBeginningTick && (peers[i].isConnecting || peers[i].isAccepting) && __rdtsc() - peers[i].handshakingBeginningTick > MAX_HANDSHAKING_DURATION * frequency)
+            if (!peers[i].exchangedPublicPeers && peers[i].handshakingBeginningTick && (peers[i].isConnecting || peers[i].isAccepting || peers[i].isConnectedOrAccepted) && __rdtsc() - peers[i].handshakingBeginningTick > MAX_HANDSHAKING_DURATION * frequency)
             {
                 _InterlockedCompareExchange8(&peers[i].closingStage, 1, 0);
             }
@@ -6212,7 +6211,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                             for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
                             {
-                                if (peers[i].tcp4Protocol && peers[i].isConnectedOrAccepted && !peers[i].closingStage)
+                                if (((unsigned long long)peers[i].tcp4Protocol) > 1)
                                 {
                                     peers[i].tcp4Protocol->Poll(peers[i].tcp4Protocol);
                                 }
@@ -6253,6 +6252,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
                                     for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
                                     {
+                                        while (_InterlockedCompareExchange8(&peers[i].lock, 1, 0))
+                                        {
+                                            _mm_pause();
+                                        }
+
                                         if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type >= 0)
                                         {
                                             unsigned long long delta = peers[i].numberOfReceivedBytes - peers[i].prevNumberOfReceivedBytes;
@@ -6275,6 +6279,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                             numberOfDeltas++;
                                         }
+
+                                        _InterlockedCompareExchange8(&peers[i].lock, 0, 1);
                                     }
                                     if (worstNumberOfReceivedBytesPeerIndex >= 0 && worstNumberOfReceivedBytesDelta <= numberOfReceivedBytesSumOfDeltas / ((numberOfDeltas ? numberOfDeltas : 1) * 3))
                                     {
