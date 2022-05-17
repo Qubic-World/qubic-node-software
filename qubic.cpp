@@ -3498,7 +3498,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 
 #define VERSION_A 1
 #define VERSION_B 5
-#define VERSION_C 2
+#define VERSION_C 3
 
 #define BUFFER_SIZE 1048576
 #define DEJAVU_SWAP_PERIOD 30
@@ -3840,7 +3840,6 @@ static unsigned int latestPeerId = 0;
 static volatile long long numberOfReceivedBytes = 0, prevNumberOfReceivedBytes = 0;
 static volatile long long numberOfTransmittedBytes = 0, prevNumberOfTransmittedBytes = 0;
 
-static volatile char publicPeersLock = 0;
 static unsigned int numberOfPublicPeers = 0;
 static PublicPeer publicPeers[MAX_NUMBER_OF_PUBLIC_PEERS];
 static unsigned long long totalRatingOfPublicPeers = 0;
@@ -4049,21 +4048,17 @@ static void updateTransferStatus(TransferStatus* status)
 
 static void forget(int address)
 {
-    if (!_InterlockedCompareExchange8(&publicPeersLock, 1, 0))
+    for (unsigned int i = 0; numberOfPublicPeers > (MAX_NUMBER_OF_PUBLIC_PEERS / 4) && i < numberOfPublicPeers; i++)
     {
-        for (unsigned int i = 0; numberOfPublicPeers > (MAX_NUMBER_OF_PUBLIC_PEERS / 4) && i < numberOfPublicPeers; i++)
+        if (*((int*)publicPeers[i].address) == address)
         {
-            if (*((int*)publicPeers[i].address) == address)
+            if (!publicPeers[i].isVerified && i != --numberOfPublicPeers)
             {
-                if (!publicPeers[i].isVerified && i != --numberOfPublicPeers)
-                {
-                    bs->CopyMem(&publicPeers[i], &publicPeers[numberOfPublicPeers], sizeof(PublicPeer));
-                }
-
-                break;
+                bs->CopyMem(&publicPeers[i], &publicPeers[numberOfPublicPeers], sizeof(PublicPeer));
             }
+
+            break;
         }
-        _InterlockedCompareExchange8(&publicPeersLock, 0, 1);
     }
 }
 
@@ -4197,77 +4192,6 @@ static void requestProcessor(void* ProcedureArgument)
                 }
                 break;
                 }
-            }
-        }
-        break;
-
-        case EXCHANGE_PUBLIC_PEERS:
-        {
-            if (!_InterlockedCompareExchange8(&publicPeersLock, 1, 0))
-            {
-                if (!processor->peer->exchangedPublicPeers)
-                {
-                    for (unsigned int i = 0; i < numberOfPublicPeers; i++)
-                    {
-                        if (*((int*)processor->peer->address) == *((int*)publicPeers[i].address))
-                        {
-                            publicPeers[i].isVerified = true;
-
-                            break;
-                        }
-                    }
-
-                    processor->peer->exchangedPublicPeers = TRUE;
-
-                    if (processor->peer->acceptToken.NewChildHandle)
-                    {
-                        ExchangePublicPeers* response = (ExchangePublicPeers*)(((char*)processor->responseBuffer) + sizeof(RequestResponseHeader));
-                        for (unsigned int i = 0; i < NUMBER_OF_EXCHANGED_PEERS; i++)
-                        {
-                            unsigned int random;
-                            _rdrand32_step(&random);
-                            const unsigned int publicPeerIndex = random % numberOfPublicPeers;
-                            *((int*)response->peers[i]) = publicPeers[publicPeerIndex].isVerified ? *((int*)publicPeers[publicPeerIndex].address) : 0;
-                        }
-
-                        responseHeader->size = sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers) + 1 + 8 + (VERSION_A > 9 ? 2 : 1) + (VERSION_B > 9 ? 2 : 1) + (VERSION_C > 9 ? 2 : 1);
-                        responseHeader->type = EXCHANGE_PUBLIC_PEERS;
-
-                        char* software = ((char*)processor->responseBuffer) + (sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers));
-                        *software++ = 8 + (VERSION_A > 9 ? 2 : 1) + (VERSION_B > 9 ? 2 : 1) + (VERSION_C > 9 ? 2 : 1);
-                        *software++ = 'Q';
-                        *software++ = 'u';
-                        *software++ = 'b';
-                        *software++ = 'i';
-                        *software++ = 'c';
-                        *software++ = ' ';
-                        if (VERSION_A > 9)
-                        {
-                            *software++ = (VERSION_A / 10) + '0';
-                        }
-                        *software++ = (VERSION_A % 10) + '0';
-                        *software++ = '.';
-                        if (VERSION_B > 9)
-                        {
-                            *software++ = (VERSION_B / 10) + '0';
-                        }
-                        *software++ = (VERSION_B % 10) + '0';
-                        *software++ = '.';
-                        if (VERSION_C > 9)
-                        {
-                            *software++ = (VERSION_C / 10) + '0';
-                        }
-                        *software = (VERSION_C % 10) + '0';
-                    }
-                }
-
-                ExchangePublicPeers* request = (ExchangePublicPeers*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
-                for (unsigned int i = 0; i < NUMBER_OF_EXCHANGED_PEERS && numberOfPublicPeers < MAX_NUMBER_OF_PUBLIC_PEERS; i++)
-                {
-                    addPublicPeer(request->peers[i]);
-                }
-
-                _InterlockedCompareExchange8(&publicPeersLock, 0, 1);
             }
         }
         break;
@@ -4992,10 +4916,6 @@ static void connectCallback(EFI_EVENT Event, void* Context)
         {
             i = 0;
         }
-        while (_InterlockedCompareExchange8(&publicPeersLock, 1, 0))
-        {
-            _mm_pause();
-        }
         for (; i < NUMBER_OF_EXCHANGED_PEERS; i++)
         {
             unsigned int random;
@@ -5003,7 +4923,6 @@ static void connectCallback(EFI_EVENT Event, void* Context)
             const unsigned int publicPeerIndex = random % numberOfPublicPeers;
             *((int*)request->peers[i]) = publicPeers[publicPeerIndex].isVerified ? *((int*)publicPeers[publicPeerIndex].address) : 0;
         }
-        _InterlockedCompareExchange8(&publicPeersLock, 0, 1);
 
         RequestResponseHeader* requestHeader = (RequestResponseHeader*)peer->dataToTransmit;
         requestHeader->size = sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers) + 1 + 8 + (VERSION_A > 9 ? 2 : 1) + (VERSION_B > 9 ? 2 : 1) + (VERSION_C > 9 ? 2 : 1);
@@ -5371,26 +5290,103 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                     {
                         if (receivedDataSize >= requestResponseHeader->size)
                         {
-                            for (unsigned int i = 0; i < numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS); i++)
+                            if (requestResponseHeader->type == EXCHANGE_PUBLIC_PEERS)
                             {
-                                if (!_InterlockedCompareExchange8(&processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].stage, 1, 0))
+                                if (!peer->exchangedPublicPeers)
                                 {
-                                    processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].peer = peer;
-                                    processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].peerId = peer->id;
-                                    bs->CopyMem(processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].requestBuffer, peer->receiveBuffer, requestResponseHeader->size);
-                                    _InterlockedCompareExchange8(&processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].stage, 2, 1);
+                                    for (unsigned int i = 0; i < numberOfPublicPeers; i++)
+                                    {
+                                        if (*((int*)peer->address) == *((int*)publicPeers[i].address))
+                                        {
+                                            publicPeers[i].isVerified = true;
 
-                                    bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + requestResponseHeader->size, receivedDataSize -= requestResponseHeader->size);
-                                    peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + receivedDataSize;
+                                            break;
+                                        }
+                                    }
 
-                                    goto iteration;
+                                    peer->exchangedPublicPeers = TRUE;
+
+                                    if (peer->acceptToken.NewChildHandle && peer->dataToTransmitSize <= (BUFFER_SIZE / 2))
+                                    {
+                                        void* responseBuffer = &peer->dataToTransmit[peer->dataToTransmitSize];
+                                        ExchangePublicPeers* response = (ExchangePublicPeers*)(((char*)responseBuffer) + sizeof(RequestResponseHeader));
+                                        for (unsigned int i = 0; i < NUMBER_OF_EXCHANGED_PEERS; i++)
+                                        {
+                                            unsigned int random;
+                                            _rdrand32_step(&random);
+                                            const unsigned int publicPeerIndex = random % numberOfPublicPeers;
+                                            *((int*)response->peers[i]) = publicPeers[publicPeerIndex].isVerified ? *((int*)publicPeers[publicPeerIndex].address) : 0;
+                                        }
+
+                                        RequestResponseHeader* responseHeader = (RequestResponseHeader*)responseBuffer;
+                                        responseHeader->size = sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers) + 1 + 8 + (VERSION_A > 9 ? 2 : 1) + (VERSION_B > 9 ? 2 : 1) + (VERSION_C > 9 ? 2 : 1);
+                                        responseHeader->protocol = PROTOCOL;
+                                        responseHeader->type = EXCHANGE_PUBLIC_PEERS;
+
+                                        char* software = ((char*)responseBuffer) + (sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers));
+                                        *software++ = 8 + (VERSION_A > 9 ? 2 : 1) + (VERSION_B > 9 ? 2 : 1) + (VERSION_C > 9 ? 2 : 1);
+                                        *software++ = 'Q';
+                                        *software++ = 'u';
+                                        *software++ = 'b';
+                                        *software++ = 'i';
+                                        *software++ = 'c';
+                                        *software++ = ' ';
+                                        if (VERSION_A > 9)
+                                        {
+                                            *software++ = (VERSION_A / 10) + '0';
+                                        }
+                                        *software++ = (VERSION_A % 10) + '0';
+                                        *software++ = '.';
+                                        if (VERSION_B > 9)
+                                        {
+                                            *software++ = (VERSION_B / 10) + '0';
+                                        }
+                                        *software++ = (VERSION_B % 10) + '0';
+                                        *software++ = '.';
+                                        if (VERSION_C > 9)
+                                        {
+                                            *software++ = (VERSION_C / 10) + '0';
+                                        }
+                                        *software = (VERSION_C % 10) + '0';
+
+                                        peer->dataToTransmitSize += responseHeader->size;
+                                    }
                                 }
-                            }
 
-                            if (receivedDataSize > (BUFFER_SIZE / 2) && requestResponseHeader->type != EXCHANGE_PUBLIC_PEERS)
+                                ExchangePublicPeers* request = (ExchangePublicPeers*)((char*)peer->receiveBuffer + sizeof(RequestResponseHeader));
+                                for (unsigned int i = 0; i < NUMBER_OF_EXCHANGED_PEERS && numberOfPublicPeers < MAX_NUMBER_OF_PUBLIC_PEERS; i++)
+                                {
+                                    addPublicPeer(request->peers[i]);
+                                }
+
+                                _InterlockedIncrement64(&numberOfProcessedRequests);
+
+                                bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + requestResponseHeader->size, receivedDataSize -= requestResponseHeader->size);
+                                peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + receivedDataSize;
+                            }
+                            else
                             {
-                                peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + (receivedDataSize - requestResponseHeader->size);
-                                _InterlockedIncrement64(&numberOfDiscardedRequests);
+                                for (unsigned int i = 0; i < numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS); i++)
+                                {
+                                    if (!_InterlockedCompareExchange8(&processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].stage, 1, 0))
+                                    {
+                                        processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].peer = peer;
+                                        processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].peerId = peer->id;
+                                        bs->CopyMem(processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].requestBuffer, peer->receiveBuffer, requestResponseHeader->size);
+                                        _InterlockedCompareExchange8(&processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].stage, 2, 1);
+
+                                        bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + requestResponseHeader->size, receivedDataSize -= requestResponseHeader->size);
+                                        peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + receivedDataSize;
+
+                                        goto iteration;
+                                    }
+                                }
+
+                                if (receivedDataSize > (BUFFER_SIZE / 2))
+                                {
+                                    peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + (receivedDataSize - requestResponseHeader->size);
+                                    _InterlockedIncrement64(&numberOfDiscardedRequests);
+                                }
                             }
                         }
                     }
@@ -5820,12 +5816,7 @@ static void connectAndAccept()
         {
             unsigned int random;
             _rdrand32_step(&random);
-            while (_InterlockedCompareExchange8(&publicPeersLock, 1, 0))
-            {
-                _mm_pause();
-            }
             *((int*)peers[i].address) = *((int*)publicPeers[random % numberOfPublicPeers].address);
-            _InterlockedCompareExchange8(&publicPeersLock, 0, 1);
 
             unsigned int j;
             for (j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS; j++)
