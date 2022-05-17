@@ -3498,7 +3498,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 
 #define VERSION_A 1
 #define VERSION_B 5
-#define VERSION_C 3
+#define VERSION_C 4
 
 #define BUFFER_SIZE 1048576
 #define DEJAVU_SWAP_PERIOD 30
@@ -3536,10 +3536,10 @@ typedef struct
 typedef struct
 {
     EFI_TCP4_PROTOCOL* tcp4Protocol;
-    EFI_TCP4_LISTEN_TOKEN acceptToken;
     EFI_TCP4_CONNECTION_TOKEN connectToken;
     unsigned char address[4];
     EFI_HANDLE connectChildHandle;
+    EFI_TCP4_LISTEN_TOKEN acceptToken;
     unsigned long long timerBeginningTick;
     void* receiveBuffer;
     EFI_TCP4_RECEIVE_DATA receiveData;
@@ -4865,8 +4865,6 @@ static EFI_HANDLE getTcp4Protocol(const unsigned char* remoteAddress, EFI_TCP4_P
 
 static void acceptCallback(EFI_EVENT Event, void* Context)
 {
-    bs->CloseEvent(Event);
-
     Peer* peer = (Peer*)Context;
     peer->isAccepting = FALSE;
     if (peer->acceptToken.CompletionToken.Status)
@@ -4892,8 +4890,6 @@ static void acceptCallback(EFI_EVENT Event, void* Context)
 
 static void connectCallback(EFI_EVENT Event, void* Context)
 {
-    bs->CloseEvent(Event);
-
     Peer* peer = (Peer*)Context;
     peer->isConnecting = FALSE;
     if (peer->connectToken.CompletionToken.Status)
@@ -4959,8 +4955,6 @@ static void connectCallback(EFI_EVENT Event, void* Context)
 
 static void receiveCallback(EFI_EVENT Event, void* Context)
 {
-    bs->CloseEvent(Event);
-
     Peer* peer = (Peer*)Context;
     peer->isReceiving = FALSE;
     if (peer->receiveToken.CompletionToken.Status)
@@ -5384,7 +5378,9 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
 
                                 if (receivedDataSize > (BUFFER_SIZE / 2))
                                 {
-                                    peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + (receivedDataSize - requestResponseHeader->size);
+                                    bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + requestResponseHeader->size, receivedDataSize -= requestResponseHeader->size);
+                                    peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + receivedDataSize;
+
                                     _InterlockedIncrement64(&numberOfDiscardedRequests);
                                 }
                             }
@@ -5398,8 +5394,6 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
 
 static void transmitCallback(EFI_EVENT Event, void* Context)
 {
-    bs->CloseEvent(Event);
-
     Peer* peer = (Peer*)Context;
     peer->isTransmitting = FALSE;
     if (peer->transmitToken.CompletionToken.Status)
@@ -5415,8 +5409,6 @@ static void transmitCallback(EFI_EVENT Event, void* Context)
 
 static void closeCallback(EFI_EVENT Event, void* Context)
 {
-    bs->CloseEvent(Event);
-
     ((Peer*)Context)->isClosing = FALSE;
 }
 
@@ -5655,6 +5647,16 @@ static BOOLEAN initialize()
 
             return FALSE;
         }
+        if ((status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, connectCallback, &peers[peerIndex], &peers[peerIndex].connectToken.CompletionToken.Event))
+            || (status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, acceptCallback, &peers[peerIndex], &peers[peerIndex].acceptToken.CompletionToken.Event))
+            || (status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, receiveCallback, &peers[peerIndex], &peers[peerIndex].receiveToken.CompletionToken.Event))
+            || (status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, transmitCallback, &peers[peerIndex], &peers[peerIndex].transmitToken.CompletionToken.Event))
+            || (status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, closeCallback, &peers[peerIndex], &peers[peerIndex].closeToken.CompletionToken.Event)))
+        {
+            logStatus(L"EFI_BOOT_SERVICES.CreateEvent() fails", status);
+
+            return FALSE;
+        }
         peers[peerIndex].receiveToken.Packet.RxData = &peers[peerIndex].receiveData;
         peers[peerIndex].transmitToken.Packet.TxData = &peers[peerIndex].transmitData;
         peers[peerIndex].closeToken.AbortOnClose = TRUE;
@@ -5843,27 +5845,19 @@ static void connectAndAccept()
                     peers[i].exchangedPublicPeers = FALSE;
                     peers[i].tcp4Protocol = tcp4Protocol;
 
+                    peers[i].timerBeginningTick = __rdtsc();
                     EFI_STATUS status;
-                    if (status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, connectCallback, &peers[i], &peers[i].connectToken.CompletionToken.Event))
+                    if (status = peers[i].tcp4Protocol->Connect(peers[i].tcp4Protocol, &peers[i].connectToken))
                     {
-                        logStatus(L"EFI_BOOT_SERVICES.CreateEvent() fails", status);
+                        logStatus(L"EFI_TCP4_PROTOCOL.Connect() fails", status);
+
+                        bs->CloseProtocol(peers[i].connectChildHandle, &tcp4ProtocolGuid, ih, NULL);
+                        tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peers[i].connectChildHandle);
+                        peers[i].tcp4Protocol = NULL;
                     }
                     else
                     {
-                        peers[i].timerBeginningTick = __rdtsc();
-                        if (status = peers[i].tcp4Protocol->Connect(peers[i].tcp4Protocol, &peers[i].connectToken))
-                        {
-                            logStatus(L"EFI_TCP4_PROTOCOL.Connect() fails", status);
-
-                            bs->CloseEvent(peers[i].connectToken.CompletionToken.Event);
-                            bs->CloseProtocol(peers[i].connectChildHandle, &tcp4ProtocolGuid, ih, NULL);
-                            tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peers[i].connectChildHandle);
-                            peers[i].tcp4Protocol = NULL;
-                        }
-                        else
-                        {
-                            peers[i].isConnecting = TRUE;
-                        }
+                        peers[i].isConnecting = TRUE;
                     }
                 }
             }
@@ -5884,25 +5878,16 @@ static void connectAndAccept()
             peers[i].closingStage = 0;
             peers[i].exchangedPublicPeers = FALSE;
 
+            peers[i].timerBeginningTick = 0;
             EFI_STATUS status;
-            if (status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, acceptCallback, &peers[i], &peers[i].acceptToken.CompletionToken.Event))
+            if (status = tcp4Protocol->Accept(tcp4Protocol, &peers[i].acceptToken))
             {
-                logStatus(L"EFI_BOOT_SERVICES.CreateEvent() fails", status);
+                logStatus(L"EFI_TCP4_PROTOCOL.Accept() fails", status);
             }
             else
             {
-                peers[i].timerBeginningTick = 0;
-                if (status = tcp4Protocol->Accept(tcp4Protocol, &peers[i].acceptToken))
-                {
-                    logStatus(L"EFI_TCP4_PROTOCOL.Accept() fails", status);
-
-                    bs->CloseEvent(peers[i].acceptToken.CompletionToken.Event);
-                }
-                else
-                {
-                    peers[i].isAccepting = TRUE;
-                    peers[i].tcp4Protocol = (EFI_TCP4_PROTOCOL*)1;
-                }
+                peers[i].isAccepting = TRUE;
+                peers[i].tcp4Protocol = (EFI_TCP4_PROTOCOL*)1;
             }
         }
     }
@@ -5916,91 +5901,73 @@ static void receiveAndTransmit()
         {
             if (((unsigned long long)peers[i].receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peers[i].receiveBuffer) < BUFFER_SIZE)
             {
+                peers[i].receiveData.DataLength = peers[i].receiveData.FragmentTable[0].FragmentLength = BUFFER_SIZE - (unsigned int)((unsigned long long)peers[i].receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peers[i].receiveBuffer);
                 EFI_STATUS status;
-                if (status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, receiveCallback, &peers[i], &peers[i].receiveToken.CompletionToken.Event))
+                if (status = peers[i].tcp4Protocol->Receive(peers[i].tcp4Protocol, &peers[i].receiveToken))
                 {
-                    logStatus(L"EFI_BOOT_SERVICES.CreateEvent() fails", status);
+                    logStatus(L"EFI_TCP4_PROTOCOL.Receive() fails", status);
+
+                    _InterlockedCompareExchange8(&peers[i].closingStage, 1, 0);
                 }
                 else
                 {
-                    peers[i].receiveData.DataLength = peers[i].receiveData.FragmentTable[0].FragmentLength = BUFFER_SIZE - (unsigned int)((unsigned long long)peers[i].receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peers[i].receiveBuffer);
-                    if (status = peers[i].tcp4Protocol->Receive(peers[i].tcp4Protocol, &peers[i].receiveToken))
-                    {
-                        logStatus(L"EFI_TCP4_PROTOCOL.Receive() fails", status);
-
-                        bs->CloseEvent(peers[i].receiveToken.CompletionToken.Event);
-
-                        _InterlockedCompareExchange8(&peers[i].closingStage, 1, 0);
-                    }
-                    else
-                    {
-                        peers[i].isReceiving = TRUE;
-                    }
+                    peers[i].isReceiving = TRUE;
                 }
             }
         }
 
         if (peers[i].dataToTransmitSize && !peers[i].isTransmitting && !peers[i].closingStage && peers[i].isConnectedOrAccepted)
         {
-            EFI_STATUS status;
-            if (status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, transmitCallback, &peers[i], &peers[i].transmitToken.CompletionToken.Event))
+            unsigned int size = peers[i].dataToTransmitSize;
+            void* tmp = peers[i].dataToTransmit;
+            peers[i].dataToTransmit = (char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer;
+            peers[i].transmitData.FragmentTable[0].FragmentBuffer = tmp;
+            peers[i].dataToTransmitSize = 0;
+
+            if (peers[i].type < 0)
             {
-                logStatus(L"EFI_BOOT_SERVICES.CreateEvent() fails", status);
-            }
-            else
-            {
-                unsigned int size = peers[i].dataToTransmitSize;
-                void* tmp = peers[i].dataToTransmit;
-                peers[i].dataToTransmit = (char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer;
-                peers[i].transmitData.FragmentTable[0].FragmentBuffer = tmp;
-                peers[i].dataToTransmitSize = 0;
-
-                if (peers[i].type < 0)
+                if (size <= 125)
                 {
-                    if (size <= 125)
-                    {
-                        bs->CopyMem(((char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer) + 2, peers[i].transmitData.FragmentTable[0].FragmentBuffer, size);
-                        ((unsigned char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[1] = size;
-                        size += 2;
-                    }
-                    else
-                    {
-                        if (size < 0x10000)
-                        {
-                            bs->CopyMem(((char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer) + 4, peers[i].transmitData.FragmentTable[0].FragmentBuffer, size);
-                            ((unsigned char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[1] = 126;
-                            ((unsigned char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[2] = size >> 8;
-                            ((unsigned char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[3] = size;
-                            size += 4;
-                        }
-                        else
-                        {
-                            bs->CopyMem(((char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer) + 10, peers[i].transmitData.FragmentTable[0].FragmentBuffer, size);
-                            ((unsigned char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[1] = 127;
-                            ((unsigned int*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[2] = 0;
-                            ((unsigned char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[6] = size >> 24;
-                            ((unsigned char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[7] = size >> 16;
-                            ((unsigned char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[8] = size >> 8;
-                            ((unsigned char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[9] = size;
-                            size += 10;
-                        }
-                    }
-                    ((unsigned char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[0] = 0x82;
-                }
-
-                peers[i].transmitData.DataLength = peers[i].transmitData.FragmentTable[0].FragmentLength = size;
-                if (status = peers[i].tcp4Protocol->Transmit(peers[i].tcp4Protocol, &peers[i].transmitToken))
-                {
-                    logStatus(L"EFI_TCP4_PROTOCOL.Transmit() fails", status);
-
-                    bs->CloseEvent(peers[i].transmitToken.CompletionToken.Event);
-
-                    _InterlockedCompareExchange8(&peers[i].closingStage, 1, 0);
+                    bs->CopyMem(((char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer) + 2, peers[i].transmitData.FragmentTable[0].FragmentBuffer, size);
+                    ((unsigned char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[1] = size;
+                    size += 2;
                 }
                 else
                 {
-                    peers[i].isTransmitting = TRUE;
+                    if (size < 0x10000)
+                    {
+                        bs->CopyMem(((char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer) + 4, peers[i].transmitData.FragmentTable[0].FragmentBuffer, size);
+                        ((unsigned char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[1] = 126;
+                        ((unsigned char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[2] = size >> 8;
+                        ((unsigned char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[3] = size;
+                        size += 4;
+                    }
+                    else
+                    {
+                        bs->CopyMem(((char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer) + 10, peers[i].transmitData.FragmentTable[0].FragmentBuffer, size);
+                        ((unsigned char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[1] = 127;
+                        ((unsigned int*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[2] = 0;
+                        ((unsigned char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[6] = size >> 24;
+                        ((unsigned char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[7] = size >> 16;
+                        ((unsigned char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[8] = size >> 8;
+                        ((unsigned char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[9] = size;
+                        size += 10;
+                    }
                 }
+                ((unsigned char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[0] = 0x82;
+            }
+
+            peers[i].transmitData.DataLength = peers[i].transmitData.FragmentTable[0].FragmentLength = size;
+            EFI_STATUS status;
+            if (status = peers[i].tcp4Protocol->Transmit(peers[i].tcp4Protocol, &peers[i].transmitToken))
+            {
+                logStatus(L"EFI_TCP4_PROTOCOL.Transmit() fails", status);
+
+                _InterlockedCompareExchange8(&peers[i].closingStage, 1, 0);
+            }
+            else
+            {
+                peers[i].isTransmitting = TRUE;
             }
         }
     }
@@ -6024,9 +5991,9 @@ static void close()
                 if (peers[i].isConnectedOrAccepted)
                 {
                     EFI_STATUS status;
-                    if (status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, closeCallback, &peers[i], &peers[i].closeToken.CompletionToken.Event))
+                    if (status = peers[i].tcp4Protocol->Close(peers[i].tcp4Protocol, &peers[i].closeToken))
                     {
-                        logStatus(L"EFI_BOOT_SERVICES.CreateEvent() fails", status);
+                        logStatus(L"EFI_TCP4_PROTOCOL.Close() fails", status);
 
                         if (status = peers[i].tcp4Protocol->Configure(peers[i].tcp4Protocol, NULL))
                         {
@@ -6037,23 +6004,7 @@ static void close()
                     }
                     else
                     {
-                        if (status = peers[i].tcp4Protocol->Close(peers[i].tcp4Protocol, &peers[i].closeToken))
-                        {
-                            logStatus(L"EFI_TCP4_PROTOCOL.Close() fails", status);
-
-                            bs->CloseEvent(peers[i].closeToken.CompletionToken.Event);
-
-                            if (status = peers[i].tcp4Protocol->Configure(peers[i].tcp4Protocol, NULL))
-                            {
-                                logStatus(L"EFI_TCP4_PROTOCOL.Configure() fails", status);
-
-                                peers[i].closingStage = 1;
-                            }
-                        }
-                        else
-                        {
-                            peers[i].isClosing = TRUE;
-                        }
+                        peers[i].isClosing = TRUE;
                     }
                 }
                 else
@@ -6435,7 +6386,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 #if NUMBER_OF_MINING_PROCESSORS
                                 unsigned long long random;
                                 _rdrand64_step(&random);
-                                if (bestMiningScore > 0 && !(random % 5))
+                                if (bestMiningScore > 0 /* && !(random % 5)*/)
                                 {
                                     if (latestComputorStates[NUMBER_OF_COMPUTORS].timestamp)
                                     {
