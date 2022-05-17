@@ -3498,18 +3498,18 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 
 #define VERSION_A 1
 #define VERSION_B 5
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define BUFFER_SIZE 1048576
 #define DEJAVU_SWAP_PERIOD 30
 #define ISSUANCE_RATE 1000000000000
 #define MAX_ENERGY_AMOUNT 9223372036854775807
-#define MAX_HANDSHAKING_DURATION 5
 #define MAX_NUMBER_OF_MINERS 10000
 #define MAX_NUMBER_OF_PROCESSORS 1024
 #define MAX_NUMBER_OF_PUBLIC_PEERS 64
 #define MAX_TIMESTAMP_VALUE 9223372036854775807
 #define MIN_ENERGY_AMOUNT 1000000
+#define NETWORKING_TIMER_LIMIT 5
 #define NUMBER_OF_COMPUTORS (26 * 26)
 #define NUMBER_OF_EXCHANGED_PEERS 4
 #define NUMBER_OF_OUTGOING_CONNECTIONS 4
@@ -3540,7 +3540,7 @@ typedef struct
     EFI_TCP4_CONNECTION_TOKEN connectToken;
     unsigned char address[4];
     EFI_HANDLE connectChildHandle;
-    unsigned long long handshakingBeginningTick;
+    unsigned long long timerBeginningTick;
     void* receiveBuffer;
     EFI_TCP4_RECEIVE_DATA receiveData;
     EFI_TCP4_IO_TOKEN receiveToken;
@@ -4960,7 +4960,7 @@ static void acceptCallback(EFI_EVENT Event, void* Context)
         }
         else
         {
-            peer->handshakingBeginningTick = __rdtsc();
+            peer->timerBeginningTick = __rdtsc();
             peer->isConnectedOrAccepted = TRUE;
         }
     }
@@ -5859,7 +5859,7 @@ static void connectAndAccept()
                     }
                     else
                     {
-                        peers[i].handshakingBeginningTick = __rdtsc();
+                        peers[i].timerBeginningTick = __rdtsc();
                         if (status = peers[i].tcp4Protocol->Connect(peers[i].tcp4Protocol, &peers[i].connectToken))
                         {
                             logStatus(L"EFI_TCP4_PROTOCOL.Connect() fails", status);
@@ -5900,7 +5900,7 @@ static void connectAndAccept()
             }
             else
             {
-                peers[i].handshakingBeginningTick = 0;
+                peers[i].timerBeginningTick = 0;
                 if (status = tcp4Protocol->Accept(tcp4Protocol, &peers[i].acceptToken))
                 {
                     logStatus(L"EFI_TCP4_PROTOCOL.Accept() fails", status);
@@ -6021,13 +6021,15 @@ static void close()
     {
         if (((unsigned long long)peers[i].tcp4Protocol) > 1)
         {
-            if (!peers[i].exchangedPublicPeers && peers[i].handshakingBeginningTick && (peers[i].isConnecting || peers[i].isAccepting || peers[i].isConnectedOrAccepted) && __rdtsc() - peers[i].handshakingBeginningTick > MAX_HANDSHAKING_DURATION * frequency)
+            if (!peers[i].exchangedPublicPeers && peers[i].timerBeginningTick && (peers[i].isConnecting || peers[i].isAccepting || peers[i].isConnectedOrAccepted) && __rdtsc() - peers[i].timerBeginningTick > NETWORKING_TIMER_LIMIT * frequency)
             {
                 _InterlockedCompareExchange8(&peers[i].closingStage, 1, 0);
             }
 
             if (_InterlockedCompareExchange8(&peers[i].closingStage, 2, 1) == 1)
             {
+                peers[i].timerBeginningTick = __rdtsc();
+
                 if (peers[i].isConnectedOrAccepted)
                 {
                     EFI_STATUS status;
@@ -6083,8 +6085,17 @@ static void close()
                 }
             }
 
-            if (!peers[i].isConnecting && !peers[i].isAccepting && !peers[i].isReceiving && !peers[i].isTransmitting && !peers[i].isClosing && _InterlockedCompareExchange8(&peers[i].closingStage, 0, 2) == 2)
+            if (((!peers[i].isConnecting && !peers[i].isAccepting && !peers[i].isReceiving && !peers[i].isTransmitting && !peers[i].isClosing) || (__rdtsc() - peers[i].timerBeginningTick > NETWORKING_TIMER_LIMIT * frequency)) && _InterlockedCompareExchange8(&peers[i].closingStage, 0, 2) == 2)
             {
+                if (peers[i].isConnecting || peers[i].isAccepting || peers[i].isReceiving || peers[i].isTransmitting || peers[i].isClosing)
+                {
+                    EFI_STATUS status;
+                    if (status = peers[i].tcp4Protocol->Configure(peers[i].tcp4Protocol, NULL))
+                    {
+                        logStatus(L"EFI_TCP4_PROTOCOL.Configure() fails", status);
+                    }
+                }
+
                 if (peers[i].acceptToken.NewChildHandle)
                 {
                     bs->CloseProtocol(peers[i].acceptToken.NewChildHandle, &tcp4ProtocolGuid, ih, NULL);
