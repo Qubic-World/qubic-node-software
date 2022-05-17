@@ -3498,7 +3498,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 
 #define VERSION_A 1
 #define VERSION_B 5
-#define VERSION_C 4
+#define VERSION_C 5
 
 #define BUFFER_SIZE 1048576
 #define DEJAVU_SWAP_PERIOD 30
@@ -3553,10 +3553,10 @@ typedef struct
     unsigned long long numberOfTransmittedBytes, prevNumberOfTransmittedBytes;
     unsigned int id;
     char type;
-    BOOLEAN exchangedPublicPeers;
     BOOLEAN isConnecting, isAccepting;
     BOOLEAN isConnectedOrAccepted;
     BOOLEAN isReceiving, isTransmitting;
+    BOOLEAN exchangedPublicPeers;
     BOOLEAN isClosing;
     volatile char closingStage;
     volatile char lock;
@@ -4659,8 +4659,9 @@ static void minerProcessor(void* ProcedureArgument)
 
             bs->SetMem(neuronValues[miningProcessorIndex], NUMBER_OF_NEURONS * sizeof(unsigned int), 0xFF);
 
+            unsigned int limiter = 100000;
             unsigned int outputLength = 0;
-            while (outputLength < (sizeof(miningData) << 3))
+            while (outputLength < (sizeof(miningData) << 3) && limiter-- > 0)
             {
                 const unsigned int prevValue0 = neuronValues[miningProcessorIndex][NUMBER_OF_NEURONS - 1];
                 const unsigned int prevValue1 = neuronValues[miningProcessorIndex][NUMBER_OF_NEURONS - 2];
@@ -4695,13 +4696,16 @@ static void minerProcessor(void* ProcedureArgument)
                 }
             }
 
-            if (outputLength < miningScore)
+            if (limiter)
             {
-                neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex] = prevNeuronLink;
-            }
-            else
-            {
-                miningScore = outputLength;
+                if (outputLength < miningScore)
+                {
+                    neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex] = prevNeuronLink;
+                }
+                else
+                {
+                    miningScore = outputLength;
+                }
             }
 
             _InterlockedIncrement64(&numberOfMiningIterations);
@@ -4863,31 +4867,6 @@ static EFI_HANDLE getTcp4Protocol(const unsigned char* remoteAddress, EFI_TCP4_P
     }
 }
 
-static void acceptCallback(EFI_EVENT Event, void* Context)
-{
-    Peer* peer = (Peer*)Context;
-    peer->isAccepting = FALSE;
-    if (peer->acceptToken.CompletionToken.Status)
-    {
-        peer->tcp4Protocol = NULL;
-    }
-    else
-    {
-        EFI_STATUS status;
-        if (status = bs->OpenProtocol(peer->acceptToken.NewChildHandle, &tcp4ProtocolGuid, (void**)&peer->tcp4Protocol, ih, NULL, EFI_OPEN_PROTOCOL_GET_PROTOCOL))
-        {
-            logStatus(L"EFI_BOOT_SERVICES.OpenProtocol() fails", status);
-
-            peer->tcp4Protocol = NULL;
-        }
-        else
-        {
-            peer->timerBeginningTick = __rdtsc();
-            peer->isConnectedOrAccepted = TRUE;
-        }
-    }
-}
-
 static void connectCallback(EFI_EVENT Event, void* Context)
 {
     Peer* peer = (Peer*)Context;
@@ -4949,7 +4928,32 @@ static void connectCallback(EFI_EVENT Event, void* Context)
             *software++ = (VERSION_C / 10) + '0';
         }
         *software = (VERSION_C % 10) + '0';
-        peer->dataToTransmitSize += requestHeader->size;
+        peer->dataToTransmitSize = requestHeader->size;
+    }
+}
+
+static void acceptCallback(EFI_EVENT Event, void* Context)
+{
+    Peer* peer = (Peer*)Context;
+    peer->isAccepting = FALSE;
+    if (peer->acceptToken.CompletionToken.Status)
+    {
+        peer->tcp4Protocol = NULL;
+    }
+    else
+    {
+        EFI_STATUS status;
+        if (status = bs->OpenProtocol(peer->acceptToken.NewChildHandle, &tcp4ProtocolGuid, (void**)&peer->tcp4Protocol, ih, NULL, EFI_OPEN_PROTOCOL_GET_PROTOCOL))
+        {
+            logStatus(L"EFI_BOOT_SERVICES.OpenProtocol() fails", status);
+
+            peer->tcp4Protocol = NULL;
+        }
+        else
+        {
+            peer->timerBeginningTick = __rdtsc();
+            peer->isConnectedOrAccepted = TRUE;
+        }
     }
 }
 
@@ -5726,6 +5730,12 @@ static void deinitialize()
         if (peers[peerIndex].dataToTransmit)
         {
             bs->FreePool(peers[peerIndex].dataToTransmit);
+
+            bs->CloseEvent(peers[peerIndex].connectToken.CompletionToken.Event);
+            bs->CloseEvent(peers[peerIndex].acceptToken.CompletionToken.Event);
+            bs->CloseEvent(peers[peerIndex].receiveToken.CompletionToken.Event);
+            bs->CloseEvent(peers[peerIndex].transmitToken.CompletionToken.Event);
+            bs->CloseEvent(peers[peerIndex].closeToken.CompletionToken.Event);
         }
     }
 }
@@ -5831,21 +5841,24 @@ static void connectAndAccept()
             if (j == NUMBER_OF_OUTGOING_CONNECTIONS)
             {
                 EFI_TCP4_PROTOCOL* tcp4Protocol;
-                const EFI_HANDLE childHandle = getTcp4Protocol(peers[i].address, &tcp4Protocol);
-                if (childHandle)
+                if (peers[i].connectChildHandle = getTcp4Protocol(peers[i].address, &tcp4Protocol))
                 {
                     peers[i].acceptToken.NewChildHandle = NULL;
-                    peers[i].connectChildHandle = childHandle;
+                    peers[i].timerBeginningTick = __rdtsc();
                     peers[i].receiveData.FragmentTable[0].FragmentBuffer = peers[i].receiveBuffer;
                     peers[i].dataToTransmitSize = 0;
                     peers[i].prevNumberOfReceivedBytes = peers[i].numberOfReceivedBytes = 0;
                     peers[i].prevNumberOfTransmittedBytes = peers[i].numberOfTransmittedBytes = 0;
                     peers[i].id = ++latestPeerId;
-                    peers[i].closingStage = 0;
+                    peers[i].type = 0;
+                    peers[i].isAccepting = FALSE;
+                    peers[i].isReceiving = FALSE;
+                    peers[i].isTransmitting = FALSE;
                     peers[i].exchangedPublicPeers = FALSE;
+                    peers[i].isClosing = FALSE;
+                    peers[i].closingStage = 0;
                     peers[i].tcp4Protocol = tcp4Protocol;
 
-                    peers[i].timerBeginningTick = __rdtsc();
                     EFI_STATUS status;
                     if (status = peers[i].tcp4Protocol->Connect(peers[i].tcp4Protocol, &peers[i].connectToken))
                     {
@@ -5870,15 +5883,20 @@ static void connectAndAccept()
         {
             *((int*)peers[i].address) = 0;
             peers[i].acceptToken.NewChildHandle = NULL;
+            peers[i].timerBeginningTick = 0;
             peers[i].receiveData.FragmentTable[0].FragmentBuffer = peers[i].receiveBuffer;
             peers[i].dataToTransmitSize = 0;
             peers[i].prevNumberOfReceivedBytes = peers[i].numberOfReceivedBytes = 0;
             peers[i].prevNumberOfTransmittedBytes = peers[i].numberOfTransmittedBytes = 0;
             peers[i].id = ++latestPeerId;
-            peers[i].closingStage = 0;
+            peers[i].type = 0;
+            peers[i].isConnecting = FALSE;
+            peers[i].isReceiving = FALSE;
+            peers[i].isTransmitting = FALSE;
             peers[i].exchangedPublicPeers = FALSE;
+            peers[i].isClosing = FALSE;
+            peers[i].closingStage = 0;
 
-            peers[i].timerBeginningTick = 0;
             EFI_STATUS status;
             if (status = tcp4Protocol->Accept(tcp4Protocol, &peers[i].acceptToken))
             {
@@ -6183,6 +6201,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 if (((unsigned long long)peers[i].tcp4Protocol) > 1)
                                 {
                                     peers[i].tcp4Protocol->Poll(peers[i].tcp4Protocol);
+                                    _mm_pause();
                                 }
                             }
 
@@ -6386,7 +6405,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 #if NUMBER_OF_MINING_PROCESSORS
                                 unsigned long long random;
                                 _rdrand64_step(&random);
-                                if (bestMiningScore > 0 /* && !(random % 5)*/)
+                                if (bestMiningScore > 0 && !(random % 5))
                                 {
                                     if (latestComputorStates[NUMBER_OF_COMPUTORS].timestamp)
                                     {
