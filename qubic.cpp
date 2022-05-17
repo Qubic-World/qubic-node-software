@@ -3498,7 +3498,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 
 #define VERSION_A 1
 #define VERSION_B 5
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define BUFFER_SIZE 1048576
 #define DEJAVU_SWAP_PERIOD 30
@@ -5661,6 +5661,7 @@ static BOOLEAN initialize()
         }
         peers[peerIndex].receiveToken.Packet.RxData = &peers[peerIndex].receiveData;
         peers[peerIndex].transmitToken.Packet.TxData = &peers[peerIndex].transmitData;
+        peers[peerIndex].closeToken.AbortOnClose = TRUE;
     }
 
     for (unsigned int i = 0; i < sizeof(knownPublicPeers) / sizeof(knownPublicPeers[0]) && numberOfPublicPeers < MAX_NUMBER_OF_PUBLIC_PEERS; i++)
@@ -6034,7 +6035,12 @@ static void close()
                     {
                         logStatus(L"EFI_BOOT_SERVICES.CreateEvent() fails", status);
 
-                        peers[i].closingStage = 1;
+                        if (status = peers[i].tcp4Protocol->Configure(peers[i].tcp4Protocol, NULL))
+                        {
+                            logStatus(L"EFI_TCP4_PROTOCOL.Configure() fails", status);
+
+                            peers[i].closingStage = 1;
+                        }
                     }
                     else
                     {
@@ -6044,7 +6050,12 @@ static void close()
 
                             bs->CloseEvent(peers[i].closeToken.CompletionToken.Event);
 
-                            peers[i].closingStage = 1;
+                            if (status = peers[i].tcp4Protocol->Configure(peers[i].tcp4Protocol, NULL))
+                            {
+                                logStatus(L"EFI_TCP4_PROTOCOL.Configure() fails", status);
+
+                                peers[i].closingStage = 1;
+                            }
                         }
                         else
                         {
@@ -6057,11 +6068,16 @@ static void close()
                     if (peers[i].isConnecting)
                     {
                         EFI_STATUS status;
-                        if (status = peers[i].tcp4Protocol->Cancel(peers[i].tcp4Protocol, &peers[i].connectToken.CompletionToken))
+                        if (status = peers[i].tcp4Protocol->Cancel(peers[i].tcp4Protocol, NULL))
                         {
                             logStatus(L"EFI_TCP4_PROTOCOL.Cancel() fails", status);
 
-                            peers[i].closingStage = 1;
+                            if (status = peers[i].tcp4Protocol->Configure(peers[i].tcp4Protocol, NULL))
+                            {
+                                logStatus(L"EFI_TCP4_PROTOCOL.Configure() fails", status);
+
+                                peers[i].closingStage = 1;
+                            }
                         }
                     }
                 }
@@ -6390,6 +6406,29 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 prevNumberOfDiscardedRequests = numberOfDiscardedRequests;
                                 prevNumberOfReceivedBytes = numberOfReceivedBytes;
                                 prevNumberOfTransmittedBytes = numberOfTransmittedBytes;
+
+                                /*for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS; i++)
+                                {
+                                    setText(message, L"type=");
+                                    appendNumber(message, peers[i].type, FALSE);
+                                    appendText(message, L" c'ing=");
+                                    appendNumber(message, peers[i].isConnecting, FALSE);
+                                    appendText(message, L" a'ing=");
+                                    appendNumber(message, peers[i].isAccepting, FALSE);
+                                    appendText(message, L" c-or-a'ed=");
+                                    appendNumber(message, peers[i].isConnectedOrAccepted, FALSE);
+                                    appendText(message, L" rx'ing=");
+                                    appendNumber(message, peers[i].isReceiving, FALSE);
+                                    appendText(message, L" tx'ing=");
+                                    appendNumber(message, peers[i].isTransmitting, FALSE);
+                                    appendText(message, L" hx'ed=");
+                                    appendNumber(message, peers[i].exchangedPublicPeers, FALSE);
+                                    appendText(message, L" dx'ing=");
+                                    appendNumber(message, peers[i].isClosing, FALSE);
+                                    appendText(message, L" stage=");
+                                    appendNumber(message, peers[i].closingStage, FALSE);
+                                    log(message);
+                                }*/
 
 #if NUMBER_OF_MINING_PROCESSORS
                                 unsigned long long random;
