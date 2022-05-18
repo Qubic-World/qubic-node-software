@@ -3465,7 +3465,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 
 #define VERSION_A 1
 #define VERSION_B 6
-#define VERSION_C 2
+#define VERSION_C 3
 
 #define BUFFER_SIZE 1048576
 #define DEJAVU_SWAP_PERIOD 30
@@ -4496,13 +4496,13 @@ static void receive(Peer* peer)
 static void transmit(Peer* peer)
 {
     const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
-    /**/logStatus(L"Entering transmit()", (unsigned long long)peer);
     if (peer->dataToTransmitSize && !peer->isTransmitting && !peer->closingStage && peer->isConnectedOrAccepted)
     {
         unsigned int size = peer->dataToTransmitSize;
-        void* tmp = peer->dataToTransmit;
+        /*void* tmp = peer->dataToTransmit;
         peer->dataToTransmit = (char*)peer->transmitData.FragmentTable[0].FragmentBuffer;
-        peer->transmitData.FragmentTable[0].FragmentBuffer = tmp;
+        peer->transmitData.FragmentTable[0].FragmentBuffer = tmp;*/
+        bs->CopyMem(peer->transmitData.FragmentTable[0].FragmentBuffer, peer->dataToTransmit, peer->dataToTransmitSize);
         peer->dataToTransmitSize = 0;
 
         if (peer->type < 0)
@@ -4540,7 +4540,7 @@ static void transmit(Peer* peer)
 
         peer->transmitData.DataLength = peer->transmitData.FragmentTable[0].FragmentLength = size;
         EFI_STATUS status;
-        /**/logStatus(L"Calling Transmit()", (unsigned long long)peer);
+        /**/logStatus(L"Transmit() is called", peer->transmitData.DataLength);
         if (status = peer->tcp4Protocol->Transmit(peer->tcp4Protocol, &peer->transmitToken))
         {
             logStatus(L"EFI_TCP4_PROTOCOL.Transmit() fails", status);
@@ -4549,11 +4549,9 @@ static void transmit(Peer* peer)
         }
         else
         {
-            /**/logStatus(L"isTransmitting=TRUE", peer->isTransmitting);
             peer->isTransmitting = TRUE;
         }
     }
-    /**/logStatus(L"Leaving transmit()", (unsigned long long)peer);
     bs->RestoreTPL(tpl);
 }
 
@@ -4565,7 +4563,6 @@ static void push(Peer* peer, RequestResponseHeader* requestResponseHeader)
         peer->dataToTransmitSize += requestResponseHeader->size;
     }
 
-    /**/logStatus(L"Calling transmit() from push()", (unsigned long long)peer);
     transmit(peer);
 }
 
@@ -4991,7 +4988,6 @@ static void connectCallback(EFI_EVENT Event, void* Context)
 
         peer->dataToTransmitSize = requestHeader->size;
 
-        /**/logStatus(L"Calling transmit() from connectCallback()", (unsigned long long)peer);
         transmit(peer);
     }
 }
@@ -5124,7 +5120,6 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
 
                                     peer->dataToTransmitSize += responseHeader->size;
 
-                                    /**/logStatus(L"Calling transmit() from receiveCallback()", (unsigned long long)peer);
                                     transmit(peer);
                                 }
                             }
@@ -5959,7 +5954,6 @@ static void connectAndAccept()
                     peers[i].type = 0;
                     peers[i].isAccepting = FALSE;
                     peers[i].isReceiving = FALSE;
-                    /**/logStatus(L"isTransmitting=FALSE", peers[i].isTransmitting);
                     peers[i].isTransmitting = FALSE;
                     peers[i].exchangedPublicPeers = FALSE;
                     peers[i].isClosing = FALSE;
@@ -5998,7 +5992,6 @@ static void connectAndAccept()
             peers[i].type = 0;
             peers[i].isConnecting = FALSE;
             peers[i].isReceiving = FALSE;
-            /**/logStatus(L"isTransmitting=FALSE", peers[i].isTransmitting);
             peers[i].isTransmitting = FALSE;
             peers[i].exchangedPublicPeers = FALSE;
             peers[i].isClosing = FALSE;
@@ -6227,7 +6220,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 if (((unsigned long long)peers[i].tcp4Protocol) > 1)
                                 {
                                     peers[i].tcp4Protocol->Poll(peers[i].tcp4Protocol);
-                                    _mm_pause();
                                 }
                             }
 
