@@ -30,39 +30,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 #define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
 
 static const unsigned char knownPublicPeers[][4] = {
-    { 2, 139, 196, 162 },
-    { 5, 39, 218, 46 },
-    { 37, 48, 102, 161 },
-    { 46, 140, 52, 174 },
-    { 65, 108, 100, 43 },
-    { 65, 108, 140, 15 },
-    { 78, 94, 64, 185 },
-    { 78, 159, 108, 162 },
-    { 82, 114, 88, 225 },
-    { 84, 147, 172, 34 },
-    { 84, 208, 169, 239 },
     { 88, 99, 67, 51 },
-    { 88, 153, 194, 78 },
-    { 90, 163, 132, 86 },
-    { 91, 5, 122, 76 },
-    { 92, 186, 12, 120 },
-    { 93, 125, 10, 240 },
-    { 93, 125, 105, 208 },
-    { 95, 168, 174, 218 },
-    { 95, 216, 66, 164},
-    { 95, 216, 243, 217 },
-    { 95, 217, 33, 155 },
-    { 134, 17, 25, 28 },
-    { 178, 13, 73, 101 },
-    { 178, 168, 208, 71 },
-    { 178, 172, 194, 143 },
-    { 178, 172, 194, 149 },
-    { 185, 130, 226, 27 },
-    { 185, 130, 226, 102 },
-    { 212, 40, 234, 76 },
-    { 213, 127, 147, 70 },
-    { 213, 184, 249, 83 },
-    { 217, 92, 76, 28 }
 };
 
 
@@ -3497,7 +3465,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 
 #define VERSION_A 1
 #define VERSION_B 6
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define BUFFER_SIZE 1048576
 #define DEJAVU_SWAP_PERIOD 30
@@ -4503,30 +4471,31 @@ static void requestProcessorShutdownCallback(EFI_EVENT Event, void* Context)
 
 static void receive(Peer* peer)
 {
-    //const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
+    const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
     if (!peer->isReceiving && !peer->closingStage && peer->isConnectedOrAccepted)
     {
         if (((unsigned long long)peer->receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peer->receiveBuffer) < BUFFER_SIZE)
         {
-            peer->isReceiving = TRUE;
             peer->receiveData.DataLength = peer->receiveData.FragmentTable[0].FragmentLength = BUFFER_SIZE - (unsigned int)((unsigned long long)peer->receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peer->receiveBuffer);
             EFI_STATUS status;
             if (status = peer->tcp4Protocol->Receive(peer->tcp4Protocol, &peer->receiveToken))
             {
                 logStatus(L"EFI_TCP4_PROTOCOL.Receive() fails", status);
 
-                peer->isReceiving = FALSE;
-
                 _InterlockedCompareExchange8(&peer->closingStage, 1, 0);
+            }
+            else
+            {
+                peer->isReceiving = TRUE;
             }
         }
     }
-    //bs->RestoreTPL(tpl);
+    bs->RestoreTPL(tpl);
 }
 
 static void transmit(Peer* peer)
 {
-    //const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
+    const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
     /**/logStatus(L"Entering transmit()", (unsigned long long)peer);
     if (peer->dataToTransmitSize && !peer->isTransmitting && !peer->closingStage && peer->isConnectedOrAccepted)
     {
@@ -4569,7 +4538,6 @@ static void transmit(Peer* peer)
             ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[0] = 0x82;
         }
 
-        peer->isTransmitting = TRUE;
         peer->transmitData.DataLength = peer->transmitData.FragmentTable[0].FragmentLength = size;
         EFI_STATUS status;
         /**/logStatus(L"Calling Transmit()", (unsigned long long)peer);
@@ -4577,13 +4545,16 @@ static void transmit(Peer* peer)
         {
             logStatus(L"EFI_TCP4_PROTOCOL.Transmit() fails", status);
 
-            peer->isTransmitting = FALSE;
-
             _InterlockedCompareExchange8(&peer->closingStage, 1, 0);
+        }
+        else
+        {
+            /**/logStatus(L"isTransmitting=TRUE", peer->isTransmitting);
+            peer->isTransmitting = TRUE;
         }
     }
     /**/logStatus(L"Leaving transmit()", (unsigned long long)peer);
-    //bs->RestoreTPL(tpl);
+    bs->RestoreTPL(tpl);
 }
 
 static void push(Peer* peer, RequestResponseHeader* requestResponseHeader)
@@ -5528,6 +5499,7 @@ static void transmitCallback(EFI_EVENT Event, void* Context)
 {
     Peer* peer = (Peer*)Context;
     /**/logStatus(L"Entering transmitCallback()", (unsigned long long)peer);
+    /**/logStatus(L"isTransmitting=FALSE", peer->isTransmitting);
     peer->isTransmitting = FALSE;
     if (peer->transmitToken.CompletionToken.Status)
     {
@@ -5987,6 +5959,7 @@ static void connectAndAccept()
                     peers[i].type = 0;
                     peers[i].isAccepting = FALSE;
                     peers[i].isReceiving = FALSE;
+                    /**/logStatus(L"isTransmitting=FALSE", peers[i].isTransmitting);
                     peers[i].isTransmitting = FALSE;
                     peers[i].exchangedPublicPeers = FALSE;
                     peers[i].isClosing = FALSE;
@@ -6025,6 +5998,7 @@ static void connectAndAccept()
             peers[i].type = 0;
             peers[i].isConnecting = FALSE;
             peers[i].isReceiving = FALSE;
+            /**/logStatus(L"isTransmitting=FALSE", peers[i].isTransmitting);
             peers[i].isTransmitting = FALSE;
             peers[i].exchangedPublicPeers = FALSE;
             peers[i].isClosing = FALSE;
