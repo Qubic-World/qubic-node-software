@@ -3498,7 +3498,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 
 #define VERSION_A 1
 #define VERSION_B 5
-#define VERSION_C 5
+#define VERSION_C 6
 
 #define BUFFER_SIZE 1048576
 #define DEJAVU_SWAP_PERIOD 30
@@ -4502,6 +4502,84 @@ static void requestProcessorShutdownCallback(EFI_EVENT Event, void* Context)
     bs->CloseEvent(Event);
 }
 
+static void receive(Peer* peer)
+{
+    if (!peer->isReceiving && !peer->closingStage && peer->isConnectedOrAccepted)
+    {
+        if (((unsigned long long)peer->receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peer->receiveBuffer) < BUFFER_SIZE)
+        {
+            peer->isReceiving = TRUE;
+            peer->receiveData.DataLength = peer->receiveData.FragmentTable[0].FragmentLength = BUFFER_SIZE - (unsigned int)((unsigned long long)peer->receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peer->receiveBuffer);
+            EFI_STATUS status;
+            if (status = peer->tcp4Protocol->Receive(peer->tcp4Protocol, &peer->receiveToken))
+            {
+                logStatus(L"EFI_TCP4_PROTOCOL.Receive() fails", status);
+
+                peer->isReceiving = FALSE;
+
+                _InterlockedCompareExchange8(&peer->closingStage, 1, 0);
+            }
+        }
+    }
+}
+
+static void transmit(Peer* peer)
+{
+    if (peer->dataToTransmitSize && !peer->isTransmitting && !peer->closingStage && peer->isConnectedOrAccepted)
+    {
+        unsigned int size = peer->dataToTransmitSize;
+        void* tmp = peer->dataToTransmit;
+        peer->dataToTransmit = (char*)peer->transmitData.FragmentTable[0].FragmentBuffer;
+        peer->transmitData.FragmentTable[0].FragmentBuffer = tmp;
+        peer->dataToTransmitSize = 0;
+
+        if (peer->type < 0)
+        {
+            if (size <= 125)
+            {
+                bs->CopyMem(((char*)peer->transmitData.FragmentTable[0].FragmentBuffer) + 2, peer->transmitData.FragmentTable[0].FragmentBuffer, size);
+                ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[1] = size;
+                size += 2;
+            }
+            else
+            {
+                if (size < 0x10000)
+                {
+                    bs->CopyMem(((char*)peer->transmitData.FragmentTable[0].FragmentBuffer) + 4, peer->transmitData.FragmentTable[0].FragmentBuffer, size);
+                    ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[1] = 126;
+                    ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[2] = size >> 8;
+                    ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[3] = size;
+                    size += 4;
+                }
+                else
+                {
+                    bs->CopyMem(((char*)peer->transmitData.FragmentTable[0].FragmentBuffer) + 10, peer->transmitData.FragmentTable[0].FragmentBuffer, size);
+                    ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[1] = 127;
+                    ((unsigned int*)peer->transmitData.FragmentTable[0].FragmentBuffer)[2] = 0;
+                    ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[6] = size >> 24;
+                    ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[7] = size >> 16;
+                    ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[8] = size >> 8;
+                    ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[9] = size;
+                    size += 10;
+                }
+            }
+            ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[0] = 0x82;
+        }
+
+        peer->isTransmitting = TRUE;
+        peer->transmitData.DataLength = peer->transmitData.FragmentTable[0].FragmentLength = size;
+        EFI_STATUS status;
+        if (status = peer->tcp4Protocol->Transmit(peer->tcp4Protocol, &peer->transmitToken))
+        {
+            logStatus(L"EFI_TCP4_PROTOCOL.Transmit() fails", status);
+
+            peer->isTransmitting = FALSE;
+
+            _InterlockedCompareExchange8(&peer->closingStage, 1, 0);
+        }
+    }
+}
+
 static void push(Peer* peer, RequestResponseHeader* requestResponseHeader)
 {
     if (peer->dataToTransmitSize + requestResponseHeader->size <= BUFFER_SIZE - 10) // Extra 10 bytes are required by WebSocket protocol
@@ -4509,6 +4587,8 @@ static void push(Peer* peer, RequestResponseHeader* requestResponseHeader)
         bs->CopyMem(&peer->dataToTransmit[peer->dataToTransmitSize], requestResponseHeader, requestResponseHeader->size);
         peer->dataToTransmitSize += requestResponseHeader->size;
     }
+
+    transmit(peer);
 }
 
 static void processResponses()
@@ -4880,6 +4960,8 @@ static void connectCallback(EFI_EVENT Event, void* Context)
     {
         peer->isConnectedOrAccepted = TRUE;
 
+        receive(peer);
+
         ExchangePublicPeers* request = (ExchangePublicPeers*)&peer->dataToTransmit[sizeof(RequestResponseHeader)];
         unsigned int i;
         if (*((int*)ownPublicAddress))
@@ -4928,7 +5010,10 @@ static void connectCallback(EFI_EVENT Event, void* Context)
             *software++ = (VERSION_C / 10) + '0';
         }
         *software = (VERSION_C % 10) + '0';
+
         peer->dataToTransmitSize = requestHeader->size;
+
+        transmit(peer);
     }
 }
 
@@ -4953,6 +5038,8 @@ static void acceptCallback(EFI_EVENT Event, void* Context)
         {
             peer->timerBeginningTick = __rdtsc();
             peer->isConnectedOrAccepted = TRUE;
+
+            receive(peer);
         }
     }
 }
@@ -4970,426 +5057,458 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
         numberOfReceivedBytes += peer->receiveData.DataLength;
         *((unsigned long long*)&peer->receiveData.FragmentTable[0].FragmentBuffer) += peer->receiveData.DataLength;
         peer->numberOfReceivedBytes += peer->receiveData.DataLength;
-        
+
     iteration:
         unsigned int receivedDataSize = (unsigned int)((unsigned long long)peer->receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peer->receiveBuffer);
 
-        if (peer->type < 0)
+        if (peer->type > 0)
         {
-            if (receivedDataSize >= 4)
+            if (receivedDataSize < sizeof(RequestResponseHeader))
             {
-                const unsigned int size = ((((char*)peer->receiveBuffer)[1] & 0x7F) <= 125) ? (((unsigned char*)peer->receiveBuffer)[1] & 0x7F) : ((((unsigned char*)peer->receiveBuffer)[2] << 8) | ((unsigned char*)peer->receiveBuffer)[3]);
-                if (receivedDataSize >= (size <= 125 ? 2 : 4) + ((((char*)peer->receiveBuffer)[1] < 0) ? 4 : 0) + size)
+                receive(peer);
+            }
+            else
+            {
+                RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peer->receiveBuffer;
+                if (requestResponseHeader->protocol != PROTOCOL
+                    || requestResponseHeader->type >= sizeof(requestResponseMinSizes) / sizeof(requestResponseMinSizes[0])
+                    || requestResponseHeader->size < requestResponseMinSizes[requestResponseHeader->type])
                 {
-                    if (((char*)peer->receiveBuffer)[1] < 0)
+                    _InterlockedCompareExchange8(&peer->closingStage, 1, 0);
+                }
+                else
+                {
+                    if (receivedDataSize < requestResponseHeader->size)
                     {
-                        int ptr = (size <= 125) ? (2 + 4) : (4 + 4);
-                        char* mask = &((char*)peer->receiveBuffer)[ptr - 4];
-                        for (unsigned int i = 0; i < size; i++)
-                        {
-                            ((char*)peer->receiveBuffer)[ptr++] ^= mask[i & 3];
-                        }
-                    }
-
-                    unsigned int ptr = ((size <= 125) ? 2 : 4) + (((char*)peer->receiveBuffer)[1] < 0 ? 4 : 0);
-                    RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)&((char*)peer->receiveBuffer)[ptr];
-                    if (requestResponseHeader->protocol != PROTOCOL
-                        || requestResponseHeader->type >= sizeof(requestResponseMinSizes) / sizeof(requestResponseMinSizes[0])
-                        || requestResponseHeader->size < requestResponseMinSizes[requestResponseHeader->type]
-                        || receivedDataSize < ptr + requestResponseHeader->size)
-                    {
-                        _InterlockedCompareExchange8(&peer->closingStage, 1, 0);
+                        receive(peer);
                     }
                     else
                     {
-                        for (unsigned int i = 0; i < numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS); i++)
+                        if (requestResponseHeader->type == EXCHANGE_PUBLIC_PEERS)
                         {
-                            if (!_InterlockedCompareExchange8(&processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].stage, 1, 0))
+                            if (!peer->exchangedPublicPeers)
                             {
-                                processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].peer = peer;
-                                processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].peerId = peer->id;
-                                bs->CopyMem(processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].requestBuffer, &((char*)peer->receiveBuffer)[ptr], requestResponseHeader->size);
-                                _InterlockedCompareExchange8(&processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].stage, 2, 1);
+                                for (unsigned int i = 0; i < numberOfPublicPeers; i++)
+                                {
+                                    if (*((int*)peer->address) == *((int*)publicPeers[i].address))
+                                    {
+                                        publicPeers[i].isVerified = true;
 
-                                bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + ptr + requestResponseHeader->size, receivedDataSize -= (ptr + requestResponseHeader->size));
-                                peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + receivedDataSize;
+                                        break;
+                                    }
+                                }
 
-                                goto iteration;
+                                peer->exchangedPublicPeers = TRUE;
+
+                                if (peer->acceptToken.NewChildHandle && peer->dataToTransmitSize <= (BUFFER_SIZE / 2))
+                                {
+                                    void* responseBuffer = &peer->dataToTransmit[peer->dataToTransmitSize];
+                                    ExchangePublicPeers* response = (ExchangePublicPeers*)(((char*)responseBuffer) + sizeof(RequestResponseHeader));
+                                    for (unsigned int i = 0; i < NUMBER_OF_EXCHANGED_PEERS; i++)
+                                    {
+                                        unsigned int random;
+                                        _rdrand32_step(&random);
+                                        const unsigned int publicPeerIndex = random % numberOfPublicPeers;
+                                        *((int*)response->peers[i]) = publicPeers[publicPeerIndex].isVerified ? *((int*)publicPeers[publicPeerIndex].address) : 0;
+                                    }
+
+                                    RequestResponseHeader* responseHeader = (RequestResponseHeader*)responseBuffer;
+                                    responseHeader->size = sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers) + 1 + 8 + (VERSION_A > 9 ? 2 : 1) + (VERSION_B > 9 ? 2 : 1) + (VERSION_C > 9 ? 2 : 1);
+                                    responseHeader->protocol = PROTOCOL;
+                                    responseHeader->type = EXCHANGE_PUBLIC_PEERS;
+
+                                    char* software = ((char*)responseBuffer) + (sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers));
+                                    *software++ = 8 + (VERSION_A > 9 ? 2 : 1) + (VERSION_B > 9 ? 2 : 1) + (VERSION_C > 9 ? 2 : 1);
+                                    *software++ = 'Q';
+                                    *software++ = 'u';
+                                    *software++ = 'b';
+                                    *software++ = 'i';
+                                    *software++ = 'c';
+                                    *software++ = ' ';
+                                    if (VERSION_A > 9)
+                                    {
+                                        *software++ = (VERSION_A / 10) + '0';
+                                    }
+                                    *software++ = (VERSION_A % 10) + '0';
+                                    *software++ = '.';
+                                    if (VERSION_B > 9)
+                                    {
+                                        *software++ = (VERSION_B / 10) + '0';
+                                    }
+                                    *software++ = (VERSION_B % 10) + '0';
+                                    *software++ = '.';
+                                    if (VERSION_C > 9)
+                                    {
+                                        *software++ = (VERSION_C / 10) + '0';
+                                    }
+                                    *software = (VERSION_C % 10) + '0';
+
+                                    peer->dataToTransmitSize += responseHeader->size;
+
+                                    transmit(peer);
+                                }
                             }
+
+                            ExchangePublicPeers* request = (ExchangePublicPeers*)((char*)peer->receiveBuffer + sizeof(RequestResponseHeader));
+                            for (unsigned int i = 0; i < NUMBER_OF_EXCHANGED_PEERS && numberOfPublicPeers < MAX_NUMBER_OF_PUBLIC_PEERS; i++)
+                            {
+                                addPublicPeer(request->peers[i]);
+                            }
+
+                            _InterlockedIncrement64(&numberOfProcessedRequests);
                         }
+                        else
+                        {
+                            for (unsigned int i = 0; i < numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS); i++)
+                            {
+                                if (!_InterlockedCompareExchange8(&processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].stage, 1, 0))
+                                {
+                                    processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].peer = peer;
+                                    processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].peerId = peer->id;
+                                    bs->CopyMem(processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].requestBuffer, peer->receiveBuffer, requestResponseHeader->size);
+                                    _InterlockedCompareExchange8(&processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].stage, 2, 1);
+
+                                    bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + requestResponseHeader->size, receivedDataSize -= requestResponseHeader->size);
+                                    peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + receivedDataSize;
+
+                                    goto iteration;
+                                }
+                            }
+
+                            _InterlockedIncrement64(&numberOfDiscardedRequests);
+                        }
+
+                        bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + requestResponseHeader->size, receivedDataSize -= requestResponseHeader->size);
+                        peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + receivedDataSize;
+
+                        goto iteration;
                     }
                 }
             }
         }
         else
         {
-            if (peer->numberOfReceivedBytes == peer->receiveData.DataLength
-                && receivedDataSize >= 20 && *((unsigned long long*)peer->receiveBuffer) == 0x5448202F20544547 // "GET / HT"
-                && receivedDataSize <= BUFFER_SIZE - 1024)
+            if (peer->type < 0)
             {
-                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)operatorPublicKey), ZERO)) == 0xFFFFFFFF)
+                if (receivedDataSize < 4)
                 {
-                    bs->CopyMem(peer->dataToTransmit, (void*)"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n", peer->dataToTransmitSize = 45);
+                    receive(peer);
                 }
                 else
                 {
-                    unsigned int i = 20;
-                    while (i < receivedDataSize
-                        && (((char*)peer->receiveBuffer)[i - 20] != '\r'
-                            || ((char*)peer->receiveBuffer)[i - 19] != '\n'
-                            || ((char*)peer->receiveBuffer)[i - 18] != 'S'
-                            || ((char*)peer->receiveBuffer)[i - 17] != 'e'
-                            || ((char*)peer->receiveBuffer)[i - 16] != 'c'
-                            || ((char*)peer->receiveBuffer)[i - 15] != '-'
-                            || ((char*)peer->receiveBuffer)[i - 14] != 'W'
-                            || ((char*)peer->receiveBuffer)[i - 13] != 'e'
-                            || ((char*)peer->receiveBuffer)[i - 12] != 'b'
-                            || ((char*)peer->receiveBuffer)[i - 11] != 'S'
-                            || ((char*)peer->receiveBuffer)[i - 10] != 'o'
-                            || ((char*)peer->receiveBuffer)[i - 9] != 'c'
-                            || ((char*)peer->receiveBuffer)[i - 8] != 'k'
-                            || ((char*)peer->receiveBuffer)[i - 7] != 'e'
-                            || ((char*)peer->receiveBuffer)[i - 6] != 't'
-                            || ((char*)peer->receiveBuffer)[i - 5] != '-'
-                            || ((char*)peer->receiveBuffer)[i - 4] != 'K'
-                            || ((char*)peer->receiveBuffer)[i - 3] != 'e'
-                            || ((char*)peer->receiveBuffer)[i - 2] != 'y'
-                            || ((char*)peer->receiveBuffer)[i - 1] != ':'))
+                    const unsigned int size = ((((char*)peer->receiveBuffer)[1] & 0x7F) <= 125) ? (((unsigned char*)peer->receiveBuffer)[1] & 0x7F) : ((((unsigned char*)peer->receiveBuffer)[2] << 8) | ((unsigned char*)peer->receiveBuffer)[3]);
+                    if (receivedDataSize < (size <= 125 ? 2 : 4) + ((((char*)peer->receiveBuffer)[1] < 0) ? 4 : 0) + size)
                     {
-                        i++;
-                    }
-                    while (i < receivedDataSize
-                        && ((char*)peer->receiveBuffer)[i] == ' ')
-                    {
-                        i++;
-                    }
-                    unsigned int j = i;
-                    while (j < receivedDataSize
-                        && ((char*)peer->receiveBuffer)[j] != ' ' && ((char*)peer->receiveBuffer)[j] != '\r')
-                    {
-                        j++;
-                    }
-
-                    if (j < receivedDataSize)
-                    {
-                        peer->type = -1;
-
-                        bs->CopyMem(peer->dataToTransmit, (void*)"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ", 97);
-
-                        bs->CopyMem(&((char*)peer->receiveBuffer)[j], (void*)"258EAFA5-E914-47DA-95CA-C5AB0DC85B11", 36);
-                        j += 36;
-                        const int size = j - i;
-                        ((char*)peer->receiveBuffer)[j++] = -128;
-                        while (((j - i) & 63) != 56)
-                        {
-                            ((char*)peer->receiveBuffer)[j++] = 0;
-                        }
-                        ((char*)peer->receiveBuffer)[j++] = 0;
-                        ((char*)peer->receiveBuffer)[j++] = 0;
-                        ((char*)peer->receiveBuffer)[j++] = 0;
-                        ((char*)peer->receiveBuffer)[j++] = 0;
-                        ((char*)peer->receiveBuffer)[j++] = 0;
-                        ((char*)peer->receiveBuffer)[j++] = 0;
-                        ((char*)peer->receiveBuffer)[j++] = size >> 5;
-                        ((char*)peer->receiveBuffer)[j++] = size << 3;
-
-                        unsigned char acceptBytes[21] = { 0x76, 0x54, 0x32, 0x10, 0xFE, 0xDC, 0xBA, 0x98, 0x89, 0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0xF0, 0xE1, 0xD2, 0xC3, 0 };
-
-                        __m128i ABCD_SAVE, MASK, E0, E0_SAVE, E1, MSG0, MSG1, MSG2, MSG3;
-                        MASK = _mm_set_epi8(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
-                        E0 = _mm_set_epi32(*((int*)&acceptBytes[16]), 0, 0, 0);
-                        int ptr = -16;
-                        while ((j -= 64) >= i)
-                        {
-                            ABCD_SAVE = *((__m128i*)acceptBytes);
-                            E0_SAVE = E0;
-
-                            MSG0 = _mm_shuffle_epi8(*((__m128i*) & ((char*)peer->receiveBuffer)[i + (ptr += 16)]), MASK);
-                            E0 = _mm_add_epi32(E0, MSG0);
-                            E1 = *((__m128i*)acceptBytes);
-                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 0);
-
-                            MSG1 = _mm_shuffle_epi8(*((__m128i*) & ((char*)peer->receiveBuffer)[i + (ptr += 16)]), MASK);
-                            E1 = _mm_sha1nexte_epu32(E1, MSG1);
-                            E0 = *((__m128i*)acceptBytes);
-                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 0);
-                            MSG0 = _mm_sha1msg1_epu32(MSG0, MSG1);
-
-                            MSG2 = _mm_shuffle_epi8(*((__m128i*) & ((char*)peer->receiveBuffer)[i + (ptr += 16)]), MASK);
-                            E0 = _mm_sha1nexte_epu32(E0, MSG2);
-                            E1 = *((__m128i*)acceptBytes);
-                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 0);
-                            MSG1 = _mm_sha1msg1_epu32(MSG1, MSG2);
-                            MSG0 = _mm_xor_si128(MSG0, MSG2);
-
-                            MSG3 = _mm_shuffle_epi8(*((__m128i*) & ((char*)peer->receiveBuffer)[i + (ptr += 16)]), MASK);
-                            E1 = _mm_sha1nexte_epu32(E1, MSG3);
-                            E0 = *((__m128i*)acceptBytes);
-                            MSG0 = _mm_sha1msg2_epu32(MSG0, MSG3);
-                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 0);
-                            MSG2 = _mm_sha1msg1_epu32(MSG2, MSG3);
-                            MSG1 = _mm_xor_si128(MSG1, MSG3);
-
-                            E0 = _mm_sha1nexte_epu32(E0, MSG0);
-                            E1 = *((__m128i*)acceptBytes);
-                            MSG1 = _mm_sha1msg2_epu32(MSG1, MSG0);
-                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 0);
-                            MSG3 = _mm_sha1msg1_epu32(MSG3, MSG0);
-                            MSG2 = _mm_xor_si128(MSG2, MSG0);
-
-                            E1 = _mm_sha1nexte_epu32(E1, MSG1);
-                            E0 = *((__m128i*)acceptBytes);
-                            MSG2 = _mm_sha1msg2_epu32(MSG2, MSG1);
-                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 1);
-                            MSG0 = _mm_sha1msg1_epu32(MSG0, MSG1);
-                            MSG3 = _mm_xor_si128(MSG3, MSG1);
-
-                            E0 = _mm_sha1nexte_epu32(E0, MSG2);
-                            E1 = *((__m128i*)acceptBytes);
-                            MSG3 = _mm_sha1msg2_epu32(MSG3, MSG2);
-                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 1);
-                            MSG1 = _mm_sha1msg1_epu32(MSG1, MSG2);
-                            MSG0 = _mm_xor_si128(MSG0, MSG2);
-
-                            E1 = _mm_sha1nexte_epu32(E1, MSG3);
-                            E0 = *((__m128i*)acceptBytes);
-                            MSG0 = _mm_sha1msg2_epu32(MSG0, MSG3);
-                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 1);
-                            MSG2 = _mm_sha1msg1_epu32(MSG2, MSG3);
-                            MSG1 = _mm_xor_si128(MSG1, MSG3);
-
-                            E0 = _mm_sha1nexte_epu32(E0, MSG0);
-                            E1 = *((__m128i*)acceptBytes);
-                            MSG1 = _mm_sha1msg2_epu32(MSG1, MSG0);
-                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 1);
-                            MSG3 = _mm_sha1msg1_epu32(MSG3, MSG0);
-                            MSG2 = _mm_xor_si128(MSG2, MSG0);
-
-                            E1 = _mm_sha1nexte_epu32(E1, MSG1);
-                            E0 = *((__m128i*)acceptBytes);
-                            MSG2 = _mm_sha1msg2_epu32(MSG2, MSG1);
-                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 1);
-                            MSG0 = _mm_sha1msg1_epu32(MSG0, MSG1);
-                            MSG3 = _mm_xor_si128(MSG3, MSG1);
-
-                            E0 = _mm_sha1nexte_epu32(E0, MSG2);
-                            E1 = *((__m128i*)acceptBytes);
-                            MSG3 = _mm_sha1msg2_epu32(MSG3, MSG2);
-                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 2);
-                            MSG1 = _mm_sha1msg1_epu32(MSG1, MSG2);
-                            MSG0 = _mm_xor_si128(MSG0, MSG2);
-
-                            E1 = _mm_sha1nexte_epu32(E1, MSG3);
-                            E0 = *((__m128i*)acceptBytes);
-                            MSG0 = _mm_sha1msg2_epu32(MSG0, MSG3);
-                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 2);
-                            MSG2 = _mm_sha1msg1_epu32(MSG2, MSG3);
-                            MSG1 = _mm_xor_si128(MSG1, MSG3);
-
-                            E0 = _mm_sha1nexte_epu32(E0, MSG0);
-                            E1 = *((__m128i*)acceptBytes);
-                            MSG1 = _mm_sha1msg2_epu32(MSG1, MSG0);
-                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 2);
-                            MSG3 = _mm_sha1msg1_epu32(MSG3, MSG0);
-                            MSG2 = _mm_xor_si128(MSG2, MSG0);
-
-                            E1 = _mm_sha1nexte_epu32(E1, MSG1);
-                            E0 = *((__m128i*)acceptBytes);
-                            MSG2 = _mm_sha1msg2_epu32(MSG2, MSG1);
-                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 2);
-                            MSG0 = _mm_sha1msg1_epu32(MSG0, MSG1);
-                            MSG3 = _mm_xor_si128(MSG3, MSG1);
-
-                            E0 = _mm_sha1nexte_epu32(E0, MSG2);
-                            E1 = *((__m128i*)acceptBytes);
-                            MSG3 = _mm_sha1msg2_epu32(MSG3, MSG2);
-                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 2);
-                            MSG1 = _mm_sha1msg1_epu32(MSG1, MSG2);
-                            MSG0 = _mm_xor_si128(MSG0, MSG2);
-
-                            E1 = _mm_sha1nexte_epu32(E1, MSG3);
-                            E0 = *((__m128i*)acceptBytes);
-                            MSG0 = _mm_sha1msg2_epu32(MSG0, MSG3);
-                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 3);
-                            MSG2 = _mm_sha1msg1_epu32(MSG2, MSG3);
-                            MSG1 = _mm_xor_si128(MSG1, MSG3);
-
-                            E0 = _mm_sha1nexte_epu32(E0, MSG0);
-                            E1 = *((__m128i*)acceptBytes);
-                            MSG1 = _mm_sha1msg2_epu32(MSG1, MSG0);
-                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 3);
-                            MSG3 = _mm_sha1msg1_epu32(MSG3, MSG0);
-                            MSG2 = _mm_xor_si128(MSG2, MSG0);
-
-                            E1 = _mm_sha1nexte_epu32(E1, MSG1);
-                            E0 = *((__m128i*)acceptBytes);
-                            MSG2 = _mm_sha1msg2_epu32(MSG2, MSG1);
-                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 3);
-                            MSG3 = _mm_xor_si128(MSG3, MSG1);
-
-                            E0 = _mm_sha1nexte_epu32(E0, MSG2);
-                            E1 = *((__m128i*)acceptBytes);
-                            MSG3 = _mm_sha1msg2_epu32(MSG3, MSG2);
-                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 3);
-
-                            E1 = _mm_sha1nexte_epu32(E1, MSG3);
-                            E0 = *((__m128i*)acceptBytes);
-                            *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 3);
-
-                            E0 = _mm_sha1nexte_epu32(E0, E0_SAVE);
-                            *((__m128i*)acceptBytes) = _mm_add_epi32(*((__m128i*)acceptBytes), ABCD_SAVE);
-                        }
-                        *((__m128i*)acceptBytes) = _mm_shuffle_epi8(*((__m128i*)acceptBytes), _mm_setr_epi8(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0));
-                        *((int*)&acceptBytes[16]) = _byteswap_ulong(*(((int*)&E0) + 3));
-
-                        const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-                        i = 97;
-                        for (j = 0; j < 21; j += 3)
-                        {
-                            unsigned int word = (acceptBytes[j] << 16) | (acceptBytes[j + 1] << 8) | acceptBytes[j + 2];
-                            peer->dataToTransmit[i++] = alphabet[word >> 18];
-                            peer->dataToTransmit[i++] = alphabet[(word >> 12) & 63];
-                            peer->dataToTransmit[i++] = alphabet[(word >> 6) & 63];
-                            peer->dataToTransmit[i++] = alphabet[word & 63];
-                        }
-                        peer->dataToTransmit[i - 1] = '=';
-                        peer->dataToTransmit[i++] = '\r';
-                        peer->dataToTransmit[i++] = '\n';
-                        peer->dataToTransmit[i++] = '\r';
-                        peer->dataToTransmit[i++] = '\n';
-
-                        peer->dataToTransmitSize = i;
-
-                        peer->receiveData.FragmentTable[0].FragmentBuffer = peer->receiveBuffer;
+                        receive(peer);
                     }
                     else
                     {
-                        _InterlockedCompareExchange8(&peer->closingStage, 1, 0);
+                        if (((char*)peer->receiveBuffer)[1] < 0)
+                        {
+                            int ptr = (size <= 125) ? (2 + 4) : (4 + 4);
+                            char* mask = &((char*)peer->receiveBuffer)[ptr - 4];
+                            for (unsigned int i = 0; i < size; i++)
+                            {
+                                ((char*)peer->receiveBuffer)[ptr++] ^= mask[i & 3];
+                            }
+                        }
+
+                        unsigned int ptr = ((size <= 125) ? 2 : 4) + (((char*)peer->receiveBuffer)[1] < 0 ? 4 : 0);
+                        RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)&((char*)peer->receiveBuffer)[ptr];
+                        if (requestResponseHeader->protocol != PROTOCOL
+                            || requestResponseHeader->type >= sizeof(requestResponseMinSizes) / sizeof(requestResponseMinSizes[0])
+                            || requestResponseHeader->size < requestResponseMinSizes[requestResponseHeader->type]
+                            || receivedDataSize < ptr + requestResponseHeader->size)
+                        {
+                            _InterlockedCompareExchange8(&peer->closingStage, 1, 0);
+                        }
+                        else
+                        {
+                            for (unsigned int i = 0; i < numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS); i++)
+                            {
+                                if (!_InterlockedCompareExchange8(&processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].stage, 1, 0))
+                                {
+                                    processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].peer = peer;
+                                    processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].peerId = peer->id;
+                                    bs->CopyMem(processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].requestBuffer, &((char*)peer->receiveBuffer)[ptr], requestResponseHeader->size);
+                                    _InterlockedCompareExchange8(&processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].stage, 2, 1);
+
+                                    bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + ptr + requestResponseHeader->size, receivedDataSize -= (ptr + requestResponseHeader->size));
+                                    peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + receivedDataSize;
+
+                                    goto iteration;
+                                }
+                            }
+
+                            _InterlockedIncrement64(&numberOfDiscardedRequests);
+
+                            bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + ptr + requestResponseHeader->size, receivedDataSize -= (ptr + requestResponseHeader->size));
+                            peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + receivedDataSize;
+
+                            goto iteration;
+                        }
                     }
                 }
             }
             else
             {
-                if (peer->numberOfReceivedBytes == peer->receiveData.DataLength)
+                if (receivedDataSize >= 20 && *((unsigned long long*)peer->receiveBuffer) == 0x5448202F20544547 // "GET / HT"
+                    && receivedDataSize <= BUFFER_SIZE - 1024)
                 {
-                    peer->type = 1;
-                }
-
-                if (receivedDataSize >= sizeof(RequestResponseHeader))
-                {
-                    RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peer->receiveBuffer;
-                    if (requestResponseHeader->protocol != PROTOCOL
-                        || requestResponseHeader->type >= sizeof(requestResponseMinSizes) / sizeof(requestResponseMinSizes[0])
-                        || requestResponseHeader->size < requestResponseMinSizes[requestResponseHeader->type])
+                    if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)operatorPublicKey), ZERO)) == 0xFFFFFFFF)
                     {
-                        _InterlockedCompareExchange8(&peer->closingStage, 1, 0);
+                        bs->CopyMem(peer->dataToTransmit, (void*)"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n", peer->dataToTransmitSize = 45);
+
+                        transmit(peer);
+
+                        peer->receiveData.FragmentTable[0].FragmentBuffer = peer->receiveBuffer;
+                        receive(peer);
                     }
                     else
                     {
-                        if (receivedDataSize >= requestResponseHeader->size)
+                        unsigned int i = 20;
+                        while (i < receivedDataSize
+                            && (((char*)peer->receiveBuffer)[i - 20] != '\r'
+                                || ((char*)peer->receiveBuffer)[i - 19] != '\n'
+                                || ((char*)peer->receiveBuffer)[i - 18] != 'S'
+                                || ((char*)peer->receiveBuffer)[i - 17] != 'e'
+                                || ((char*)peer->receiveBuffer)[i - 16] != 'c'
+                                || ((char*)peer->receiveBuffer)[i - 15] != '-'
+                                || ((char*)peer->receiveBuffer)[i - 14] != 'W'
+                                || ((char*)peer->receiveBuffer)[i - 13] != 'e'
+                                || ((char*)peer->receiveBuffer)[i - 12] != 'b'
+                                || ((char*)peer->receiveBuffer)[i - 11] != 'S'
+                                || ((char*)peer->receiveBuffer)[i - 10] != 'o'
+                                || ((char*)peer->receiveBuffer)[i - 9] != 'c'
+                                || ((char*)peer->receiveBuffer)[i - 8] != 'k'
+                                || ((char*)peer->receiveBuffer)[i - 7] != 'e'
+                                || ((char*)peer->receiveBuffer)[i - 6] != 't'
+                                || ((char*)peer->receiveBuffer)[i - 5] != '-'
+                                || ((char*)peer->receiveBuffer)[i - 4] != 'K'
+                                || ((char*)peer->receiveBuffer)[i - 3] != 'e'
+                                || ((char*)peer->receiveBuffer)[i - 2] != 'y'
+                                || ((char*)peer->receiveBuffer)[i - 1] != ':'))
                         {
-                            if (requestResponseHeader->type == EXCHANGE_PUBLIC_PEERS)
+                            i++;
+                        }
+                        while (i < receivedDataSize
+                            && ((char*)peer->receiveBuffer)[i] == ' ')
+                        {
+                            i++;
+                        }
+                        unsigned int j = i;
+                        while (j < receivedDataSize
+                            && ((char*)peer->receiveBuffer)[j] != ' ' && ((char*)peer->receiveBuffer)[j] != '\r')
+                        {
+                            j++;
+                        }
+
+                        if (j < receivedDataSize)
+                        {
+                            peer->type = -1;
+
+                            bs->CopyMem(peer->dataToTransmit, (void*)"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ", 97);
+
+                            bs->CopyMem(&((char*)peer->receiveBuffer)[j], (void*)"258EAFA5-E914-47DA-95CA-C5AB0DC85B11", 36);
+                            j += 36;
+                            const int size = j - i;
+                            ((char*)peer->receiveBuffer)[j++] = -128;
+                            while (((j - i) & 63) != 56)
                             {
-                                if (!peer->exchangedPublicPeers)
-                                {
-                                    for (unsigned int i = 0; i < numberOfPublicPeers; i++)
-                                    {
-                                        if (*((int*)peer->address) == *((int*)publicPeers[i].address))
-                                        {
-                                            publicPeers[i].isVerified = true;
-
-                                            break;
-                                        }
-                                    }
-
-                                    peer->exchangedPublicPeers = TRUE;
-
-                                    if (peer->acceptToken.NewChildHandle && peer->dataToTransmitSize <= (BUFFER_SIZE / 2))
-                                    {
-                                        void* responseBuffer = &peer->dataToTransmit[peer->dataToTransmitSize];
-                                        ExchangePublicPeers* response = (ExchangePublicPeers*)(((char*)responseBuffer) + sizeof(RequestResponseHeader));
-                                        for (unsigned int i = 0; i < NUMBER_OF_EXCHANGED_PEERS; i++)
-                                        {
-                                            unsigned int random;
-                                            _rdrand32_step(&random);
-                                            const unsigned int publicPeerIndex = random % numberOfPublicPeers;
-                                            *((int*)response->peers[i]) = publicPeers[publicPeerIndex].isVerified ? *((int*)publicPeers[publicPeerIndex].address) : 0;
-                                        }
-
-                                        RequestResponseHeader* responseHeader = (RequestResponseHeader*)responseBuffer;
-                                        responseHeader->size = sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers) + 1 + 8 + (VERSION_A > 9 ? 2 : 1) + (VERSION_B > 9 ? 2 : 1) + (VERSION_C > 9 ? 2 : 1);
-                                        responseHeader->protocol = PROTOCOL;
-                                        responseHeader->type = EXCHANGE_PUBLIC_PEERS;
-
-                                        char* software = ((char*)responseBuffer) + (sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers));
-                                        *software++ = 8 + (VERSION_A > 9 ? 2 : 1) + (VERSION_B > 9 ? 2 : 1) + (VERSION_C > 9 ? 2 : 1);
-                                        *software++ = 'Q';
-                                        *software++ = 'u';
-                                        *software++ = 'b';
-                                        *software++ = 'i';
-                                        *software++ = 'c';
-                                        *software++ = ' ';
-                                        if (VERSION_A > 9)
-                                        {
-                                            *software++ = (VERSION_A / 10) + '0';
-                                        }
-                                        *software++ = (VERSION_A % 10) + '0';
-                                        *software++ = '.';
-                                        if (VERSION_B > 9)
-                                        {
-                                            *software++ = (VERSION_B / 10) + '0';
-                                        }
-                                        *software++ = (VERSION_B % 10) + '0';
-                                        *software++ = '.';
-                                        if (VERSION_C > 9)
-                                        {
-                                            *software++ = (VERSION_C / 10) + '0';
-                                        }
-                                        *software = (VERSION_C % 10) + '0';
-
-                                        peer->dataToTransmitSize += responseHeader->size;
-                                    }
-                                }
-
-                                ExchangePublicPeers* request = (ExchangePublicPeers*)((char*)peer->receiveBuffer + sizeof(RequestResponseHeader));
-                                for (unsigned int i = 0; i < NUMBER_OF_EXCHANGED_PEERS && numberOfPublicPeers < MAX_NUMBER_OF_PUBLIC_PEERS; i++)
-                                {
-                                    addPublicPeer(request->peers[i]);
-                                }
-
-                                _InterlockedIncrement64(&numberOfProcessedRequests);
-
-                                bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + requestResponseHeader->size, receivedDataSize -= requestResponseHeader->size);
-                                peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + receivedDataSize;
+                                ((char*)peer->receiveBuffer)[j++] = 0;
                             }
-                            else
+                            ((char*)peer->receiveBuffer)[j++] = 0;
+                            ((char*)peer->receiveBuffer)[j++] = 0;
+                            ((char*)peer->receiveBuffer)[j++] = 0;
+                            ((char*)peer->receiveBuffer)[j++] = 0;
+                            ((char*)peer->receiveBuffer)[j++] = 0;
+                            ((char*)peer->receiveBuffer)[j++] = 0;
+                            ((char*)peer->receiveBuffer)[j++] = size >> 5;
+                            ((char*)peer->receiveBuffer)[j++] = size << 3;
+
+                            unsigned char acceptBytes[21] = { 0x76, 0x54, 0x32, 0x10, 0xFE, 0xDC, 0xBA, 0x98, 0x89, 0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0xF0, 0xE1, 0xD2, 0xC3, 0 };
+
+                            __m128i ABCD_SAVE, MASK, E0, E0_SAVE, E1, MSG0, MSG1, MSG2, MSG3;
+                            MASK = _mm_set_epi8(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
+                            E0 = _mm_set_epi32(*((int*)&acceptBytes[16]), 0, 0, 0);
+                            int ptr = -16;
+                            while ((j -= 64) >= i)
                             {
-                                for (unsigned int i = 0; i < numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS); i++)
-                                {
-                                    if (!_InterlockedCompareExchange8(&processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].stage, 1, 0))
-                                    {
-                                        processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].peer = peer;
-                                        processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].peerId = peer->id;
-                                        bs->CopyMem(processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].requestBuffer, peer->receiveBuffer, requestResponseHeader->size);
-                                        _InterlockedCompareExchange8(&processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].stage, 2, 1);
+                                ABCD_SAVE = *((__m128i*)acceptBytes);
+                                E0_SAVE = E0;
 
-                                        bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + requestResponseHeader->size, receivedDataSize -= requestResponseHeader->size);
-                                        peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + receivedDataSize;
+                                MSG0 = _mm_shuffle_epi8(*((__m128i*) & ((char*)peer->receiveBuffer)[i + (ptr += 16)]), MASK);
+                                E0 = _mm_add_epi32(E0, MSG0);
+                                E1 = *((__m128i*)acceptBytes);
+                                *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 0);
 
-                                        goto iteration;
-                                    }
-                                }
+                                MSG1 = _mm_shuffle_epi8(*((__m128i*) & ((char*)peer->receiveBuffer)[i + (ptr += 16)]), MASK);
+                                E1 = _mm_sha1nexte_epu32(E1, MSG1);
+                                E0 = *((__m128i*)acceptBytes);
+                                *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 0);
+                                MSG0 = _mm_sha1msg1_epu32(MSG0, MSG1);
 
-                                if (receivedDataSize > (BUFFER_SIZE / 2))
-                                {
-                                    bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + requestResponseHeader->size, receivedDataSize -= requestResponseHeader->size);
-                                    peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + receivedDataSize;
+                                MSG2 = _mm_shuffle_epi8(*((__m128i*) & ((char*)peer->receiveBuffer)[i + (ptr += 16)]), MASK);
+                                E0 = _mm_sha1nexte_epu32(E0, MSG2);
+                                E1 = *((__m128i*)acceptBytes);
+                                *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 0);
+                                MSG1 = _mm_sha1msg1_epu32(MSG1, MSG2);
+                                MSG0 = _mm_xor_si128(MSG0, MSG2);
 
-                                    _InterlockedIncrement64(&numberOfDiscardedRequests);
-                                }
+                                MSG3 = _mm_shuffle_epi8(*((__m128i*) & ((char*)peer->receiveBuffer)[i + (ptr += 16)]), MASK);
+                                E1 = _mm_sha1nexte_epu32(E1, MSG3);
+                                E0 = *((__m128i*)acceptBytes);
+                                MSG0 = _mm_sha1msg2_epu32(MSG0, MSG3);
+                                *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 0);
+                                MSG2 = _mm_sha1msg1_epu32(MSG2, MSG3);
+                                MSG1 = _mm_xor_si128(MSG1, MSG3);
+
+                                E0 = _mm_sha1nexte_epu32(E0, MSG0);
+                                E1 = *((__m128i*)acceptBytes);
+                                MSG1 = _mm_sha1msg2_epu32(MSG1, MSG0);
+                                *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 0);
+                                MSG3 = _mm_sha1msg1_epu32(MSG3, MSG0);
+                                MSG2 = _mm_xor_si128(MSG2, MSG0);
+
+                                E1 = _mm_sha1nexte_epu32(E1, MSG1);
+                                E0 = *((__m128i*)acceptBytes);
+                                MSG2 = _mm_sha1msg2_epu32(MSG2, MSG1);
+                                *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 1);
+                                MSG0 = _mm_sha1msg1_epu32(MSG0, MSG1);
+                                MSG3 = _mm_xor_si128(MSG3, MSG1);
+
+                                E0 = _mm_sha1nexte_epu32(E0, MSG2);
+                                E1 = *((__m128i*)acceptBytes);
+                                MSG3 = _mm_sha1msg2_epu32(MSG3, MSG2);
+                                *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 1);
+                                MSG1 = _mm_sha1msg1_epu32(MSG1, MSG2);
+                                MSG0 = _mm_xor_si128(MSG0, MSG2);
+
+                                E1 = _mm_sha1nexte_epu32(E1, MSG3);
+                                E0 = *((__m128i*)acceptBytes);
+                                MSG0 = _mm_sha1msg2_epu32(MSG0, MSG3);
+                                *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 1);
+                                MSG2 = _mm_sha1msg1_epu32(MSG2, MSG3);
+                                MSG1 = _mm_xor_si128(MSG1, MSG3);
+
+                                E0 = _mm_sha1nexte_epu32(E0, MSG0);
+                                E1 = *((__m128i*)acceptBytes);
+                                MSG1 = _mm_sha1msg2_epu32(MSG1, MSG0);
+                                *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 1);
+                                MSG3 = _mm_sha1msg1_epu32(MSG3, MSG0);
+                                MSG2 = _mm_xor_si128(MSG2, MSG0);
+
+                                E1 = _mm_sha1nexte_epu32(E1, MSG1);
+                                E0 = *((__m128i*)acceptBytes);
+                                MSG2 = _mm_sha1msg2_epu32(MSG2, MSG1);
+                                *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 1);
+                                MSG0 = _mm_sha1msg1_epu32(MSG0, MSG1);
+                                MSG3 = _mm_xor_si128(MSG3, MSG1);
+
+                                E0 = _mm_sha1nexte_epu32(E0, MSG2);
+                                E1 = *((__m128i*)acceptBytes);
+                                MSG3 = _mm_sha1msg2_epu32(MSG3, MSG2);
+                                *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 2);
+                                MSG1 = _mm_sha1msg1_epu32(MSG1, MSG2);
+                                MSG0 = _mm_xor_si128(MSG0, MSG2);
+
+                                E1 = _mm_sha1nexte_epu32(E1, MSG3);
+                                E0 = *((__m128i*)acceptBytes);
+                                MSG0 = _mm_sha1msg2_epu32(MSG0, MSG3);
+                                *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 2);
+                                MSG2 = _mm_sha1msg1_epu32(MSG2, MSG3);
+                                MSG1 = _mm_xor_si128(MSG1, MSG3);
+
+                                E0 = _mm_sha1nexte_epu32(E0, MSG0);
+                                E1 = *((__m128i*)acceptBytes);
+                                MSG1 = _mm_sha1msg2_epu32(MSG1, MSG0);
+                                *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 2);
+                                MSG3 = _mm_sha1msg1_epu32(MSG3, MSG0);
+                                MSG2 = _mm_xor_si128(MSG2, MSG0);
+
+                                E1 = _mm_sha1nexte_epu32(E1, MSG1);
+                                E0 = *((__m128i*)acceptBytes);
+                                MSG2 = _mm_sha1msg2_epu32(MSG2, MSG1);
+                                *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 2);
+                                MSG0 = _mm_sha1msg1_epu32(MSG0, MSG1);
+                                MSG3 = _mm_xor_si128(MSG3, MSG1);
+
+                                E0 = _mm_sha1nexte_epu32(E0, MSG2);
+                                E1 = *((__m128i*)acceptBytes);
+                                MSG3 = _mm_sha1msg2_epu32(MSG3, MSG2);
+                                *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 2);
+                                MSG1 = _mm_sha1msg1_epu32(MSG1, MSG2);
+                                MSG0 = _mm_xor_si128(MSG0, MSG2);
+
+                                E1 = _mm_sha1nexte_epu32(E1, MSG3);
+                                E0 = *((__m128i*)acceptBytes);
+                                MSG0 = _mm_sha1msg2_epu32(MSG0, MSG3);
+                                *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 3);
+                                MSG2 = _mm_sha1msg1_epu32(MSG2, MSG3);
+                                MSG1 = _mm_xor_si128(MSG1, MSG3);
+
+                                E0 = _mm_sha1nexte_epu32(E0, MSG0);
+                                E1 = *((__m128i*)acceptBytes);
+                                MSG1 = _mm_sha1msg2_epu32(MSG1, MSG0);
+                                *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 3);
+                                MSG3 = _mm_sha1msg1_epu32(MSG3, MSG0);
+                                MSG2 = _mm_xor_si128(MSG2, MSG0);
+
+                                E1 = _mm_sha1nexte_epu32(E1, MSG1);
+                                E0 = *((__m128i*)acceptBytes);
+                                MSG2 = _mm_sha1msg2_epu32(MSG2, MSG1);
+                                *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 3);
+                                MSG3 = _mm_xor_si128(MSG3, MSG1);
+
+                                E0 = _mm_sha1nexte_epu32(E0, MSG2);
+                                E1 = *((__m128i*)acceptBytes);
+                                MSG3 = _mm_sha1msg2_epu32(MSG3, MSG2);
+                                *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 3);
+
+                                E1 = _mm_sha1nexte_epu32(E1, MSG3);
+                                E0 = *((__m128i*)acceptBytes);
+                                *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 3);
+
+                                E0 = _mm_sha1nexte_epu32(E0, E0_SAVE);
+                                *((__m128i*)acceptBytes) = _mm_add_epi32(*((__m128i*)acceptBytes), ABCD_SAVE);
                             }
+                            *((__m128i*)acceptBytes) = _mm_shuffle_epi8(*((__m128i*)acceptBytes), _mm_setr_epi8(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0));
+                            *((int*)&acceptBytes[16]) = _byteswap_ulong(*(((int*)&E0) + 3));
+
+                            const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+                            i = 97;
+                            for (j = 0; j < 21; j += 3)
+                            {
+                                unsigned int word = (acceptBytes[j] << 16) | (acceptBytes[j + 1] << 8) | acceptBytes[j + 2];
+                                peer->dataToTransmit[i++] = alphabet[word >> 18];
+                                peer->dataToTransmit[i++] = alphabet[(word >> 12) & 63];
+                                peer->dataToTransmit[i++] = alphabet[(word >> 6) & 63];
+                                peer->dataToTransmit[i++] = alphabet[word & 63];
+                            }
+                            peer->dataToTransmit[i - 1] = '=';
+                            peer->dataToTransmit[i++] = '\r';
+                            peer->dataToTransmit[i++] = '\n';
+                            peer->dataToTransmit[i++] = '\r';
+                            peer->dataToTransmit[i++] = '\n';
+
+                            peer->dataToTransmitSize = i;
+
+                            transmit(peer);
+
+                            peer->receiveData.FragmentTable[0].FragmentBuffer = peer->receiveBuffer;
+                            receive(peer);
+                        }
+                        else
+                        {
+                            _InterlockedCompareExchange8(&peer->closingStage, 1, 0);
                         }
                     }
+                }
+                else
+                {
+                    peer->type = 1;
+
+                    goto iteration;
                 }
             }
         }
@@ -5408,6 +5527,8 @@ static void transmitCallback(EFI_EVENT Event, void* Context)
     {
         numberOfTransmittedBytes += peer->transmitData.DataLength;
         peer->numberOfTransmittedBytes += peer->transmitData.DataLength;
+
+        transmit(peer);
     }
 }
 
@@ -5859,18 +5980,17 @@ static void connectAndAccept()
                     peers[i].closingStage = 0;
                     peers[i].tcp4Protocol = tcp4Protocol;
 
+                    peers[i].isConnecting = TRUE;
                     EFI_STATUS status;
                     if (status = peers[i].tcp4Protocol->Connect(peers[i].tcp4Protocol, &peers[i].connectToken))
                     {
                         logStatus(L"EFI_TCP4_PROTOCOL.Connect() fails", status);
 
+                        peers[i].isConnecting = FALSE;
+
                         bs->CloseProtocol(peers[i].connectChildHandle, &tcp4ProtocolGuid, ih, NULL);
                         tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peers[i].connectChildHandle);
                         peers[i].tcp4Protocol = NULL;
-                    }
-                    else
-                    {
-                        peers[i].isConnecting = TRUE;
                     }
                 }
             }
@@ -5897,95 +6017,15 @@ static void connectAndAccept()
             peers[i].isClosing = FALSE;
             peers[i].closingStage = 0;
 
+            peers[i].isAccepting = TRUE;
+            peers[i].tcp4Protocol = (EFI_TCP4_PROTOCOL*)1;
             EFI_STATUS status;
             if (status = tcp4Protocol->Accept(tcp4Protocol, &peers[i].acceptToken))
             {
                 logStatus(L"EFI_TCP4_PROTOCOL.Accept() fails", status);
-            }
-            else
-            {
-                peers[i].isAccepting = TRUE;
-                peers[i].tcp4Protocol = (EFI_TCP4_PROTOCOL*)1;
-            }
-        }
-    }
-}
 
-static void receiveAndTransmit()
-{
-    for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
-    {
-        if (!peers[i].isReceiving && !peers[i].closingStage && peers[i].isConnectedOrAccepted)
-        {
-            if (((unsigned long long)peers[i].receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peers[i].receiveBuffer) < BUFFER_SIZE)
-            {
-                peers[i].receiveData.DataLength = peers[i].receiveData.FragmentTable[0].FragmentLength = BUFFER_SIZE - (unsigned int)((unsigned long long)peers[i].receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peers[i].receiveBuffer);
-                EFI_STATUS status;
-                if (status = peers[i].tcp4Protocol->Receive(peers[i].tcp4Protocol, &peers[i].receiveToken))
-                {
-                    logStatus(L"EFI_TCP4_PROTOCOL.Receive() fails", status);
-
-                    _InterlockedCompareExchange8(&peers[i].closingStage, 1, 0);
-                }
-                else
-                {
-                    peers[i].isReceiving = TRUE;
-                }
-            }
-        }
-
-        if (peers[i].dataToTransmitSize && !peers[i].isTransmitting && !peers[i].closingStage && peers[i].isConnectedOrAccepted)
-        {
-            unsigned int size = peers[i].dataToTransmitSize;
-            void* tmp = peers[i].dataToTransmit;
-            peers[i].dataToTransmit = (char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer;
-            peers[i].transmitData.FragmentTable[0].FragmentBuffer = tmp;
-            peers[i].dataToTransmitSize = 0;
-
-            if (peers[i].type < 0)
-            {
-                if (size <= 125)
-                {
-                    bs->CopyMem(((char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer) + 2, peers[i].transmitData.FragmentTable[0].FragmentBuffer, size);
-                    ((unsigned char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[1] = size;
-                    size += 2;
-                }
-                else
-                {
-                    if (size < 0x10000)
-                    {
-                        bs->CopyMem(((char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer) + 4, peers[i].transmitData.FragmentTable[0].FragmentBuffer, size);
-                        ((unsigned char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[1] = 126;
-                        ((unsigned char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[2] = size >> 8;
-                        ((unsigned char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[3] = size;
-                        size += 4;
-                    }
-                    else
-                    {
-                        bs->CopyMem(((char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer) + 10, peers[i].transmitData.FragmentTable[0].FragmentBuffer, size);
-                        ((unsigned char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[1] = 127;
-                        ((unsigned int*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[2] = 0;
-                        ((unsigned char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[6] = size >> 24;
-                        ((unsigned char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[7] = size >> 16;
-                        ((unsigned char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[8] = size >> 8;
-                        ((unsigned char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[9] = size;
-                        size += 10;
-                    }
-                }
-                ((unsigned char*)peers[i].transmitData.FragmentTable[0].FragmentBuffer)[0] = 0x82;
-            }
-
-            peers[i].transmitData.DataLength = peers[i].transmitData.FragmentTable[0].FragmentLength = size;
-            EFI_STATUS status;
-            if (status = peers[i].tcp4Protocol->Transmit(peers[i].tcp4Protocol, &peers[i].transmitToken))
-            {
-                logStatus(L"EFI_TCP4_PROTOCOL.Transmit() fails", status);
-
-                _InterlockedCompareExchange8(&peers[i].closingStage, 1, 0);
-            }
-            else
-            {
-                peers[i].isTransmitting = TRUE;
+                peers[i].isAccepting = FALSE;
+                peers[i].tcp4Protocol = NULL;
             }
         }
     }
@@ -6191,7 +6231,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                         {
                             const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
                             connectAndAccept();
-                            receiveAndTransmit();
                             close();
                             processResponses();
                             bs->RestoreTPL(tpl);
@@ -6399,6 +6438,14 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     appendNumber(message, peers[i].isClosing, FALSE);
                                     appendText(message, L" stage=");
                                     appendNumber(message, peers[i].closingStage, FALSE);
+                                    appendText(message, L" ");
+                                    appendNumber(message, peers[i].address[0], FALSE);
+                                    appendText(message, L".");
+                                    appendNumber(message, peers[i].address[1], FALSE);
+                                    appendText(message, L".");
+                                    appendNumber(message, peers[i].address[2], FALSE);
+                                    appendText(message, L".");
+                                    appendNumber(message, peers[i].address[3], FALSE);
                                     log(message);
                                 }*/
 
