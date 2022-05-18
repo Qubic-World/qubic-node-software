@@ -30,39 +30,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 #define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
 
 static const unsigned char knownPublicPeers[][4] = {
-    { 2, 139, 196, 162 },
-    { 5, 39, 218, 46 },
-    { 37, 48, 102, 161 },
-    { 46, 140, 52, 174 },
-    { 65, 108, 100, 43 },
-    { 65, 108, 140, 15 },
-    { 78, 94, 64, 185 },
-    { 78, 159, 108, 162 },
-    { 82, 114, 88, 225 },
-    { 84, 147, 172, 34 },
-    { 84, 208, 169, 239 },
     { 88, 99, 67, 51 },
-    { 88, 153, 194, 78 },
-    { 90, 163, 132, 86 },
-    { 91, 5, 122, 76 },
-    { 92, 186, 12, 120 },
-    { 93, 125, 10, 240 },
-    { 93, 125, 105, 208 },
-    { 95, 168, 174, 218 },
-    { 95, 216, 66, 164},
-    { 95, 216, 243, 217 },
-    { 95, 217, 33, 155 },
-    { 134, 17, 25, 28 },
-    { 178, 13, 73, 101 },
-    { 178, 168, 208, 71 },
-    { 178, 172, 194, 143 },
-    { 178, 172, 194, 149 },
-    { 185, 130, 226, 27 },
-    { 185, 130, 226, 102 },
-    { 212, 40, 234, 76 },
-    { 213, 127, 147, 70 },
-    { 213, 184, 249, 83 },
-    { 217, 92, 76, 28 }
 };
 
 
@@ -1013,9 +981,8 @@ static void log(const CHAR16* message)
     timestampedMessage[9] = time.Minute % 10 + L'0';
     timestampedMessage[10] = time.Second / 10 + L'0';
     timestampedMessage[11] = time.Second % 10 + L'0';
-    timestampedMessage[12] = ':';
-    timestampedMessage[13] = ' ';
-    timestampedMessage[14] = 0;
+    timestampedMessage[12] = ' ';
+    timestampedMessage[13] = 0;
 
     appendText(timestampedMessage, message);
     appendText(timestampedMessage, L"\r\n");
@@ -3497,8 +3464,8 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 ////////// Qubic \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 5
-#define VERSION_C 6
+#define VERSION_B 6
+#define VERSION_C 0
 
 #define BUFFER_SIZE 1048576
 #define DEJAVU_SWAP_PERIOD 30
@@ -3516,8 +3483,8 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define NUMBER_OF_INCOMING_CONNECTIONS 12
 #define NUMBER_OF_NEURONS 20000
 #define PEER_RATING_PERIOD 10
-#define PORT 21841
-#define PROTOCOL 257
+#define PORT 21842
+#define PROTOCOL 258
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 90
 #define SYSTEM_DATA_SAVING_PERIOD 60
 
@@ -5674,7 +5641,7 @@ static BOOLEAN initialize()
                     return FALSE;
                 }
 
-                miningData[0] ^= 4;
+                miningData[0] ^= 435;
 
                 unsigned char* miningDataBytes = (unsigned char*)miningData;
                 for (unsigned int i = 0; i < sizeof(computorPublicKey); i++)
