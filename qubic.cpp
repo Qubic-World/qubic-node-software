@@ -27,6 +27,8 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 ////////// Public Settings \\\\\\\\\\
 
+//#define USE_COMMUNITY_AVX2_FIX
+
 #define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
 
 static const unsigned char knownPublicPeers[][4] = {
@@ -3465,10 +3467,11 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 
 #define VERSION_A 1
 #define VERSION_B 6
-#define VERSION_C 5
+#define VERSION_C 6
 
 #define BUFFER_SIZE 1048576
 #define DEJAVU_SWAP_PERIOD 30
+#define HANDSHAKING_TIMER_LIMIT 5
 #define ISSUANCE_RATE 1000000000000
 #define MAX_ENERGY_AMOUNT 9223372036854775807
 #define MAX_NUMBER_OF_MINERS 10000
@@ -3476,7 +3479,6 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define MAX_NUMBER_OF_PUBLIC_PEERS 64
 #define MAX_TIMESTAMP_VALUE 9223372036854775807
 #define MIN_ENERGY_AMOUNT 1000000
-#define NETWORKING_TIMER_LIMIT 5
 #define NUMBER_OF_COMPUTORS (26 * 26)
 #define NUMBER_OF_EXCHANGED_PEERS 4
 #define NUMBER_OF_OUTGOING_CONNECTIONS 4
@@ -3485,7 +3487,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define PEER_RATING_PERIOD 10
 #define PORT 21842
 #define PROTOCOL 258
-#define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 90
+#define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 60
 #define SYSTEM_DATA_SAVING_PERIOD 60
 
 static __m256i ZERO;
@@ -3503,11 +3505,10 @@ typedef struct
 typedef struct
 {
     EFI_TCP4_PROTOCOL* tcp4Protocol;
-    EFI_TCP4_CONNECTION_TOKEN connectToken;
+    EFI_TCP4_LISTEN_TOKEN connectAcceptToken;
     unsigned char address[4];
-    EFI_TCP4_LISTEN_TOKEN acceptToken;
-    EFI_EVENT connectAcceptEvent;
-    unsigned long long timerBeginningTick;
+    EFI_EVENT postponedConnectAcceptEvent;
+    EFI_EVENT handshakingTimerEvent;
     void* receiveBuffer;
     EFI_TCP4_RECEIVE_DATA receiveData;
     EFI_TCP4_IO_TOKEN receiveToken;
@@ -3815,9 +3816,8 @@ static unsigned long long numberOfTickEndings[NUMBER_OF_COMPUTORS];
 
 static volatile unsigned int bestMiningScore = 0;
 static unsigned int knownMiningScore = 0;
-unsigned long long prevResourceTestingSolutionPublicationTick = 0;
-long long prevNumberOfMiningIterations = 0;
-unsigned long long prevMiningPerformanceTick = __rdtsc();
+static long long prevNumberOfMiningIterations = 0;
+static unsigned long long prevMiningPerformanceTick = 0;
 #if NUMBER_OF_MINING_PROCESSORS
 static unsigned long long miningData[15625000];
 static unsigned int bestNeuronLinks[NUMBER_OF_NEURONS][2];
@@ -4057,9 +4057,18 @@ static void enableAVX2()
     _xsetbv(_XCR_XFEATURE_ENABLED_MASK, (_xgetbv(_XCR_XFEATURE_ENABLED_MASK) & 0xFFFB) | 7);
 }
 
-static void requestProcessor(void* ProcedureArgument)
+#ifndef USE_COMMUNITY_AVX2_FIX
+static void requestProcessorInitializationProcessor(void* ProcedureArgument)
 {
     enableAVX2();
+}
+#endif
+
+static void requestProcessor(void* ProcedureArgument)
+{
+#ifdef USE_COMMUNITY_AVX2_FIX
+    enableAVX2();
+#endif
 
     Processor* processor = (Processor*)ProcedureArgument;
     RequestResponseHeader* requestHeader = (RequestResponseHeader*)processor->requestBuffer;
@@ -4399,7 +4408,7 @@ static void requestProcessor(void* ProcedureArgument)
 
             EFI_TIME time;
 
-            rs->GetTime(&time, NULL);
+            //rs->GetTime(&time, NULL);
 
             const int ownMonth = (time.Month + 9) % 12;
             const int ownYear = time.Year - ownMonth / 10;
@@ -4529,7 +4538,7 @@ static void responseCallback(EFI_EVENT Event, void* Context)
         {
             for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
             {
-                if (peers[j].tcp4Protocol && peers[j].isConnectedAccepted && !peers[j].isClosing && peers[j].type > 0
+                if (peers[j].tcp4Protocol && peers[j].isConnectedAccepted && peers[j].exchangedPublicPeers && !peers[j].isClosing && peers[j].type > 0
                     && (processor->responseTransmittingType > 0 || peers[j].id != processor->peer->id))
                 {
                     push(&peers[j], responseHeader);
@@ -4538,7 +4547,7 @@ static void responseCallback(EFI_EVENT Event, void* Context)
         }
         else
         {
-            if (processor->peerId == processor->peer->id && processor->peer->tcp4Protocol && processor->peer->isConnectedAccepted && !processor->peer->isClosing)
+            if (processor->peerId == processor->peer->id && processor->peer->tcp4Protocol && processor->peer->isConnectedAccepted && processor->peer->exchangedPublicPeers && !processor->peer->isClosing)
             {
                 push(processor->peer, responseHeader);
             }
@@ -4706,9 +4715,8 @@ static void connectAccept(Peer* peer)
             if (j == NUMBER_OF_OUTGOING_CONNECTIONS)
             {
                 EFI_TCP4_PROTOCOL* tcp4Protocol;
-                if (peer->acceptToken.NewChildHandle = getTcp4Protocol(peer->address, &tcp4Protocol))
+                if (peer->connectAcceptToken.NewChildHandle = getTcp4Protocol(peer->address, &tcp4Protocol))
                 {
-                    peer->timerBeginningTick = __rdtsc();
                     peer->receiveData.FragmentTable[0].FragmentBuffer = peer->receiveBuffer;
                     peer->dataToTransmitSize = 0;
                     peer->prevNumberOfReceivedBytes = peer->numberOfReceivedBytes = 0;
@@ -4722,17 +4730,18 @@ static void connectAccept(Peer* peer)
                     peer->tcp4Protocol = tcp4Protocol;
 
                     EFI_STATUS status;
-                    if (status = peer->tcp4Protocol->Connect(peer->tcp4Protocol, &peer->connectToken))
+                    if (status = peer->tcp4Protocol->Connect(peer->tcp4Protocol, (EFI_TCP4_CONNECTION_TOKEN*)&peer->connectAcceptToken))
                     {
                         logStatus(L"EFI_TCP4_PROTOCOL.Connect() fails", status);
 
-                        bs->CloseProtocol(peer->acceptToken.NewChildHandle, &tcp4ProtocolGuid, ih, NULL);
-                        tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peer->acceptToken.NewChildHandle);
+                        bs->CloseProtocol(peer->connectAcceptToken.NewChildHandle, &tcp4ProtocolGuid, ih, NULL);
+                        tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peer->connectAcceptToken.NewChildHandle);
                         peer->tcp4Protocol = NULL;
                     }
                     else
                     {
                         peer->isConnectingAccepting = TRUE;
+                        bs->SetTimer(peer->handshakingTimerEvent, TimerRelative, HANDSHAKING_TIMER_LIMIT * 10000000UL);
                     }
                 }
             }
@@ -4740,7 +4749,6 @@ static void connectAccept(Peer* peer)
         else
         {
             *((int*)peer->address) = 0;
-            peer->timerBeginningTick = 0;
             peer->receiveData.FragmentTable[0].FragmentBuffer = peer->receiveBuffer;
             peer->dataToTransmitSize = 0;
             peer->prevNumberOfReceivedBytes = peer->numberOfReceivedBytes = 0;
@@ -4754,7 +4762,7 @@ static void connectAccept(Peer* peer)
 
             peer->tcp4Protocol = (EFI_TCP4_PROTOCOL*)1;
             EFI_STATUS status;
-            if (status = tcp4Protocol->Accept(tcp4Protocol, &peer->acceptToken))
+            if (status = tcp4Protocol->Accept(tcp4Protocol, &peer->connectAcceptToken))
             {
                 logStatus(L"EFI_TCP4_PROTOCOL.Accept() fails", status);
 
@@ -4768,7 +4776,7 @@ static void connectAccept(Peer* peer)
 
         if (!peer->isConnectingAccepting)
         {
-            bs->SetTimer(peer->connectAcceptEvent, TimerRelative, 10000000);
+            bs->SetTimer(peer->postponedConnectAcceptEvent, TimerRelative, 10000000);
         }
     }
 }
@@ -4779,6 +4787,11 @@ static void close(Peer* peer)
     {
         if (!peer->isClosing)
         {
+            if (!peer->exchangedPublicPeers)
+            {
+                bs->SetTimer(peer->handshakingTimerEvent, TimerCancel, 0);
+            }
+
             EFI_STATUS status;
             if (status = peer->tcp4Protocol->Configure(peer->tcp4Protocol, NULL))
             {
@@ -4790,10 +4803,10 @@ static void close(Peer* peer)
 
         if (!peer->isConnectingAccepting && !peer->isReceiving && !peer->isTransmitting)
         {
-            bs->CloseProtocol(peer->acceptToken.NewChildHandle, &tcp4ProtocolGuid, ih, NULL);
+            bs->CloseProtocol(peer->connectAcceptToken.NewChildHandle, &tcp4ProtocolGuid, ih, NULL);
             if (peer->index < NUMBER_OF_OUTGOING_CONNECTIONS)
             {
-                tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peer->acceptToken.NewChildHandle);
+                tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peer->connectAcceptToken.NewChildHandle);
             }
 
             peer->type = 0;
@@ -4814,16 +4827,23 @@ static void receive(Peer* peer)
         if (((unsigned long long)peer->receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peer->receiveBuffer) < BUFFER_SIZE)
         {
             peer->receiveData.DataLength = peer->receiveData.FragmentTable[0].FragmentLength = BUFFER_SIZE - (unsigned int)((unsigned long long)peer->receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peer->receiveBuffer);
-            EFI_STATUS status;
-            if (status = peer->tcp4Protocol->Receive(peer->tcp4Protocol, &peer->receiveToken))
+            if (!peer->receiveData.DataLength)
             {
-                logStatus(L"EFI_TCP4_PROTOCOL.Receive() fails", status);
-
                 close(peer);
             }
             else
             {
-                peer->isReceiving = TRUE;
+                EFI_STATUS status;
+                if (status = peer->tcp4Protocol->Receive(peer->tcp4Protocol, &peer->receiveToken))
+                {
+                    logStatus(L"EFI_TCP4_PROTOCOL.Receive() fails", status);
+
+                    close(peer);
+                }
+                else
+                {
+                    peer->isReceiving = TRUE;
+                }
             }
         }
     }
@@ -4834,10 +4854,10 @@ static void transmit(Peer* peer)
     if (peer->dataToTransmitSize && !peer->isTransmitting && peer->isConnectedAccepted && !peer->isClosing)
     {
         unsigned int size = peer->dataToTransmitSize;
-        /*void* tmp = peer->dataToTransmit;
+        
+        void* tmp = peer->dataToTransmit;
         peer->dataToTransmit = (char*)peer->transmitData.FragmentTable[0].FragmentBuffer;
-        peer->transmitData.FragmentTable[0].FragmentBuffer = tmp;*/
-        bs->CopyMem(peer->transmitData.FragmentTable[0].FragmentBuffer, peer->dataToTransmit, peer->dataToTransmitSize);
+        peer->transmitData.FragmentTable[0].FragmentBuffer = tmp;
         peer->dataToTransmitSize = 0;
 
         if (peer->type < 0)
@@ -5020,120 +5040,129 @@ static void minerShutdownCallback(EFI_EVENT Event, void* Context)
 }
 #endif
 
-static void connectCallback(EFI_EVENT Event, void* Context)
+static void connectAcceptCallback(EFI_EVENT Event, void* Context)
 {
     Peer* peer = (Peer*)Context;
     peer->isConnectingAccepting = FALSE;
-    if (peer->connectToken.CompletionToken.Status)
+    if (peer->index < NUMBER_OF_OUTGOING_CONNECTIONS)
     {
-        forget(*((int*)peer->address));
-        close(peer);
-    }
-    else
-    {
-        if (peer->isClosing)
+        if (peer->connectAcceptToken.CompletionToken.Status)
         {
+            forget(*((int*)peer->address));
             close(peer);
         }
         else
         {
-            peer->isConnectedAccepted = TRUE;
-
-            receive(peer);
-
-            ExchangePublicPeers* request = (ExchangePublicPeers*)&peer->dataToTransmit[sizeof(RequestResponseHeader)];
-            unsigned int i;
-            if (*((int*)ownPublicAddress))
+            if (peer->isClosing)
             {
-                *((int*)request->peers[0]) = *((int*)ownPublicAddress);
-                i = 1;
+                close(peer);
             }
             else
             {
-                i = 0;
-            }
-            for (; i < NUMBER_OF_EXCHANGED_PEERS; i++)
-            {
-                unsigned int random;
-                _rdrand32_step(&random);
-                const unsigned int publicPeerIndex = random % numberOfPublicPeers;
-                *((int*)request->peers[i]) = publicPeers[publicPeerIndex].isVerified ? *((int*)publicPeers[publicPeerIndex].address) : 0;
-            }
-
-            RequestResponseHeader* requestHeader = (RequestResponseHeader*)peer->dataToTransmit;
-            requestHeader->size = sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers) + 1 + 8 + (VERSION_A > 9 ? 2 : 1) + (VERSION_B > 9 ? 2 : 1) + (VERSION_C > 9 ? 2 : 1);
-            requestHeader->protocol = PROTOCOL;
-            requestHeader->type = EXCHANGE_PUBLIC_PEERS;
-            char* software = (char*)&peer->dataToTransmit[sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers)];
-            *software++ = 8 + (VERSION_A > 9 ? 2 : 1) + (VERSION_B > 9 ? 2 : 1) + (VERSION_C > 9 ? 2 : 1);
-            *software++ = 'Q';
-            *software++ = 'u';
-            *software++ = 'b';
-            *software++ = 'i';
-            *software++ = 'c';
-            *software++ = ' ';
-            if (VERSION_A > 9)
-            {
-                *software++ = (VERSION_A / 10) + '0';
-            }
-            *software++ = (VERSION_A % 10) + '0';
-            *software++ = '.';
-            if (VERSION_B > 9)
-            {
-                *software++ = (VERSION_B / 10) + '0';
-            }
-            *software++ = (VERSION_B % 10) + '0';
-            *software++ = '.';
-            if (VERSION_C > 9)
-            {
-                *software++ = (VERSION_C / 10) + '0';
-            }
-            *software = (VERSION_C % 10) + '0';
-
-            peer->dataToTransmitSize = requestHeader->size;
-
-            transmit(peer);
-        }
-    }
-}
-
-static void acceptCallback(EFI_EVENT Event, void* Context)
-{
-    Peer* peer = (Peer*)Context;
-    peer->isConnectingAccepting = FALSE;
-    if (peer->acceptToken.CompletionToken.Status)
-    {
-        peer->tcp4Protocol = NULL;
-    }
-    else
-    {
-        if (peer->isClosing)
-        {
-            close(peer);
-        }
-        else
-        {
-            EFI_STATUS status;
-            if (status = bs->OpenProtocol(peer->acceptToken.NewChildHandle, &tcp4ProtocolGuid, (void**)&peer->tcp4Protocol, ih, NULL, EFI_OPEN_PROTOCOL_GET_PROTOCOL))
-            {
-                logStatus(L"EFI_BOOT_SERVICES.OpenProtocol() fails", status);
-
-                peer->tcp4Protocol = NULL;
-            }
-            else
-            {
-                peer->timerBeginningTick = __rdtsc();
                 peer->isConnectedAccepted = TRUE;
 
                 receive(peer);
+
+                ExchangePublicPeers* request = (ExchangePublicPeers*)&peer->dataToTransmit[sizeof(RequestResponseHeader)];
+                unsigned int i;
+                if (*((int*)ownPublicAddress))
+                {
+                    *((int*)request->peers[0]) = *((int*)ownPublicAddress);
+                    i = 1;
+                }
+                else
+                {
+                    i = 0;
+                }
+                for (; i < NUMBER_OF_EXCHANGED_PEERS; i++)
+                {
+                    unsigned int random;
+                    _rdrand32_step(&random);
+                    const unsigned int publicPeerIndex = random % numberOfPublicPeers;
+                    *((int*)request->peers[i]) = publicPeers[publicPeerIndex].isVerified ? *((int*)publicPeers[publicPeerIndex].address) : 0;
+                }
+
+                RequestResponseHeader* requestHeader = (RequestResponseHeader*)peer->dataToTransmit;
+                requestHeader->size = sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers) + 1 + 8 + (VERSION_A > 9 ? 2 : 1) + (VERSION_B > 9 ? 2 : 1) + (VERSION_C > 9 ? 2 : 1);
+                requestHeader->protocol = PROTOCOL;
+                requestHeader->type = EXCHANGE_PUBLIC_PEERS;
+                char* software = (char*)&peer->dataToTransmit[sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers)];
+                *software++ = 8 + (VERSION_A > 9 ? 2 : 1) + (VERSION_B > 9 ? 2 : 1) + (VERSION_C > 9 ? 2 : 1);
+                *software++ = 'Q';
+                *software++ = 'u';
+                *software++ = 'b';
+                *software++ = 'i';
+                *software++ = 'c';
+                *software++ = ' ';
+                if (VERSION_A > 9)
+                {
+                    *software++ = (VERSION_A / 10) + '0';
+                }
+                *software++ = (VERSION_A % 10) + '0';
+                *software++ = '.';
+                if (VERSION_B > 9)
+                {
+                    *software++ = (VERSION_B / 10) + '0';
+                }
+                *software++ = (VERSION_B % 10) + '0';
+                *software++ = '.';
+                if (VERSION_C > 9)
+                {
+                    *software++ = (VERSION_C / 10) + '0';
+                }
+                *software = (VERSION_C % 10) + '0';
+
+                peer->dataToTransmitSize = requestHeader->size;
+
+                transmit(peer);
+            }
+        }
+    }
+    else
+    {
+        if (peer->connectAcceptToken.CompletionToken.Status)
+        {
+            peer->tcp4Protocol = NULL;
+        }
+        else
+        {
+            if (peer->isClosing)
+            {
+                close(peer);
+            }
+            else
+            {
+                EFI_STATUS status;
+                if (status = bs->OpenProtocol(peer->connectAcceptToken.NewChildHandle, &tcp4ProtocolGuid, (void**)&peer->tcp4Protocol, ih, NULL, EFI_OPEN_PROTOCOL_GET_PROTOCOL))
+                {
+                    logStatus(L"EFI_BOOT_SERVICES.OpenProtocol() fails", status);
+
+                    peer->tcp4Protocol = NULL;
+                }
+                else
+                {
+                    peer->isConnectedAccepted = TRUE;
+                    bs->SetTimer(peer->handshakingTimerEvent, TimerRelative, HANDSHAKING_TIMER_LIMIT * 10000000UL);
+
+                    receive(peer);
+                }
             }
         }
     }
 }
 
-static void connectAcceptCallback(EFI_EVENT Event, void* Context)
+static void postponedConnectAcceptCallback(EFI_EVENT Event, void* Context)
 {
     connectAccept((Peer*)Context);
+}
+
+static void handshakingTimerCallback(EFI_EVENT Event, void* Context)
+{
+    Peer* peer = (Peer*)Context;
+    if (((unsigned long long)peer->tcp4Protocol) > 1 && !peer->exchangedPublicPeers && (peer->isConnectingAccepting || peer->isConnectedAccepted))
+    {
+        close(peer);
+    }
 }
 
 static void receiveCallback(EFI_EVENT Event, void* Context)
@@ -5406,6 +5435,7 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                             if (j < receivedDataSize)
                             {
                                 peer->type = -1;
+                                peer->exchangedPublicPeers = TRUE;
 
                                 bs->CopyMem(peer->dataToTransmit, (void*)"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ", 97);
 
@@ -5876,9 +5906,9 @@ static BOOLEAN initialize()
 
             return FALSE;
         }
-        if ((status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, connectCallback, &peers[peerIndex], &peers[peerIndex].connectToken.CompletionToken.Event))
-            || (status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, acceptCallback, &peers[peerIndex], &peers[peerIndex].acceptToken.CompletionToken.Event))
-            || (status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, connectAcceptCallback, &peers[peerIndex], &peers[peerIndex].connectAcceptEvent))
+        if ((status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, connectAcceptCallback, &peers[peerIndex], &peers[peerIndex].connectAcceptToken.CompletionToken.Event))
+            || (status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, postponedConnectAcceptCallback, &peers[peerIndex], &peers[peerIndex].postponedConnectAcceptEvent))
+            || (status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, handshakingTimerCallback, &peers[peerIndex], &peers[peerIndex].handshakingTimerEvent))
             || (status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, receiveCallback, &peers[peerIndex], &peers[peerIndex].receiveToken.CompletionToken.Event))
             || (status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, transmitCallback, &peers[peerIndex], &peers[peerIndex].transmitToken.CompletionToken.Event)))
         {
@@ -5955,9 +5985,9 @@ static void deinitialize()
         {
             bs->FreePool(peers[peerIndex].dataToTransmit);
 
-            bs->CloseEvent(peers[peerIndex].connectToken.CompletionToken.Event);
-            bs->CloseEvent(peers[peerIndex].acceptToken.CompletionToken.Event);
-            bs->CloseEvent(peers[peerIndex].connectAcceptEvent);
+            bs->CloseEvent(peers[peerIndex].connectAcceptToken.CompletionToken.Event);
+            bs->CloseEvent(peers[peerIndex].postponedConnectAcceptEvent);
+            bs->CloseEvent(peers[peerIndex].handshakingTimerEvent);
             bs->CloseEvent(peers[peerIndex].receiveToken.CompletionToken.Event);
             bs->CloseEvent(peers[peerIndex].transmitToken.CompletionToken.Event);
         }
@@ -6046,17 +6076,6 @@ static void saveSolution()
 
 static void loggingCallback(EFI_EVENT Event, void* Context)
 {
-    for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
-    {
-        if (((unsigned long long)peers[i].tcp4Protocol) > 1)
-        {
-            if (!peers[i].exchangedPublicPeers && peers[i].timerBeginningTick && (peers[i].isConnectingAccepting || peers[i].isConnectedAccepted) && __rdtsc() - peers[i].timerBeginningTick > NETWORKING_TIMER_LIMIT * frequency)
-            {
-                close(&peers[i]);
-            }
-        }
-    }
-
     unsigned long long numberOfWaitingBytes = 0;
 
     for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
@@ -6131,7 +6150,7 @@ static void loggingCallback(EFI_EVENT Event, void* Context)
     prevNumberOfReceivedBytes = numberOfReceivedBytes;
     prevNumberOfTransmittedBytes = numberOfTransmittedBytes;
 
-    for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS; i++)
+    /*for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS; i++)
     {
         setText(message, L"type=");
         appendNumber(message, peers[i].type, FALSE);
@@ -6156,7 +6175,7 @@ static void loggingCallback(EFI_EVENT Event, void* Context)
         appendText(message, L".");
         appendNumber(message, peers[i].address[3], FALSE);
         log(message);
-    }
+    }*/
 
 #if NUMBER_OF_MINING_PROCESSORS
     unsigned long long random;
@@ -6236,78 +6255,8 @@ static void loggingCallback(EFI_EVENT Event, void* Context)
         }
 #endif
         log(message);
-
-        if (bestMiningScore > knownMiningScore || __rdtsc() - prevResourceTestingSolutionPublicationTick >= RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD * frequency)
-        {
-            if (bestMiningScore > knownMiningScore)
-            {
-                knownMiningScore = bestMiningScore;
-
-                saveSolution();
-            }
-            else
-            {
-                prevResourceTestingSolutionPublicationTick = __rdtsc();
-            }
-
-            solution.header.size = sizeof(solution);
-            solution.header.protocol = PROTOCOL;
-            solution.header.type = BROADCAST_RESOURCE_TESTING_SOLUTION;
-            bs->CopyMem(solution.broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey, computorPublicKey, 32);
-            solution.broadcastResourceTestingSolution.resourceTestingSolution.score = knownMiningScore;
-            bs->CopyMem(solution.broadcastResourceTestingSolution.resourceTestingSolution.neuronLinks, bestNeuronLinks, sizeof(solution.broadcastResourceTestingSolution.resourceTestingSolution.neuronLinks));
-
-            for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
-            {
-                if (peers[i].tcp4Protocol && peers[i].isConnectedAccepted && !peers[i].isClosing && peers[i].type > 0)
-                {
-                    push(&peers[i], &solution.header);
-                }
-            }
-        }
     }
 #endif
-
-    if (system.ownComputorIndex >= 0)
-    {
-        struct
-        {
-            RequestResponseHeader header;
-            BroadcastTickEnding broadcastTickEnding;
-        } tickEnding;
-
-        tickEnding.header.size = sizeof(tickEnding);
-        tickEnding.header.protocol = PROTOCOL;
-        tickEnding.header.type = BROADCAST_TICK_ENDING;
-
-        tickEnding.broadcastTickEnding.tickEnding.computorIndex = system.ownComputorIndex;
-        tickEnding.broadcastTickEnding.tickEnding.epoch = 0;
-        tickEnding.broadcastTickEnding.tickEnding.tick = 0;
-
-        EFI_TIME time;
-        rs->GetTime(&time, NULL);
-        tickEnding.broadcastTickEnding.tickEnding.year = time.Year - 2000;
-        tickEnding.broadcastTickEnding.tickEnding.month = time.Month;
-        tickEnding.broadcastTickEnding.tickEnding.day = time.Day;
-        tickEnding.broadcastTickEnding.tickEnding.hour = time.Hour;
-        tickEnding.broadcastTickEnding.tickEnding.minute = time.Minute;
-        tickEnding.broadcastTickEnding.tickEnding.second = time.Second;
-        tickEnding.broadcastTickEnding.tickEnding.millisecond = time.Nanosecond / 1000000;
-
-        unsigned char digest[32];
-        tickEnding.broadcastTickEnding.tickEnding.computorIndex ^= 4;
-        KangarooTwelve((unsigned char*)&tickEnding.broadcastTickEnding.tickEnding, sizeof(tickEnding.broadcastTickEnding.tickEnding) - 64, digest, sizeof(digest));
-        tickEnding.broadcastTickEnding.tickEnding.computorIndex ^= 4;
-        sign(ownSubseed, ownPublicKey, digest, tickEnding.broadcastTickEnding.tickEnding.signature);
-
-        for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
-        {
-            if (peers[i].tcp4Protocol && peers[i].isConnectedAccepted && !peers[i].isClosing && peers[i].type > 0)
-            {
-                push(&peers[i], &tickEnding.header);
-            }
-        }
-    }
 }
 
 static void dejavuSwapCallback(EFI_EVENT Event, void* Context)
@@ -6320,7 +6269,9 @@ static void dejavuSwapCallback(EFI_EVENT Event, void* Context)
 
 static void systemDataSavingCallback(EFI_EVENT Event, void* Context)
 {
+#if NUMBER_OF_COMPUTING_PROCESSORS
     saveSystem();
+#endif
 }
 
 static void peerRatingCallback(EFI_EVENT Event, void* Context)
@@ -6403,6 +6354,75 @@ static void peerRatingCallback(EFI_EVENT Event, void* Context)
     }
 }
 
+static void broadcastResourceTestingSolutionCallback(EFI_EVENT Event, void* Context)
+{
+    if (bestMiningScore > knownMiningScore)
+    {
+        knownMiningScore = bestMiningScore;
+
+        saveSolution();
+    }
+
+    solution.header.size = sizeof(solution);
+    solution.header.protocol = PROTOCOL;
+    solution.header.type = BROADCAST_RESOURCE_TESTING_SOLUTION;
+    bs->CopyMem(solution.broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey, computorPublicKey, 32);
+    solution.broadcastResourceTestingSolution.resourceTestingSolution.score = knownMiningScore;
+    bs->CopyMem(solution.broadcastResourceTestingSolution.resourceTestingSolution.neuronLinks, bestNeuronLinks, sizeof(solution.broadcastResourceTestingSolution.resourceTestingSolution.neuronLinks));
+
+    for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
+    {
+        if (peers[i].tcp4Protocol && peers[i].isConnectedAccepted && peers[i].exchangedPublicPeers && !peers[i].isClosing && peers[i].type > 0)
+        {
+            push(&peers[i], &solution.header);
+        }
+    }
+}
+
+static void broadcastTickEndingCallback(EFI_EVENT Event, void* Context)
+{
+    if (system.ownComputorIndex >= 0)
+    {
+        struct
+        {
+            RequestResponseHeader header;
+            BroadcastTickEnding broadcastTickEnding;
+        } tickEnding;
+
+        tickEnding.header.size = sizeof(tickEnding);
+        tickEnding.header.protocol = PROTOCOL;
+        tickEnding.header.type = BROADCAST_TICK_ENDING;
+
+        tickEnding.broadcastTickEnding.tickEnding.computorIndex = system.ownComputorIndex;
+        tickEnding.broadcastTickEnding.tickEnding.epoch = 0;
+        tickEnding.broadcastTickEnding.tickEnding.tick = 0;
+
+        EFI_TIME time;
+        rs->GetTime(&time, NULL);
+        tickEnding.broadcastTickEnding.tickEnding.year = time.Year - 2000;
+        tickEnding.broadcastTickEnding.tickEnding.month = time.Month;
+        tickEnding.broadcastTickEnding.tickEnding.day = time.Day;
+        tickEnding.broadcastTickEnding.tickEnding.hour = time.Hour;
+        tickEnding.broadcastTickEnding.tickEnding.minute = time.Minute;
+        tickEnding.broadcastTickEnding.tickEnding.second = time.Second;
+        tickEnding.broadcastTickEnding.tickEnding.millisecond = time.Nanosecond / 1000000;
+
+        unsigned char digest[32];
+        tickEnding.broadcastTickEnding.tickEnding.computorIndex ^= 4;
+        KangarooTwelve((unsigned char*)&tickEnding.broadcastTickEnding.tickEnding, sizeof(tickEnding.broadcastTickEnding.tickEnding) - 64, digest, sizeof(digest));
+        tickEnding.broadcastTickEnding.tickEnding.computorIndex ^= 4;
+        sign(ownSubseed, ownPublicKey, digest, tickEnding.broadcastTickEnding.tickEnding.signature);
+
+        for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
+        {
+            if (peers[i].tcp4Protocol && peers[i].isConnectedAccepted && peers[i].exchangedPublicPeers && !peers[i].isClosing && peers[i].type > 0)
+            {
+                push(&peers[i], &tickEnding.header);
+            }
+        }
+    }
+}
+
 EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 {
     ih = imageHandle;
@@ -6476,6 +6496,12 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                         break;
                     }
+#ifndef USE_COMMUNITY_AVX2_FIX
+                    else
+                    {
+                        mpServicesProtocol->StartupThisAP(mpServicesProtocol, requestProcessorInitializationProcessor, processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].number, NULL, 0, NULL, NULL);
+                    }
+#endif
                 }
                 if (numberOfProcessors)
                 {
@@ -6508,18 +6534,20 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 }
                             }
 #endif
-                            const EFI_TPL tpl = bs->RaiseTPL(TPL_NOTIFY);
+                            const EFI_TPL tpl = bs->RaiseTPL(TPL_CALLBACK);
                             for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
                             {
                                 connectAccept(&peers[i]);
                             }
                             bs->RestoreTPL(tpl);
 
-                            EFI_EVENT loggingEvent, dejavuSwapEvent, systemDataSavingEvent, peerRatingEvent;
+                            EFI_EVENT loggingEvent, dejavuSwapEvent, systemDataSavingEvent, peerRatingEvent, broadcastResourceTestingSolutionEvent, broadcastTickEndingEvent;
                             if ((status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, loggingCallback, NULL, &loggingEvent))
                                 || (status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, dejavuSwapCallback, NULL, &dejavuSwapEvent))
                                 || (status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, systemDataSavingCallback, NULL, &systemDataSavingEvent))
-                                || (status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, peerRatingCallback, NULL, &peerRatingEvent)))
+                                || (status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, peerRatingCallback, NULL, &peerRatingEvent))
+                                || (status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, broadcastResourceTestingSolutionCallback, NULL, &broadcastResourceTestingSolutionEvent))
+                                || (status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, broadcastTickEndingCallback, NULL, &broadcastTickEndingEvent)))
                             {
                                 logStatus(L"EFI_BOOT_SERVICES.CreateEvent() fails", status);
                             }
@@ -6531,17 +6559,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 bs->SetTimer(systemDataSavingEvent, TimerPeriodic, SYSTEM_DATA_SAVING_PERIOD * 10000000UL);
 #endif
                                 bs->SetTimer(peerRatingEvent, TimerPeriodic, PEER_RATING_PERIOD * 10000000UL);
+                                bs->SetTimer(broadcastResourceTestingSolutionEvent, TimerPeriodic, RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD * 10000000UL);
+                                bs->SetTimer(broadcastTickEndingEvent, TimerPeriodic, 10000000UL);
 
                                 while (!state)
                                 {
-                                    /*for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
-                                    {
-                                        if (((unsigned long long)peers[i].tcp4Protocol) > 1)
-                                        {
-                                            peers[i].tcp4Protocol->Poll(peers[i].tcp4Protocol);
-                                        }
-                                    }*/
-
                                     st->ConIn->Reset(st->ConIn, FALSE);
                                     unsigned long long eventIndex;
                                     bs->WaitForEvent(1, &st->ConIn->WaitForKey, &eventIndex);
@@ -6552,6 +6574,17 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     }
                                 }
 
+                                bs->SetTimer(broadcastTickEndingEvent, TimerCancel, 0);
+                                bs->SetTimer(broadcastResourceTestingSolutionEvent, TimerCancel, 0);
+                                bs->SetTimer(peerRatingEvent, TimerCancel, 0);
+#if NUMBER_OF_COMPUTING_PROCESSORS
+                                bs->SetTimer(systemDataSavingEvent, TimerCancel, 0);
+#endif
+                                bs->SetTimer(dejavuSwapEvent, TimerCancel, 0);
+                                bs->SetTimer(loggingEvent, TimerCancel, 0);
+
+                                bs->CloseEvent(broadcastTickEndingEvent);
+                                bs->CloseEvent(broadcastResourceTestingSolutionEvent);
                                 bs->CloseEvent(peerRatingEvent);
                                 bs->CloseEvent(systemDataSavingEvent);
                                 bs->CloseEvent(dejavuSwapEvent);
