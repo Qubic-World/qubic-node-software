@@ -860,148 +860,6 @@ static EFI_SYSTEM_TABLE* st;
 static EFI_RUNTIME_SERVICES* rs;
 static EFI_BOOT_SERVICES* bs;
 
-static void appendText(CHAR16* dst, const CHAR16* src)
-{
-    unsigned short dstIndex = 0;
-    while (dst[dstIndex] != 0)
-    {
-        dstIndex++;
-    }
-    unsigned short srcIndex = 0;
-    while ((dst[dstIndex++] = src[srcIndex++]) != 0)
-    {
-    }
-}
-
-static void setText(CHAR16* dst, const CHAR16* src)
-{
-    dst[0] = 0;
-    appendText(dst, src);
-}
-
-static void appendNumber(CHAR16* dst, unsigned long long number, BOOLEAN separate)
-{
-    CHAR16 text[27];
-    char textLength = 0;
-    do
-    {
-        text[textLength++] = number % 10 + '0';
-    } while ((number /= 10) > 0);
-    unsigned short dstIndex = 0;
-    while (dst[dstIndex] != 0)
-    {
-        dstIndex++;
-    }
-    while (--textLength >= 0)
-    {
-        dst[dstIndex++] = text[textLength];
-        if (separate && textLength % 3 == 0 && textLength != 0)
-        {
-            dst[dstIndex++] = '\'';
-        }
-    }
-    dst[dstIndex] = 0;
-}
-
-static void setNumber(CHAR16* dst, const unsigned long long number, BOOLEAN separate)
-{
-    dst[0] = 0;
-    appendNumber(dst, number, separate);
-}
-
-static void appendBoolean(CHAR16* dst, const BOOLEAN value)
-{
-    appendText(dst, value ? L"TRUE" : L"FALSE");
-}
-
-static void appendIPv4Address(CHAR16* dst, EFI_IPv4_ADDRESS address)
-{
-    appendNumber(dst, address.Addr[0], FALSE);
-    appendText(dst, L".");
-    appendNumber(dst, address.Addr[1], FALSE);
-    appendText(dst, L".");
-    appendNumber(dst, address.Addr[2], FALSE);
-    appendText(dst, L".");
-    appendNumber(dst, address.Addr[3], FALSE);
-}
-static void appendErrorStatus(CHAR16* dst, const EFI_STATUS status)
-{
-    switch (status)
-    {
-    case EFI_LOAD_ERROR:			appendText(dst, L"EFI_LOAD_ERROR");				break;
-    case EFI_INVALID_PARAMETER:		appendText(dst, L"EFI_INVALID_PARAMETER");		break;
-    case EFI_UNSUPPORTED:			appendText(dst, L"EFI_UNSUPPORTED");			break;
-    case EFI_BAD_BUFFER_SIZE:		appendText(dst, L"EFI_BAD_BUFFER_SIZE");		break;
-    case EFI_BUFFER_TOO_SMALL:		appendText(dst, L"EFI_BUFFER_TOO_SMALL");		break;
-    case EFI_NOT_READY:				appendText(dst, L"EFI_NOT_READY");				break;
-    case EFI_DEVICE_ERROR:			appendText(dst, L"EFI_DEVICE_ERROR");			break;
-    case EFI_WRITE_PROTECTED:		appendText(dst, L"EFI_WRITE_PROTECTED");		break;
-    case EFI_OUT_OF_RESOURCES:		appendText(dst, L"EFI_OUT_OF_RESOURCES");		break;
-    case EFI_VOLUME_CORRUPTED:		appendText(dst, L"EFI_VOLUME_CORRUPTED");		break;
-    case EFI_VOLUME_FULL:			appendText(dst, L"EFI_VOLUME_FULL");			break;
-    case EFI_NO_MEDIA:				appendText(dst, L"EFI_NO_MEDIA");				break;
-    case EFI_MEDIA_CHANGED:			appendText(dst, L"EFI_MEDIA_CHANGED");			break;
-    case EFI_NOT_FOUND:				appendText(dst, L"EFI_NOT_FOUND");				break;
-    case EFI_ACCESS_DENIED:			appendText(dst, L"EFI_ACCESS_DENIED");			break;
-    case EFI_NO_RESPONSE:			appendText(dst, L"EFI_NO_RESPONSE");			break;
-    case EFI_NO_MAPPING:			appendText(dst, L"EFI_NO_MAPPING");				break;
-    case EFI_TIMEOUT:				appendText(dst, L"EFI_TIMEOUT");				break;
-    case EFI_NOT_STARTED:			appendText(dst, L"EFI_NOT_STARTED");			break;
-    case EFI_ALREADY_STARTED:		appendText(dst, L"EFI_ALREADY_STARTED");		break;
-    case EFI_ABORTED:				appendText(dst, L"EFI_ABORTED");				break;
-    case EFI_ICMP_ERROR:			appendText(dst, L"EFI_ICMP_ERROR");				break;
-    case EFI_TFTP_ERROR:			appendText(dst, L"EFI_TFTP_ERROR");				break;
-    case EFI_PROTOCOL_ERROR:		appendText(dst, L"EFI_PROTOCOL_ERROR");			break;
-    case EFI_INCOMPATIBLE_VERSION:	appendText(dst, L"EFI_INCOMPATIBLE_VERSION");	break;
-    case EFI_SECURITY_VIOLATION:	appendText(dst, L"EFI_SECURITY_VIOLATION");		break;
-    case EFI_CRC_ERROR:				appendText(dst, L"EFI_CRC_ERROR");				break;
-    case EFI_END_OF_MEDIA:			appendText(dst, L"EFI_END_OF_MEDIA");			break;
-    case EFI_END_OF_FILE:			appendText(dst, L"EFI_END_OF_FILE");			break;
-    case EFI_INVALID_LANGUAGE:		appendText(dst, L"EFI_INVALID_LANGUAGE");		break;
-    case EFI_COMPROMISED_DATA:		appendText(dst, L"EFI_COMPROMISED_DATA");		break;
-    case EFI_IP_ADDRESS_CONFLICT:	appendText(dst, L"EFI_IP_ADDRESS_CONFLICT");	break;
-    case EFI_HTTP_ERROR:			appendText(dst, L"EFI_HTTP_ERROR");				break;
-    default: appendNumber(dst, status, FALSE);
-    }
-}
-
-static void log(const CHAR16* message)
-{
-    CHAR16 timestampedMessage[256];
-
-    EFI_TIME time;
-    rs->GetTime(&time, NULL);
-    timestampedMessage[0] = (time.Year %= 100) / 10 + L'0';
-    timestampedMessage[1] = time.Year % 10 + L'0';
-    timestampedMessage[2] = time.Month / 10 + L'0';
-    timestampedMessage[3] = time.Month % 10 + L'0';
-    timestampedMessage[4] = time.Day / 10 + L'0';
-    timestampedMessage[5] = time.Day % 10 + L'0';
-    timestampedMessage[6] = time.Hour / 10 + L'0';
-    timestampedMessage[7] = time.Hour % 10 + L'0';
-    timestampedMessage[8] = time.Minute / 10 + L'0';
-    timestampedMessage[9] = time.Minute % 10 + L'0';
-    timestampedMessage[10] = time.Second / 10 + L'0';
-    timestampedMessage[11] = time.Second % 10 + L'0';
-    timestampedMessage[12] = ' ';
-    timestampedMessage[13] = 0;
-
-    appendText(timestampedMessage, message);
-    appendText(timestampedMessage, L"\r\n");
-
-    st->ConOut->OutputString(st->ConOut, timestampedMessage);
-}
-
-static void logStatus(const CHAR16* message, const EFI_STATUS status)
-{
-    CHAR16 extendedMessage[256];
-    setText(extendedMessage, message);
-    appendText(extendedMessage, L" (");
-    appendErrorStatus(extendedMessage, status);
-    appendText(extendedMessage, L")!");
-    log(extendedMessage);
-}
-
 
 
 ////////// KangarooTwelve \\\\\\\\\\
@@ -3467,7 +3325,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 
 #define VERSION_A 1
 #define VERSION_B 6
-#define VERSION_C 6
+#define VERSION_C 7
 
 #define BUFFER_SIZE 1048576
 #define DEJAVU_SWAP_PERIOD 30
@@ -3834,6 +3692,153 @@ struct
     BroadcastResourceTestingSolution broadcastResourceTestingSolution;
 } solution;
 #endif
+
+static void appendText(CHAR16* dst, const CHAR16* src)
+{
+    unsigned short dstIndex = 0;
+    while (dst[dstIndex] != 0)
+    {
+        dstIndex++;
+    }
+    unsigned short srcIndex = 0;
+    while ((dst[dstIndex++] = src[srcIndex++]) != 0)
+    {
+    }
+}
+
+static void setText(CHAR16* dst, const CHAR16* src)
+{
+    dst[0] = 0;
+    appendText(dst, src);
+}
+
+static void appendNumber(CHAR16* dst, unsigned long long number, BOOLEAN separate)
+{
+    CHAR16 text[27];
+    char textLength = 0;
+    do
+    {
+        text[textLength++] = number % 10 + '0';
+    } while ((number /= 10) > 0);
+    unsigned short dstIndex = 0;
+    while (dst[dstIndex] != 0)
+    {
+        dstIndex++;
+    }
+    while (--textLength >= 0)
+    {
+        dst[dstIndex++] = text[textLength];
+        if (separate && textLength % 3 == 0 && textLength != 0)
+        {
+            dst[dstIndex++] = '\'';
+        }
+    }
+    dst[dstIndex] = 0;
+}
+
+static void setNumber(CHAR16* dst, const unsigned long long number, BOOLEAN separate)
+{
+    dst[0] = 0;
+    appendNumber(dst, number, separate);
+}
+
+static void appendBoolean(CHAR16* dst, const BOOLEAN value)
+{
+    appendText(dst, value ? L"TRUE" : L"FALSE");
+}
+
+static void appendIPv4Address(CHAR16* dst, EFI_IPv4_ADDRESS address)
+{
+    appendNumber(dst, address.Addr[0], FALSE);
+    appendText(dst, L".");
+    appendNumber(dst, address.Addr[1], FALSE);
+    appendText(dst, L".");
+    appendNumber(dst, address.Addr[2], FALSE);
+    appendText(dst, L".");
+    appendNumber(dst, address.Addr[3], FALSE);
+}
+static void appendErrorStatus(CHAR16* dst, const EFI_STATUS status)
+{
+    switch (status)
+    {
+    case EFI_LOAD_ERROR:			appendText(dst, L"EFI_LOAD_ERROR");				break;
+    case EFI_INVALID_PARAMETER:		appendText(dst, L"EFI_INVALID_PARAMETER");		break;
+    case EFI_UNSUPPORTED:			appendText(dst, L"EFI_UNSUPPORTED");			break;
+    case EFI_BAD_BUFFER_SIZE:		appendText(dst, L"EFI_BAD_BUFFER_SIZE");		break;
+    case EFI_BUFFER_TOO_SMALL:		appendText(dst, L"EFI_BUFFER_TOO_SMALL");		break;
+    case EFI_NOT_READY:				appendText(dst, L"EFI_NOT_READY");				break;
+    case EFI_DEVICE_ERROR:			appendText(dst, L"EFI_DEVICE_ERROR");			break;
+    case EFI_WRITE_PROTECTED:		appendText(dst, L"EFI_WRITE_PROTECTED");		break;
+    case EFI_OUT_OF_RESOURCES:		appendText(dst, L"EFI_OUT_OF_RESOURCES");		break;
+    case EFI_VOLUME_CORRUPTED:		appendText(dst, L"EFI_VOLUME_CORRUPTED");		break;
+    case EFI_VOLUME_FULL:			appendText(dst, L"EFI_VOLUME_FULL");			break;
+    case EFI_NO_MEDIA:				appendText(dst, L"EFI_NO_MEDIA");				break;
+    case EFI_MEDIA_CHANGED:			appendText(dst, L"EFI_MEDIA_CHANGED");			break;
+    case EFI_NOT_FOUND:				appendText(dst, L"EFI_NOT_FOUND");				break;
+    case EFI_ACCESS_DENIED:			appendText(dst, L"EFI_ACCESS_DENIED");			break;
+    case EFI_NO_RESPONSE:			appendText(dst, L"EFI_NO_RESPONSE");			break;
+    case EFI_NO_MAPPING:			appendText(dst, L"EFI_NO_MAPPING");				break;
+    case EFI_TIMEOUT:				appendText(dst, L"EFI_TIMEOUT");				break;
+    case EFI_NOT_STARTED:			appendText(dst, L"EFI_NOT_STARTED");			break;
+    case EFI_ALREADY_STARTED:		appendText(dst, L"EFI_ALREADY_STARTED");		break;
+    case EFI_ABORTED:				appendText(dst, L"EFI_ABORTED");				break;
+    case EFI_ICMP_ERROR:			appendText(dst, L"EFI_ICMP_ERROR");				break;
+    case EFI_TFTP_ERROR:			appendText(dst, L"EFI_TFTP_ERROR");				break;
+    case EFI_PROTOCOL_ERROR:		appendText(dst, L"EFI_PROTOCOL_ERROR");			break;
+    case EFI_INCOMPATIBLE_VERSION:	appendText(dst, L"EFI_INCOMPATIBLE_VERSION");	break;
+    case EFI_SECURITY_VIOLATION:	appendText(dst, L"EFI_SECURITY_VIOLATION");		break;
+    case EFI_CRC_ERROR:				appendText(dst, L"EFI_CRC_ERROR");				break;
+    case EFI_END_OF_MEDIA:			appendText(dst, L"EFI_END_OF_MEDIA");			break;
+    case EFI_END_OF_FILE:			appendText(dst, L"EFI_END_OF_FILE");			break;
+    case EFI_INVALID_LANGUAGE:		appendText(dst, L"EFI_INVALID_LANGUAGE");		break;
+    case EFI_COMPROMISED_DATA:		appendText(dst, L"EFI_COMPROMISED_DATA");		break;
+    case EFI_IP_ADDRESS_CONFLICT:	appendText(dst, L"EFI_IP_ADDRESS_CONFLICT");	break;
+    case EFI_HTTP_ERROR:			appendText(dst, L"EFI_HTTP_ERROR");				break;
+    default: appendNumber(dst, status, FALSE);
+    }
+}
+
+static void log(const CHAR16* message)
+{
+    CHAR16 timestampedMessage[256];
+
+    EFI_TIME time;
+    rs->GetTime(&time, NULL);
+    timestampedMessage[0] = (time.Year %= 100) / 10 + L'0';
+    timestampedMessage[1] = time.Year % 10 + L'0';
+    timestampedMessage[2] = time.Month / 10 + L'0';
+    timestampedMessage[3] = time.Month % 10 + L'0';
+    timestampedMessage[4] = time.Day / 10 + L'0';
+    timestampedMessage[5] = time.Day % 10 + L'0';
+    timestampedMessage[6] = time.Hour / 10 + L'0';
+    timestampedMessage[7] = time.Hour % 10 + L'0';
+    timestampedMessage[8] = time.Minute / 10 + L'0';
+    timestampedMessage[9] = time.Minute % 10 + L'0';
+    timestampedMessage[10] = time.Second / 10 + L'0';
+    timestampedMessage[11] = time.Second % 10 + L'0';
+    timestampedMessage[12] = ' ';
+    timestampedMessage[13] = 0;
+
+    appendNumber(timestampedMessage, system.tick, FALSE);
+    appendText(timestampedMessage, L"@");
+    appendNumber(timestampedMessage, system.epoch, FALSE);
+    appendText(timestampedMessage, L" ");
+
+    appendText(timestampedMessage, message);
+    appendText(timestampedMessage, L"\r\n");
+
+    st->ConOut->OutputString(st->ConOut, timestampedMessage);
+}
+
+static void logStatus(const CHAR16* message, const EFI_STATUS status)
+{
+    CHAR16 extendedMessage[256];
+    setText(extendedMessage, message);
+    appendText(extendedMessage, L" (");
+    appendErrorStatus(extendedMessage, status);
+    appendText(extendedMessage, L")!");
+    log(extendedMessage);
+}
 
 static void increaseEnergy(unsigned char* publicKey, long long amount)
 {
@@ -4293,6 +4298,20 @@ static void requestProcessor(void* ProcedureArgument)
                         if (verify(adminPublicKey, digest, request->computorState.signature))
                         {
                             bs->CopyMem(&latestComputorStates[NUMBER_OF_COMPUTORS], &request->computorState, sizeof(ComputorState));
+
+                            if (request->computorState.tick > system.tick)
+                            {
+                                if (_InterlockedCompareExchange8(&systemLock, 1, 0))
+                                {
+                                    if (request->computorState.tick > system.tick)
+                                    {
+                                        system.tick = request->computorState.tick;
+                                        system.epoch = request->computorState.epoch;
+                                    }
+
+                                    _InterlockedCompareExchange8(&systemLock, 0, 1);
+                                }
+                            }
 
                             unsigned int i;
                             for (i = 0; i < NUMBER_OF_COMPUTORS; i++)
@@ -4829,6 +4848,8 @@ static void receive(Peer* peer)
             peer->receiveData.DataLength = peer->receiveData.FragmentTable[0].FragmentLength = BUFFER_SIZE - (unsigned int)((unsigned long long)peer->receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peer->receiveBuffer);
             if (!peer->receiveData.DataLength)
             {
+                log(L"A peer sending too much data is disconnected.");
+
                 close(peer);
             }
             else
@@ -6150,7 +6171,7 @@ static void loggingCallback(EFI_EVENT Event, void* Context)
     prevNumberOfReceivedBytes = numberOfReceivedBytes;
     prevNumberOfTransmittedBytes = numberOfTransmittedBytes;
 
-    /*for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS; i++)
+    for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS; i++)
     {
         setText(message, L"type=");
         appendNumber(message, peers[i].type, FALSE);
@@ -6175,7 +6196,8 @@ static void loggingCallback(EFI_EVENT Event, void* Context)
         appendText(message, L".");
         appendNumber(message, peers[i].address[3], FALSE);
         log(message);
-    }*/
+    }
+
 
 #if NUMBER_OF_MINING_PROCESSORS
     unsigned long long random;
@@ -6214,7 +6236,6 @@ static void loggingCallback(EFI_EVENT Event, void* Context)
             unsigned long long maxNumberOfTickEndings = 0;
             unsigned long long totalNumberOfTickEndings = 0;
             unsigned long long numberOfNonZeroTickEndings = 0;
-            unsigned long long totalAmount = ISSUANCE_RATE / NUMBER_OF_COMPUTORS;
             for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
             {
                 if (i != system.ownComputorIndex)
@@ -6234,24 +6255,12 @@ static void loggingCallback(EFI_EVENT Event, void* Context)
                     }
                 }
             }
-            if (maxNumberOfTickEndings)
-            {
-                for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
-                {
-                    if (i != system.ownComputorIndex)
-                    {
-                        totalAmount += (numberOfTickEndings[i] >= maxNumberOfTickEndings * 80 / 100 ? ISSUANCE_RATE / NUMBER_OF_COMPUTORS : (ISSUANCE_RATE / NUMBER_OF_COMPUTORS) * 100 * numberOfTickEndings[i] / maxNumberOfTickEndings / 80);
-                    }
-                }
-            }
             appendNumber(message, minNumberOfTickEndings, TRUE);
             appendText(message, L"..");
             appendNumber(message, numberOfNonZeroTickEndings ? totalNumberOfTickEndings / numberOfNonZeroTickEndings : 0, TRUE);
             appendText(message, L"..");
             appendNumber(message, maxNumberOfTickEndings, TRUE);
-            appendText(message, L"] ");
-            appendNumber(message, totalAmount, TRUE);
-            appendText(message, L" qus.");
+            appendText(message, L"].");
         }
 #endif
         log(message);
@@ -6379,7 +6388,7 @@ static void broadcastResourceTestingSolutionCallback(EFI_EVENT Event, void* Cont
     }
 }
 
-static void broadcastTickEndingCallback(EFI_EVENT Event, void* Context)
+static void tickGeneratingCallback(EFI_EVENT Event, void* Context)
 {
     if (system.ownComputorIndex >= 0)
     {
@@ -6541,13 +6550,13 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             }
                             bs->RestoreTPL(tpl);
 
-                            EFI_EVENT loggingEvent, dejavuSwapEvent, systemDataSavingEvent, peerRatingEvent, broadcastResourceTestingSolutionEvent, broadcastTickEndingEvent;
+                            EFI_EVENT loggingEvent, dejavuSwapEvent, systemDataSavingEvent, peerRatingEvent, broadcastResourceTestingSolutionEvent, tickGeneratingEvent;
                             if ((status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, loggingCallback, NULL, &loggingEvent))
                                 || (status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, dejavuSwapCallback, NULL, &dejavuSwapEvent))
                                 || (status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, systemDataSavingCallback, NULL, &systemDataSavingEvent))
                                 || (status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, peerRatingCallback, NULL, &peerRatingEvent))
                                 || (status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, broadcastResourceTestingSolutionCallback, NULL, &broadcastResourceTestingSolutionEvent))
-                                || (status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, broadcastTickEndingCallback, NULL, &broadcastTickEndingEvent)))
+                                || (status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, tickGeneratingCallback, NULL, &tickGeneratingEvent)))
                             {
                                 logStatus(L"EFI_BOOT_SERVICES.CreateEvent() fails", status);
                             }
@@ -6560,7 +6569,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 #endif
                                 bs->SetTimer(peerRatingEvent, TimerPeriodic, PEER_RATING_PERIOD * 10000000UL);
                                 bs->SetTimer(broadcastResourceTestingSolutionEvent, TimerPeriodic, RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD * 10000000UL);
-                                bs->SetTimer(broadcastTickEndingEvent, TimerPeriodic, 10000000UL);
+                                bs->SetTimer(tickGeneratingEvent, TimerPeriodic, 10000000UL / 2);
 
                                 while (!state)
                                 {
@@ -6574,7 +6583,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     }
                                 }
 
-                                bs->SetTimer(broadcastTickEndingEvent, TimerCancel, 0);
+                                bs->SetTimer(tickGeneratingEvent, TimerCancel, 0);
                                 bs->SetTimer(broadcastResourceTestingSolutionEvent, TimerCancel, 0);
                                 bs->SetTimer(peerRatingEvent, TimerCancel, 0);
 #if NUMBER_OF_COMPUTING_PROCESSORS
@@ -6583,7 +6592,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 bs->SetTimer(dejavuSwapEvent, TimerCancel, 0);
                                 bs->SetTimer(loggingEvent, TimerCancel, 0);
 
-                                bs->CloseEvent(broadcastTickEndingEvent);
+                                bs->CloseEvent(tickGeneratingEvent);
                                 bs->CloseEvent(broadcastResourceTestingSolutionEvent);
                                 bs->CloseEvent(peerRatingEvent);
                                 bs->CloseEvent(systemDataSavingEvent);
