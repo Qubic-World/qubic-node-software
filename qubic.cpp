@@ -3325,7 +3325,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 
 #define VERSION_A 1
 #define VERSION_B 6
-#define VERSION_C 7
+#define VERSION_C 8
 
 #define BUFFER_SIZE 1048576
 #define DEJAVU_SWAP_PERIOD 30
@@ -4433,8 +4433,8 @@ static void requestProcessor(void* ProcedureArgument)
             const int ownYear = time.Year - ownMonth / 10;
             const int ownDayIndex = ownYear * 365 + ownYear / 4 - ownYear / 100 + ownYear / 400 + (ownMonth * 306 + 5) / 10 + time.Day - 1;
 
-            if ((((((long long)dayIndex) * 24 + request->tickEnding.hour) * 60 + request->tickEnding.minute) * 60 + request->tickEnding.second) * 1000 + request->tickEnding.millisecond
-                <= (((((long long)ownDayIndex) * 24 + time.Hour) * 60 + time.Minute) * 60 + time.Second + 1) * 1000 + time.Nanosecond / 1000000)
+            /*if ((((((long long)dayIndex) * 24 + request->tickEnding.hour) * 60 + request->tickEnding.minute) * 60 + request->tickEnding.second) * 1000 + request->tickEnding.millisecond
+                <= (((((long long)ownDayIndex) * 24 + time.Hour) * 60 + time.Minute) * 60 + time.Second + 1) * 1000 + time.Nanosecond / 1000000)*/
             {
                 if (latestComputorStates[NUMBER_OF_COMPUTORS].timestamp)
                 {
@@ -4935,9 +4935,15 @@ static void push(Peer* peer, RequestResponseHeader* requestResponseHeader)
     {
         bs->CopyMem(&peer->dataToTransmit[peer->dataToTransmitSize], requestResponseHeader, requestResponseHeader->size);
         peer->dataToTransmitSize += requestResponseHeader->size;
-    }
 
-    transmit(peer);
+        transmit(peer);
+    }
+    else
+    {
+        log(L"A peer receiving too little data is disconnected.");
+
+        close(peer);
+    }
 }
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
@@ -6171,7 +6177,7 @@ static void loggingCallback(EFI_EVENT Event, void* Context)
     prevNumberOfReceivedBytes = numberOfReceivedBytes;
     prevNumberOfTransmittedBytes = numberOfTransmittedBytes;
 
-    for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS; i++)
+    /*for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS; i++)
     {
         setText(message, L"type=");
         appendNumber(message, peers[i].type, FALSE);
@@ -6196,8 +6202,7 @@ static void loggingCallback(EFI_EVENT Event, void* Context)
         appendText(message, L".");
         appendNumber(message, peers[i].address[3], FALSE);
         log(message);
-    }
-
+    }*/
 
 #if NUMBER_OF_MINING_PROCESSORS
     unsigned long long random;
@@ -6363,6 +6368,7 @@ static void peerRatingCallback(EFI_EVENT Event, void* Context)
     }
 }
 
+#if NUMBER_OF_MINING_PROCESSORS
 static void broadcastResourceTestingSolutionCallback(EFI_EVENT Event, void* Context)
 {
     if (bestMiningScore > knownMiningScore)
@@ -6387,6 +6393,7 @@ static void broadcastResourceTestingSolutionCallback(EFI_EVENT Event, void* Cont
         }
     }
 }
+#endif
 
 static void tickGeneratingCallback(EFI_EVENT Event, void* Context)
 {
@@ -6555,7 +6562,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 || (status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, dejavuSwapCallback, NULL, &dejavuSwapEvent))
                                 || (status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, systemDataSavingCallback, NULL, &systemDataSavingEvent))
                                 || (status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, peerRatingCallback, NULL, &peerRatingEvent))
+#if NUMBER_OF_MINING_PROCESSORS
                                 || (status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, broadcastResourceTestingSolutionCallback, NULL, &broadcastResourceTestingSolutionEvent))
+#endif
                                 || (status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, tickGeneratingCallback, NULL, &tickGeneratingEvent)))
                             {
                                 logStatus(L"EFI_BOOT_SERVICES.CreateEvent() fails", status);
@@ -6568,14 +6577,21 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 bs->SetTimer(systemDataSavingEvent, TimerPeriodic, SYSTEM_DATA_SAVING_PERIOD * 10000000UL);
 #endif
                                 bs->SetTimer(peerRatingEvent, TimerPeriodic, PEER_RATING_PERIOD * 10000000UL);
+#if NUMBER_OF_MINING_PROCESSORS
                                 bs->SetTimer(broadcastResourceTestingSolutionEvent, TimerPeriodic, RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD * 10000000UL);
+#endif
                                 bs->SetTimer(tickGeneratingEvent, TimerPeriodic, 10000000UL / 2);
 
                                 while (!state)
                                 {
-                                    st->ConIn->Reset(st->ConIn, FALSE);
-                                    unsigned long long eventIndex;
-                                    bs->WaitForEvent(1, &st->ConIn->WaitForKey, &eventIndex);
+                                    for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
+                                    {
+                                        if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type > 0)
+                                        {
+                                            peers[i].tcp4Protocol->Poll(peers[i].tcp4Protocol);
+                                        }
+                                    }
+
                                     EFI_INPUT_KEY key;
                                     if (!st->ConIn->ReadKeyStroke(st->ConIn, &key) && key.ScanCode == 0x17)
                                     {
@@ -6584,7 +6600,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 }
 
                                 bs->SetTimer(tickGeneratingEvent, TimerCancel, 0);
+#if NUMBER_OF_MINING_PROCESSORS
                                 bs->SetTimer(broadcastResourceTestingSolutionEvent, TimerCancel, 0);
+#endif
                                 bs->SetTimer(peerRatingEvent, TimerCancel, 0);
 #if NUMBER_OF_COMPUTING_PROCESSORS
                                 bs->SetTimer(systemDataSavingEvent, TimerCancel, 0);
@@ -6593,7 +6611,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 bs->SetTimer(loggingEvent, TimerCancel, 0);
 
                                 bs->CloseEvent(tickGeneratingEvent);
+#if NUMBER_OF_MINING_PROCESSORS
                                 bs->CloseEvent(broadcastResourceTestingSolutionEvent);
+#endif
                                 bs->CloseEvent(peerRatingEvent);
                                 bs->CloseEvent(systemDataSavingEvent);
                                 bs->CloseEvent(dejavuSwapEvent);
