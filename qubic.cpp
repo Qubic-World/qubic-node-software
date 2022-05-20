@@ -29,7 +29,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 6
-#define VERSION_C 9
+#define VERSION_C 10
 
 //#define USE_COMMUNITY_AVX2_FIX
 
@@ -3328,7 +3328,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 ////////// Qubic \\\\\\\\\\
 
 #define BUFFER_SIZE 1048576
-#define DEJAVU_SWAP_PERIOD 30
+#define DEJAVU_SWAP_LIMIT 2621440 // False duplicate chance < 2%
 #define HANDSHAKING_TIMER_LIMIT 5
 #define ISSUANCE_RATE 1000000000000
 #define MAX_ENERGY_AMOUNT 9223372036854775807
@@ -3642,8 +3642,9 @@ static ComputorState latestComputorStates[NUMBER_OF_COMPUTORS + 1];
 static volatile char latestTickEndingsLock = 0;
 static TickEnding latestTickEndings[NUMBER_OF_COMPUTORS];
 
-static volatile unsigned long long* dejavu0 = NULL;
-static volatile unsigned long long* dejavu1 = NULL;
+static unsigned long long* dejavu0 = NULL;
+static unsigned long long* dejavu1 = NULL;
+static unsigned int dejavuSwapCounter = DEJAVU_SWAP_LIMIT;
 
 static EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* simpleFileSystemProtocol;
 
@@ -5260,12 +5261,19 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
 
                                 if (!((dejavu0[saltedId >> 6] | dejavu1[saltedId >> 6]) & (((unsigned long long)1) << (saltedId & 63))))
                                 {
-                                    dejavu0[saltedId >> 6] |= (((unsigned long long)1) << (saltedId & 63));
-
                                     for (unsigned int i = 0; i < numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS); i++)
                                     {
                                         if (!processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].peer)
                                         {
+                                            dejavu0[saltedId >> 6] |= (((unsigned long long)1) << (saltedId & 63));
+                                            if (!(--dejavuSwapCounter))
+                                            {
+                                                unsigned long long* tmp = dejavu1;
+                                                dejavu1 = dejavu0;
+                                                bs->SetMem(dejavu0 = tmp, 536870912, 0);
+                                                dejavuSwapCounter = DEJAVU_SWAP_LIMIT;
+                                            }
+
                                             processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].peer = peer;
                                             processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].peerId = peer->id;
                                             bs->CopyMem(processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].requestBuffer, peer->receiveBuffer, requestResponseHeader->size);
@@ -6134,33 +6142,6 @@ static void loggingCallback(EFI_EVENT Event, void* Context)
     prevNumberOfReceivedBytes = numberOfReceivedBytes;
     prevNumberOfTransmittedBytes = numberOfTransmittedBytes;
 
-    /*for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS; i++)
-    {
-        setText(message, L"type=");
-        appendNumber(message, peers[i].type, FALSE);
-        appendText(message, L" c/a'ing=");
-        appendNumber(message, peers[i].isConnectingAccepting, FALSE);
-        appendText(message, L" c/a'ed=");
-        appendNumber(message, peers[i].isConnectedAccepted, FALSE);
-        appendText(message, L" rx'ing=");
-        appendNumber(message, peers[i].isReceiving, FALSE);
-        appendText(message, L" tx'ing=");
-        appendNumber(message, peers[i].isTransmitting, FALSE);
-        appendText(message, L" hx'ed=");
-        appendNumber(message, peers[i].exchangedPublicPeers, FALSE);
-        appendText(message, L" dx'ed=");
-        appendNumber(message, peers[i].isClosing, FALSE);
-        appendText(message, L" ");
-        appendNumber(message, peers[i].address[0], FALSE);
-        appendText(message, L".");
-        appendNumber(message, peers[i].address[1], FALSE);
-        appendText(message, L".");
-        appendNumber(message, peers[i].address[2], FALSE);
-        appendText(message, L".");
-        appendNumber(message, peers[i].address[3], FALSE);
-        log(message);
-    }*/
-
 #if NUMBER_OF_MINING_PROCESSORS
     unsigned long long random;
     _rdrand64_step(&random);
@@ -6168,10 +6149,12 @@ static void loggingCallback(EFI_EVENT Event, void* Context)
     {
         if (latestComputorStates[NUMBER_OF_COMPUTORS].timestamp)
         {
-            setText(message, L"t");
-            appendNumber(message, latestComputorStates[NUMBER_OF_COMPUTORS].tick, TRUE);
-            appendText(message, L" @ e");
-            appendNumber(message, latestComputorStates[NUMBER_OF_COMPUTORS].epoch, TRUE);
+            setText(message, L"1+");
+            appendNumber(message, NUMBER_OF_COMPUTING_PROCESSORS, TRUE);
+            appendText(message, L"+");
+            appendNumber(message, NUMBER_OF_MINING_PROCESSORS, TRUE);
+            appendText(message, L"+");
+            appendNumber(message, numberOfProcessors - (1 + NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS), TRUE);
             appendText(message, L" | Score = ");
         }
         else
@@ -6192,7 +6175,10 @@ static void loggingCallback(EFI_EVENT Event, void* Context)
         }
         else
         {
-            appendNumber(message, system.ownComputorIndex, FALSE);
+            const CHAR16 alphabet[26][2] = { L"A", L"B", L"C", L"D", L"E", L"F", L"G", L"H", L"I", L"J", L"K", L"L", L"M", L"N", L"O", L"P", L"Q", L"R", L"S", L"T", L"U", L"V", L"W", L"X", L"Y", L"Z"};
+            appendText(message, alphabet[system.ownComputorIndex / 26]);
+            appendText(message, alphabet[system.ownComputorIndex % 26]);
+
             appendText(message, L" [");
             unsigned long long minNumberOfTickEndings = 0xFFFFFFFFFFFFFFFF;
             unsigned long long maxNumberOfTickEndings = 0;
@@ -6228,14 +6214,6 @@ static void loggingCallback(EFI_EVENT Event, void* Context)
         log(message);
     }
 #endif
-}
-
-static void dejavuSwapCallback(EFI_EVENT Event, void* Context)
-{
-    volatile unsigned long long* tmp = dejavu1;
-    dejavu1 = dejavu0;
-    bs->SetMem((void*)tmp, 536870912, 0);
-    dejavu0 = tmp;
 }
 
 static void systemDataSavingCallback(EFI_EVENT Event, void* Context)
@@ -6367,8 +6345,8 @@ static void tickGeneratingCallback(EFI_EVENT Event, void* Context)
         tickEnding.header.type = BROADCAST_TICK_ENDING;
 
         tickEnding.broadcastTickEnding.tickEnding.computorIndex = system.ownComputorIndex;
-        tickEnding.broadcastTickEnding.tickEnding.epoch = 0;
-        tickEnding.broadcastTickEnding.tickEnding.tick = 0;
+        tickEnding.broadcastTickEnding.tickEnding.epoch = system.epoch;
+        tickEnding.broadcastTickEnding.tickEnding.tick = system.tick;
 
         EFI_TIME time;
         rs->GetTime(&time, NULL);
@@ -6446,9 +6424,12 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
         }
         if (numberOfProcessors)
         {
-            if (numberOfProcessors < NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS + 1)
+            if (numberOfProcessors < NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS + 2)
             {
-                log(L"[NUMBER_OF_MINING_PROCESSORS] is set to a too high value!");
+                setText(message, L"[NUMBER_OF_MINING_PROCESSORS] cannot be greater than ");
+                appendNumber(message, numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + 2), FALSE);
+                appendText(message, L"!");
+                log(message);
             }
             else
             {
@@ -6514,9 +6495,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             }
                             bs->RestoreTPL(tpl);
 
-                            EFI_EVENT loggingEvent, dejavuSwapEvent, systemDataSavingEvent, peerRatingEvent, broadcastResourceTestingSolutionEvent, tickGeneratingEvent;
+                            EFI_EVENT loggingEvent, systemDataSavingEvent, peerRatingEvent, broadcastResourceTestingSolutionEvent, tickGeneratingEvent;
                             if ((status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, loggingCallback, NULL, &loggingEvent))
-                                || (status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, dejavuSwapCallback, NULL, &dejavuSwapEvent))
                                 || (status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, systemDataSavingCallback, NULL, &systemDataSavingEvent))
                                 || (status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, peerRatingCallback, NULL, &peerRatingEvent))
 #if NUMBER_OF_MINING_PROCESSORS
@@ -6529,7 +6509,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             else
                             {
                                 bs->SetTimer(loggingEvent, TimerPeriodic, 10000000UL);
-                                bs->SetTimer(dejavuSwapEvent, TimerPeriodic, DEJAVU_SWAP_PERIOD * 10000000UL);
 #if NUMBER_OF_COMPUTING_PROCESSORS
                                 bs->SetTimer(systemDataSavingEvent, TimerPeriodic, SYSTEM_DATA_SAVING_PERIOD * 10000000UL);
 #endif
@@ -6543,7 +6522,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 {
                                     for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
                                     {
-                                        if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type > 0)
+                                        if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type >= 0)
                                         {
                                             peers[i].tcp4Protocol->Poll(peers[i].tcp4Protocol);
                                         }
@@ -6564,7 +6543,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 #if NUMBER_OF_COMPUTING_PROCESSORS
                                 bs->SetTimer(systemDataSavingEvent, TimerCancel, 0);
 #endif
-                                bs->SetTimer(dejavuSwapEvent, TimerCancel, 0);
                                 bs->SetTimer(loggingEvent, TimerCancel, 0);
 
                                 bs->CloseEvent(tickGeneratingEvent);
@@ -6573,7 +6551,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 #endif
                                 bs->CloseEvent(peerRatingEvent);
                                 bs->CloseEvent(systemDataSavingEvent);
-                                bs->CloseEvent(dejavuSwapEvent);
                                 bs->CloseEvent(loggingEvent);
                             }
 
