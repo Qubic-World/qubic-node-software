@@ -29,7 +29,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 6
-#define VERSION_C 10
+#define VERSION_C 11
 
 //#define USE_COMMUNITY_AVX2_FIX
 
@@ -3655,6 +3655,7 @@ static Processor processors[MAX_NUMBER_OF_PROCESSORS];
 static volatile long long numberOfProcessedRequests = 0, prevNumberOfProcessedRequests = 0;
 static volatile long long numberOfDiscardedRequests = 0, prevNumberOfDiscardedRequests = 0;
 static volatile long long numberOfDuplicateRequests = 0, prevNumberOfDuplicateRequests = 0;
+static volatile long long numberOfDisseminatedRequests = 0, prevNumberOfDisseminatedRequests = 0;
 
 static EFI_GUID tcp4ServiceBindingProtocolGuid = EFI_TCP4_SERVICE_BINDING_PROTOCOL_GUID;
 static EFI_SERVICE_BINDING_PROTOCOL* tcp4ServiceBindingProtocol;
@@ -3687,6 +3688,8 @@ static unsigned int neuronLinks[NUMBER_OF_MINING_PROCESSORS][NUMBER_OF_NEURONS][
 static unsigned int neuronValues[NUMBER_OF_MINING_PROCESSORS][NUMBER_OF_NEURONS];
 static unsigned int neuronValuesForVerification[NUMBER_OF_NEURONS];
 static volatile long long numberOfMiningIterations = 0;
+
+static bool showExtendedLogging = false;
 
 struct
 {
@@ -4876,6 +4879,8 @@ static void push(Peer* peer, RequestResponseHeader* requestResponseHeader)
         peer->dataToTransmitSize += requestResponseHeader->size;
 
         transmit(peer);
+
+        _InterlockedIncrement64(&numberOfDisseminatedRequests);
     }
     else
     {
@@ -5081,6 +5086,8 @@ static void connectAcceptCallback(EFI_EVENT Event, void* Context)
                 peer->dataToTransmitSize = requestHeader->size;
 
                 transmit(peer);
+
+                _InterlockedIncrement64(&numberOfDisseminatedRequests);
             }
         }
     }
@@ -5239,6 +5246,8 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                                         peer->dataToTransmitSize += responseHeader->size;
 
                                         transmit(peer);
+
+                                        _InterlockedIncrement64(&numberOfDisseminatedRequests);
                                     }
                                 }
 
@@ -6092,6 +6101,8 @@ static void loggingCallback(EFI_EVENT Event, void* Context)
     appendNumber(message, numberOfDiscardedRequests - prevNumberOfDiscardedRequests, TRUE);
     appendText(message, L" *");
     appendNumber(message, numberOfDuplicateRequests - prevNumberOfDuplicateRequests, TRUE);
+    appendText(message, L" /");
+    appendNumber(message, numberOfDisseminatedRequests - prevNumberOfDisseminatedRequests, TRUE);
     appendText(message, L"] ");
     for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
     {
@@ -6139,8 +6150,39 @@ static void loggingCallback(EFI_EVENT Event, void* Context)
     prevNumberOfProcessedRequests = numberOfProcessedRequests;
     prevNumberOfDiscardedRequests = numberOfDiscardedRequests;
     prevNumberOfDuplicateRequests = numberOfDuplicateRequests;
+    prevNumberOfDisseminatedRequests = numberOfDisseminatedRequests;
     prevNumberOfReceivedBytes = numberOfReceivedBytes;
     prevNumberOfTransmittedBytes = numberOfTransmittedBytes;
+
+    if (showExtendedLogging)
+    {
+        for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS; i++)
+        {
+            setText(message, L"type=");
+            appendNumber(message, peers[i].type, FALSE);
+            appendText(message, L" c/a'ing=");
+            appendNumber(message, peers[i].isConnectingAccepting, FALSE);
+            appendText(message, L" c/a'ed=");
+            appendNumber(message, peers[i].isConnectedAccepted, FALSE);
+            appendText(message, L" rx'ing=");
+            appendNumber(message, peers[i].isReceiving, FALSE);
+            appendText(message, L" tx'ing=");
+            appendNumber(message, peers[i].isTransmitting, FALSE);
+            appendText(message, L" hx'ed=");
+            appendNumber(message, peers[i].exchangedPublicPeers, FALSE);
+            appendText(message, L" dx'ing=");
+            appendNumber(message, peers[i].isClosing, FALSE);
+            appendText(message, L" ");
+            appendNumber(message, peers[i].address[0], FALSE);
+            appendText(message, L".");
+            appendNumber(message, peers[i].address[1], FALSE);
+            appendText(message, L".");
+            appendNumber(message, peers[i].address[2], FALSE);
+            appendText(message, L".");
+            appendNumber(message, peers[i].address[3], FALSE);
+            log(message);
+        }
+    }
 
 #if NUMBER_OF_MINING_PROCESSORS
     unsigned long long random;
@@ -6154,7 +6196,7 @@ static void loggingCallback(EFI_EVENT Event, void* Context)
             appendText(message, L"+");
             appendNumber(message, NUMBER_OF_MINING_PROCESSORS, TRUE);
             appendText(message, L"+");
-            appendNumber(message, numberOfProcessors - (1 + NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS), TRUE);
+            appendNumber(message, numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS), TRUE);
             appendText(message, L" | Score = ");
         }
         else
@@ -6529,9 +6571,42 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     }
 
                                     EFI_INPUT_KEY key;
-                                    if (!st->ConIn->ReadKeyStroke(st->ConIn, &key) && key.ScanCode == 0x17)
+                                    if (!st->ConIn->ReadKeyStroke(st->ConIn, &key))
                                     {
-                                        state = 1;
+                                        switch (key.ScanCode)
+                                        {
+                                        case 0x0B:
+                                        {
+                                            log(L"[F4] Close all connections | [F12] Toggle extended logging | [ESC] Shut down.");
+                                        }
+                                        break;
+
+                                        case 0x0E:
+                                        {
+                                            const EFI_TPL tpl = bs->RaiseTPL(TPL_CALLBACK);
+                                            for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
+                                            {
+                                                if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].isConnectedAccepted)
+                                                {
+                                                    close(&peers[i]);
+                                                }
+                                            }
+                                            bs->RestoreTPL(tpl);
+                                        }
+                                        break;
+
+                                        case 0x16:
+                                        {
+                                            showExtendedLogging = !showExtendedLogging;
+                                        }
+                                        break;
+
+                                        case 0x17:
+                                        {
+                                            state = 1;
+                                        }
+                                        break;
+                                        }
                                     }
                                 }
 
