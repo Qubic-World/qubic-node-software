@@ -29,7 +29,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 6
-#define VERSION_C 11
+#define VERSION_C 12
 
 //#define USE_COMMUNITY_AVX2_FIX
 
@@ -3625,6 +3625,8 @@ static unsigned char ownSubseed[32], ownPrivateKey[32], ownPublicKey[32], operat
 static unsigned long long latestOperatorTimestamp;
 static unsigned long long salt;
 
+static EFI_FILE_PROTOCOL* root = NULL;
+
 static volatile char systemLock = 0;
 static struct System
 {
@@ -3689,14 +3691,14 @@ static unsigned int neuronValues[NUMBER_OF_MINING_PROCESSORS][NUMBER_OF_NEURONS]
 static unsigned int neuronValuesForVerification[NUMBER_OF_NEURONS];
 static volatile long long numberOfMiningIterations = 0;
 
-static bool showExtendedLogging = false;
-
 struct
 {
     RequestResponseHeader header;
     BroadcastResourceTestingSolution broadcastResourceTestingSolution;
 } solution;
 #endif
+
+static bool showExtendedLogging = false;
 
 static void appendText(CHAR16* dst, const CHAR16* src)
 {
@@ -4913,12 +4915,7 @@ static void minerProcessor(void* ProcedureArgument)
 
     const unsigned int miningProcessorIndex = (unsigned int)((unsigned long long)ProcedureArgument);
 
-    while (_InterlockedCompareExchange8(&neuronNetworkLock, 1, 0))
-    {
-        _mm_pause();
-    }
     bs->CopyMem(neuronLinks[miningProcessorIndex], bestNeuronLinks, sizeof(bestNeuronLinks));
-    _InterlockedCompareExchange8(&neuronNetworkLock, 0, 1);
 
     unsigned int miningScore = 0;
     while (!state)
@@ -5045,12 +5042,29 @@ static void connectAcceptCallback(EFI_EVENT Event, void* Context)
                 {
                     i = 0;
                 }
+                bool noVerifiedPublicPeers = true;
+                for (unsigned int i = 0; i < numberOfPublicPeers; i++)
+                {
+                    if (publicPeers[i].isVerified)
+                    {
+                        noVerifiedPublicPeers = false;
+
+                        break;
+                    }
+                }
                 for (; i < NUMBER_OF_EXCHANGED_PEERS; i++)
                 {
                     unsigned int random;
                     _rdrand32_step(&random);
                     const unsigned int publicPeerIndex = random % numberOfPublicPeers;
-                    *((int*)request->peers[i]) = publicPeers[publicPeerIndex].isVerified ? *((int*)publicPeers[publicPeerIndex].address) : 0;
+                    if (publicPeers[publicPeerIndex].isVerified || noVerifiedPublicPeers)
+                    {
+                        *((int*)request->peers[i]) = *((int*)publicPeers[publicPeerIndex].address);
+                    }
+                    else
+                    {
+                        i--;
+                    }
                 }
 
                 RequestResponseHeader* requestHeader = (RequestResponseHeader*)peer->dataToTransmit;
@@ -5204,12 +5218,29 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                                     {
                                         void* responseBuffer = &peer->dataToTransmit[peer->dataToTransmitSize];
                                         ExchangePublicPeers* response = (ExchangePublicPeers*)(((char*)responseBuffer) + sizeof(RequestResponseHeader));
+                                        bool noVerifiedPublicPeers = true;
+                                        for (unsigned int i = 0; i < numberOfPublicPeers; i++)
+                                        {
+                                            if (publicPeers[i].isVerified)
+                                            {
+                                                noVerifiedPublicPeers = false;
+
+                                                break;
+                                            }
+                                        }
                                         for (unsigned int i = 0; i < NUMBER_OF_EXCHANGED_PEERS; i++)
                                         {
                                             unsigned int random;
                                             _rdrand32_step(&random);
                                             const unsigned int publicPeerIndex = random % numberOfPublicPeers;
-                                            *((int*)response->peers[i]) = publicPeers[publicPeerIndex].isVerified ? *((int*)publicPeers[publicPeerIndex].address) : 0;
+                                            if (publicPeers[publicPeerIndex].isVerified || noVerifiedPublicPeers)
+                                            {
+                                                *((int*)response->peers[i]) = *((int*)publicPeers[publicPeerIndex].address);
+                                            }
+                                            else
+                                            {
+                                                i--;
+                                            }
                                         }
 
                                         RequestResponseHeader* responseHeader = (RequestResponseHeader*)responseBuffer;
@@ -5668,6 +5699,69 @@ static void transmitCallback(EFI_EVENT Event, void* Context)
     }
 }
 
+#if NUMBER_OF_COMPUTING_PROCESSORS
+static void saveSystem()
+{
+    while (_InterlockedCompareExchange8(&systemLock, 1, 0))
+    {
+        _mm_pause();
+    }
+    bs->CopyMem(&systemToSave, &system, sizeof(systemToSave));
+    _InterlockedCompareExchange8(&systemLock, 0, 1);
+
+    EFI_FILE_PROTOCOL* dataFile;
+    EFI_STATUS status;
+    if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SYSTEM_DATA_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0))
+    {
+        logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status);
+    }
+    else
+    {
+        unsigned long long size = sizeof(systemToSave);
+        status = dataFile->Write(dataFile, &size, &systemToSave);
+        dataFile->Close(dataFile);
+        if (status)
+        {
+            logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status);
+        }
+        else
+        {
+            CHAR16 message[256];
+            setNumber(message, size, TRUE);
+            appendText(message, L" bytes of system data are saved.");
+            log(message);
+        }
+    }
+}
+#endif
+
+#if NUMBER_OF_MINING_PROCESSORS
+static void saveSolution()
+{
+    EFI_FILE_PROTOCOL* dataFile;
+    EFI_STATUS status;
+    if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SOLUTION_DATA_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0))
+    {
+        logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status);
+    }
+    else
+    {
+        unsigned long long size = sizeof(bestNeuronLinks);
+        while (_InterlockedCompareExchange8(&neuronNetworkLock, 1, 0))
+        {
+            _mm_pause();
+        }
+        status = dataFile->Write(dataFile, &size, &bestNeuronLinks);
+        _InterlockedCompareExchange8(&neuronNetworkLock, 0, 1);
+        dataFile->Close(dataFile);
+        if (status)
+        {
+            logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status);
+        }
+    }
+}
+#endif
+
 static BOOLEAN initialize()
 {
     enableAVX2();
@@ -5718,7 +5812,6 @@ static BOOLEAN initialize()
 #if NUMBER_OF_COMPUTING_PROCESSORS || NUMBER_OF_MINING_PROCESSORS
     EFI_GUID simpleFileSystemProtocolGuid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
     bs->LocateProtocol(&simpleFileSystemProtocolGuid, NULL, (void**)&simpleFileSystemProtocol);
-    EFI_FILE_PROTOCOL* root;
     if (status = simpleFileSystemProtocol->OpenVolume(simpleFileSystemProtocol, (void**)&root))
     {
         logStatus(L"EFI_SIMPLE_FILE_SYSTEM_PROTOCOL.OpenVolume() fails", status);
@@ -5729,11 +5822,10 @@ static BOOLEAN initialize()
     {
         EFI_FILE_PROTOCOL* dataFile;
 
+#if NUMBER_OF_COMPUTING_PROCESSORS
         if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SYSTEM_DATA_FILE_NAME, EFI_FILE_MODE_READ, 0))
         {
             logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status);
-
-            root->Close(root);
 
             return FALSE;
         }
@@ -5748,8 +5840,6 @@ static BOOLEAN initialize()
             {
                 logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status);
 
-                root->Close(root);
-
                 return FALSE;
             }
             else
@@ -5760,8 +5850,6 @@ static BOOLEAN initialize()
                     {
                         log(L"System data file is too small!");
 
-                        root->Close(root);
-
                         return FALSE;
                     }
                 }
@@ -5771,26 +5859,23 @@ static BOOLEAN initialize()
                 }
             }
         }
+#endif
 
+#if NUMBER_OF_MINING_PROCESSORS
         if (status = root->Open(root, (void**)&dataFile, (CHAR16*)MINING_DATA_FILE_NAME, EFI_FILE_MODE_READ, 0))
         {
             logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status);
-
-            root->Close(root);
 
             return FALSE;
         }
         else
         {
-#if NUMBER_OF_MINING_PROCESSORS
             unsigned long long size = sizeof(miningData);
             status = dataFile->Read(dataFile, &size, &miningData);
             dataFile->Close(dataFile);
             if (status)
             {
                 logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status);
-
-                root->Close(root);
 
                 return FALSE;
             }
@@ -5799,8 +5884,6 @@ static BOOLEAN initialize()
                 if (size < sizeof(miningData))
                 {
                     log(L"Mining data file is too small!");
-
-                    root->Close(root);
 
                     return FALSE;
                 }
@@ -5813,15 +5896,11 @@ static BOOLEAN initialize()
                     miningDataBytes[i] ^= computorPublicKey[i];
                 }
             }
-#endif
         }
 
-#if NUMBER_OF_MINING_PROCESSORS
         if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SOLUTION_DATA_FILE_NAME, EFI_FILE_MODE_READ, 0))
         {
             logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status);
-
-            root->Close(root);
 
             return FALSE;
         }
@@ -5830,7 +5909,6 @@ static BOOLEAN initialize()
             unsigned long long size = sizeof(bestNeuronLinks);
             status = dataFile->Read(dataFile, &size, &bestNeuronLinks);
             dataFile->Close(dataFile);
-            root->Close(root);
             if (status)
             {
                 logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status);
@@ -5937,6 +6015,13 @@ static void deinitialize()
     bs->SetMem(ownPrivateKey, sizeof(ownPrivateKey), 0);
     bs->SetMem(ownPublicKey, sizeof(ownPublicKey), 0);
 
+#if NUMBER_OF_COMPUTING_PROCESSORS || NUMBER_OF_MINING_PROCESSORS
+    if (root)
+    {
+        root->Close(root);
+    }
+#endif
+
 #if NUMBER_OF_COMPUTING_PROCESSORS
     if (entities)
     {
@@ -5991,86 +6076,6 @@ static void deinitialize()
         }
     }
 }
-
-#if NUMBER_OF_COMPUTING_PROCESSORS
-static void saveSystem()
-{
-    EFI_STATUS status;
-    EFI_FILE_PROTOCOL* root;
-    if (status = simpleFileSystemProtocol->OpenVolume(simpleFileSystemProtocol, (void**)&root))
-    {
-        logStatus(L"EFI_SIMPLE_FILE_SYSTEM_PROTOCOL.OpenVolume() fails", status);
-    }
-    else
-    {
-        EFI_FILE_PROTOCOL* dataFile;
-        if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SYSTEM_DATA_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0))
-        {
-            logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status);
-        }
-        else
-        {
-            while (_InterlockedCompareExchange8(&systemLock, 1, 0))
-            {
-                _mm_pause();
-            }
-            bs->CopyMem(&systemToSave, &system, sizeof(systemToSave));
-            _InterlockedCompareExchange8(&systemLock, 0, 1);
-            unsigned long long size = sizeof(systemToSave);
-            status = dataFile->Write(dataFile, &size, &systemToSave);
-            dataFile->Close(dataFile);
-            if (status)
-            {
-                logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status);
-            }
-            else
-            {
-                CHAR16 message[256];
-                setNumber(message, size, TRUE);
-                appendText(message, L" bytes of system data are saved.");
-                log(message);
-            }
-        }
-        root->Close(root);
-    }
-}
-#endif
-
-#if NUMBER_OF_MINING_PROCESSORS
-static void saveSolution()
-{
-    EFI_STATUS status;
-    EFI_FILE_PROTOCOL* root;
-    if (status = simpleFileSystemProtocol->OpenVolume(simpleFileSystemProtocol, (void**)&root))
-    {
-        logStatus(L"EFI_SIMPLE_FILE_SYSTEM_PROTOCOL.OpenVolume() fails", status);
-    }
-    else
-    {
-        EFI_FILE_PROTOCOL* dataFile;
-        if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SOLUTION_DATA_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0))
-        {
-            logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status);
-        }
-        else
-        {
-            unsigned long long size = sizeof(bestNeuronLinks);
-            while (_InterlockedCompareExchange8(&neuronNetworkLock, 1, 0))
-            {
-                _mm_pause();
-            }
-            status = dataFile->Write(dataFile, &size, &bestNeuronLinks);
-            _InterlockedCompareExchange8(&neuronNetworkLock, 0, 1);
-            dataFile->Close(dataFile);
-            if (status)
-            {
-                logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status);
-            }
-        }
-        root->Close(root);
-    }
-}
-#endif
 
 static void loggingCallback(EFI_EVENT Event, void* Context)
 {
