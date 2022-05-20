@@ -29,14 +29,46 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 6
-#define VERSION_C 12
+#define VERSION_C 13
 
 //#define USE_COMMUNITY_AVX2_FIX
 
 #define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
 
 static const unsigned char knownPublicPeers[][4] = {
+    { 2, 139, 196, 162 },
+    { 5, 39, 218, 46 },
+    { 37, 48, 102, 161 },
+    { 46, 140, 52, 174 },
+    { 65, 108, 100, 43 },
+    { 65, 108, 140, 15 },
+    { 78, 94, 64, 185 },
+    { 78, 159, 108, 162 },
+    { 82, 114, 88, 225 },
+    { 84, 147, 172, 34 },
+    { 84, 208, 169, 239 },
     { 88, 99, 67, 51 },
+    { 88, 153, 194, 78 },
+    { 90, 163, 132, 86 },
+    { 91, 5, 122, 76 },
+    { 92, 186, 12, 120 },
+    { 93, 125, 10, 240 },
+    { 93, 125, 105, 208 },
+    { 95, 168, 174, 218 },
+    { 95, 216, 66, 164},
+    { 95, 216, 243, 217 },
+    { 95, 217, 33, 155 },
+    { 134, 17, 25, 28 },
+    { 178, 13, 73, 101 },
+    { 178, 168, 208, 71 },
+    { 178, 172, 194, 143 },
+    { 178, 172, 194, 149 },
+    { 185, 130, 226, 27 },
+    { 185, 130, 226, 102 },
+    { 212, 40, 234, 76 },
+    { 213, 127, 147, 70 },
+    { 213, 184, 249, 83 },
+    { 217, 92, 76, 28 }
 };
 
 
@@ -4399,9 +4431,7 @@ static void requestProcessor(void* ProcedureArgument)
                             request->tickEnding.computorIndex ^= 4;
                             if (verify(latestComputorStates[NUMBER_OF_COMPUTORS].computorPublicKeys[request->tickEnding.computorIndex], digest, request->tickEnding.signature))
                             {
-#if NUMBER_OF_COMPUTING_PROCESSORS
                                 numberOfTickEndings[request->tickEnding.computorIndex]++;
-#endif
 
                                 bs->CopyMem(&latestTickEndings[request->tickEnding.computorIndex], &request->tickEnding, sizeof(TickEnding));
 
@@ -6001,9 +6031,7 @@ static BOOLEAN initialize()
         addPublicPeer((unsigned char*)knownPublicPeers[i]);
     }
 
-#if NUMBER_OF_COMPUTING_PROCESSORS
     bs->SetMem(numberOfTickEndings, sizeof(numberOfTickEndings), 0);
-#endif
 
     return TRUE;
 }
@@ -6194,20 +6222,13 @@ static void loggingCallback(EFI_EVENT Event, void* Context)
     _rdrand64_step(&random);
     if (bestMiningScore > 0 && !(random % 5))
     {
-        if (latestComputorStates[NUMBER_OF_COMPUTORS].timestamp)
-        {
-            setText(message, L"1+");
-            appendNumber(message, NUMBER_OF_COMPUTING_PROCESSORS, TRUE);
-            appendText(message, L"+");
-            appendNumber(message, NUMBER_OF_MINING_PROCESSORS, TRUE);
-            appendText(message, L"+");
-            appendNumber(message, numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS), TRUE);
-            appendText(message, L" | Score = ");
-        }
-        else
-        {
-            setText(message, L"Score = ");
-        }
+        setText(message, L"1+");
+        appendNumber(message, NUMBER_OF_COMPUTING_PROCESSORS, TRUE);
+        appendText(message, L"+");
+        appendNumber(message, NUMBER_OF_MINING_PROCESSORS, TRUE);
+        appendText(message, L"+");
+        appendNumber(message, numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS), TRUE);
+        appendText(message, L" | Score = ");
         appendNumber(message, bestMiningScore, TRUE);
         appendText(message, L" (");
         appendNumber(message, (numberOfMiningIterations - prevNumberOfMiningIterations) * frequency / (__rdtsc() - prevMiningPerformanceTick), TRUE);
@@ -6218,7 +6239,7 @@ static void loggingCallback(EFI_EVENT Event, void* Context)
         appendText(message, L" own computor index = ");
         if (system.ownComputorIndex < 0)
         {
-            appendText(message, L"n/a.");
+            appendText(message, L"?.");
         }
         else
         {
@@ -6226,36 +6247,22 @@ static void loggingCallback(EFI_EVENT Event, void* Context)
             appendText(message, alphabet[system.ownComputorIndex / 26]);
             appendText(message, alphabet[system.ownComputorIndex % 26]);
 
-            appendText(message, L" [");
-            unsigned long long minNumberOfTickEndings = 0xFFFFFFFFFFFFFFFF;
-            unsigned long long maxNumberOfTickEndings = 0;
-            unsigned long long totalNumberOfTickEndings = 0;
-            unsigned long long numberOfNonZeroTickEndings = 0;
+            appendText(message, L" (");
+            unsigned long long numberOfNonZeroTickEndings = system.ownComputorIndex < 0 ? 0 : 1;
             for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
             {
                 if (i != system.ownComputorIndex)
                 {
-                    if (numberOfTickEndings[i] < minNumberOfTickEndings)
-                    {
-                        minNumberOfTickEndings = numberOfTickEndings[i];
-                    }
-                    if (numberOfTickEndings[i] > maxNumberOfTickEndings)
-                    {
-                        maxNumberOfTickEndings = numberOfTickEndings[i];
-                    }
                     if (numberOfTickEndings[i])
                     {
-                        totalNumberOfTickEndings += numberOfTickEndings[i];
                         numberOfNonZeroTickEndings++;
                     }
                 }
             }
-            appendNumber(message, minNumberOfTickEndings, TRUE);
-            appendText(message, L"..");
-            appendNumber(message, numberOfNonZeroTickEndings ? totalNumberOfTickEndings / numberOfNonZeroTickEndings : 0, TRUE);
-            appendText(message, L"..");
-            appendNumber(message, maxNumberOfTickEndings, TRUE);
-            appendText(message, L"].");
+            appendNumber(message, numberOfNonZeroTickEndings, TRUE);
+            appendText(message, L" / 676 = ");
+            appendNumber(message, numberOfNonZeroTickEndings * 100 / 676, FALSE);
+            appendText(message, L"%).");
         }
 #endif
         log(message);
@@ -6582,7 +6589,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         {
                                         case 0x0B:
                                         {
-                                            log(L"[F4] Close all connections | [F12] Toggle extended logging | [ESC] Shut down.");
+                                            log(L"[F4] Close all connections | [F8] Reset computors info | [F12] Toggle extended logging | [ESC] Shut down.");
                                         }
                                         break;
 
@@ -6597,6 +6604,12 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 }
                                             }
                                             bs->RestoreTPL(tpl);
+                                        }
+                                        break;
+
+                                        case 0x12:
+                                        {
+                                            bs->SetMem(numberOfTickEndings, sizeof(numberOfTickEndings), 0);
                                         }
                                         break;
 
