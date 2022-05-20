@@ -27,6 +27,10 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 ////////// Public Settings \\\\\\\\\\
 
+#define VERSION_A 1
+#define VERSION_B 6
+#define VERSION_C 9
+
 //#define USE_COMMUNITY_AVX2_FIX
 
 #define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
@@ -3323,10 +3327,6 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 
 ////////// Qubic \\\\\\\\\\
 
-#define VERSION_A 1
-#define VERSION_B 6
-#define VERSION_C 8
-
 #define BUFFER_SIZE 1048576
 #define DEJAVU_SWAP_PERIOD 30
 #define HANDSHAKING_TIMER_LIMIT 5
@@ -3653,6 +3653,7 @@ static unsigned int numberOfProcessors = 0;
 static Processor processors[MAX_NUMBER_OF_PROCESSORS];
 static volatile long long numberOfProcessedRequests = 0, prevNumberOfProcessedRequests = 0;
 static volatile long long numberOfDiscardedRequests = 0, prevNumberOfDiscardedRequests = 0;
+static volatile long long numberOfDuplicateRequests = 0, prevNumberOfDuplicateRequests = 0;
 
 static EFI_GUID tcp4ServiceBindingProtocolGuid = EFI_TCP4_SERVICE_BINDING_PROTOCOL_GUID;
 static EFI_SERVICE_BINDING_PROTOCOL* tcp4ServiceBindingProtocol;
@@ -4177,29 +4178,17 @@ static void requestProcessor(void* ProcedureArgument)
         if (requestHeader->size == sizeof(RequestResponseHeader) + sizeof(BroadcastMessage) + request->message.messageSize + 64
             && request->message.timestamp <= MAX_TIMESTAMP_VALUE)
         {
-            unsigned int saltedId;
-
-            const long long tmp = *((long long*)requestHeader);
-            *((long long*)requestHeader) = salt;
-            KangarooTwelve((unsigned char*)requestHeader, ((RequestResponseHeader*)&tmp)->size, (unsigned char*)&saltedId, sizeof(saltedId));
-            *((long long*)requestHeader) = tmp;
-
-            if (!((dejavu0[saltedId >> 6] | dejavu1[saltedId >> 6]) & (((unsigned long long)1) << (saltedId & 63))))
+            unsigned char digest[32];
+            KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
+            if (verify(request->message.sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastMessage) + request->message.messageSize)))
             {
-                dejavu0[saltedId >> 6] |= (((unsigned long long)1) << (saltedId & 63));
-
-                unsigned char digest[32];
-                KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
-                if (verify(request->message.sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastMessage) + request->message.messageSize)))
+                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->message.destinationPublicKey), *((__m256i*)ownPublicKey))) == 0xFFFFFFFF)
                 {
-                    if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->message.destinationPublicKey), *((__m256i*)ownPublicKey))) == 0xFFFFFFFF)
-                    {
-                        //log(L"Receives a message for self.");
-                    }
-
-                    bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
-                    processor->responseTransmittingType = -1;
+                    //log(L"Receives a message for self.");
                 }
+
+                bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
+                processor->responseTransmittingType = -1;
             }
         }
     }
@@ -4211,26 +4200,14 @@ static void requestProcessor(void* ProcedureArgument)
         if (request->transfer.timestamp >= launchTime && request->transfer.timestamp <= MAX_TIMESTAMP_VALUE
             && request->transfer.amount >= MIN_ENERGY_AMOUNT && request->transfer.amount <= MAX_ENERGY_AMOUNT)
         {
-            unsigned int saltedId;
-
-            const long long tmp = *((long long*)requestHeader);
-            *((long long*)requestHeader) = salt;
-            KangarooTwelve((unsigned char*)requestHeader, ((RequestResponseHeader*)&tmp)->size, (unsigned char*)&saltedId, sizeof(saltedId));
-            *((long long*)requestHeader) = tmp;
-
-            if (!((dejavu0[saltedId >> 6] | dejavu1[saltedId >> 6]) & (((unsigned long long)1) << (saltedId & 63))))
+            unsigned char digest[32];
+            request->transfer.sourcePublicKey[0] ^= 1;
+            KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
+            request->transfer.sourcePublicKey[0] ^= 1;
+            if (verify(request->transfer.sourcePublicKey, digest, request->transfer.signature))
             {
-                dejavu0[saltedId >> 6] |= (((unsigned long long)1) << (saltedId & 63));
-
-                unsigned char digest[32];
-                request->transfer.sourcePublicKey[0] ^= 1;
-                KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
-                request->transfer.sourcePublicKey[0] ^= 1;
-                if (verify(request->transfer.sourcePublicKey, digest, request->transfer.signature))
-                {
-                    bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
-                    processor->responseTransmittingType = -1;
-                }
+                bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
+                processor->responseTransmittingType = -1;
             }
         }
     }
@@ -4242,26 +4219,14 @@ static void requestProcessor(void* ProcedureArgument)
         if (requestHeader->size == sizeof(RequestResponseHeader) + sizeof(BroadcastEffect) + request->effect.effectSize + 64
             && request->effect.timestamp <= MAX_TIMESTAMP_VALUE)
         {
-            unsigned int saltedId;
-
-            const long long tmp = *((long long*)requestHeader);
-            *((long long*)requestHeader) = salt;
-            KangarooTwelve((unsigned char*)requestHeader, ((RequestResponseHeader*)&tmp)->size, (unsigned char*)&saltedId, sizeof(saltedId));
-            *((long long*)requestHeader) = tmp;
-
-            if (!((dejavu0[saltedId >> 6] | dejavu1[saltedId >> 6]) & (((unsigned long long)1) << (saltedId & 63))))
+            unsigned char digest[32];
+            request->effect.sourcePublicKey[0] ^= 2;
+            KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
+            request->effect.sourcePublicKey[0] ^= 2;
+            if (verify(request->effect.sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastEffect) + request->effect.effectSize)))
             {
-                dejavu0[saltedId >> 6] |= (((unsigned long long)1) << (saltedId & 63));
-
-                unsigned char digest[32];
-                request->effect.sourcePublicKey[0] ^= 2;
-                KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
-                request->effect.sourcePublicKey[0] ^= 2;
-                if (verify(request->effect.sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastEffect) + request->effect.effectSize)))
-                {
-                    bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
-                    processor->responseTransmittingType = -1;
-                }
+                bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
+                processor->responseTransmittingType = -1;
             }
         }
     }
@@ -4338,51 +4303,38 @@ static void requestProcessor(void* ProcedureArgument)
     case BROADCAST_TRANSFER_STATUS:
     {
         BroadcastTransferStatus* request = (BroadcastTransferStatus*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
-
-        unsigned int saltedId;
-
-        const long long tmp = *((long long*)requestHeader);
-        *((long long*)requestHeader) = salt;
-        KangarooTwelve((unsigned char*)requestHeader, ((RequestResponseHeader*)&tmp)->size, (unsigned char*)&saltedId, sizeof(saltedId));
-        *((long long*)requestHeader) = tmp;
-
-        if (!((dejavu0[saltedId >> 6] | dejavu1[saltedId >> 6]) & (((unsigned long long)1) << (saltedId & 63))))
+        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->transferStatus.digest), ZERO)) != 0xFFFFFFFF
+            && !request->transferStatus.padding[0] && !(*((short*)&request->transferStatus.padding[1]))
+            && request->transferStatus.computorIndex < NUMBER_OF_COMPUTORS)
         {
-            dejavu0[saltedId >> 6] |= (((unsigned long long)1) << (saltedId & 63));
-
-            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->transferStatus.digest), ZERO)) != 0xFFFFFFFF
-                && !request->transferStatus.padding[0] && !(*((short*)&request->transferStatus.padding[1]))
-                && request->transferStatus.computorIndex < NUMBER_OF_COMPUTORS)
+            unsigned int i;
+            for (i = 0; i < sizeof(request->transferStatus.status); i++)
             {
-                unsigned int i;
-                for (i = 0; i < sizeof(request->transferStatus.status); i++)
+                if ((request->transferStatus.status[i] & 3) == 3 || (request->transferStatus.status[i] & (3 << 2)) == (3 << 2) || (request->transferStatus.status[i] & (3 << 4)) == (3 << 4) || (request->transferStatus.status[i] & (3 << 6)) == (3 << 6))
                 {
-                    if ((request->transferStatus.status[i] & 3) == 3 || (request->transferStatus.status[i] & (3 << 2)) == (3 << 2) || (request->transferStatus.status[i] & (3 << 4)) == (3 << 4) || (request->transferStatus.status[i] & (3 << 6)) == (3 << 6))
-                    {
-                        break;
-                    }
+                    break;
                 }
-                if (i == sizeof(request->transferStatus.status))
+            }
+            if (i == sizeof(request->transferStatus.status))
+            {
+                if (latestComputorStates[NUMBER_OF_COMPUTORS].timestamp && request->transferStatus.epoch == latestComputorStates[NUMBER_OF_COMPUTORS].epoch)
                 {
-                    if (latestComputorStates[NUMBER_OF_COMPUTORS].timestamp && request->transferStatus.epoch == latestComputorStates[NUMBER_OF_COMPUTORS].epoch)
+                    unsigned char digest[32];
+                    request->transferStatus.digest[0] ^= 3;
+                    KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
+                    request->transferStatus.digest[0] ^= 3;
+                    if (verify(latestComputorStates[NUMBER_OF_COMPUTORS].computorPublicKeys[request->transferStatus.computorIndex], digest, request->transferStatus.signature))
                     {
-                        unsigned char digest[32];
-                        request->transferStatus.digest[0] ^= 3;
-                        KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
-                        request->transferStatus.digest[0] ^= 3;
-                        if (verify(latestComputorStates[NUMBER_OF_COMPUTORS].computorPublicKeys[request->transferStatus.computorIndex], digest, request->transferStatus.signature))
-                        {
-                            updateTransferStatus(&request->transferStatus);
+                        updateTransferStatus(&request->transferStatus);
 
-                            bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
-                            processor->responseTransmittingType = -1;
-                        }
-                    }
-                    else
-                    {
                         bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
                         processor->responseTransmittingType = -1;
                     }
+                }
+                else
+                {
+                    bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
+                    processor->responseTransmittingType = -1;
                 }
             }
         }
@@ -4391,22 +4343,8 @@ static void requestProcessor(void* ProcedureArgument)
 
     case BROADCAST_RESOURCE_TESTING_SOLUTION:
     {
-        BroadcastResourceTestingSolution* request = (BroadcastResourceTestingSolution*)((char*)processor->requestBuffer + sizeof(RequestResponseHeader));
-
-        unsigned int saltedId;
-
-        const long long tmp = *((long long*)requestHeader);
-        *((long long*)requestHeader) = salt;
-        KangarooTwelve((unsigned char*)requestHeader, ((RequestResponseHeader*)&tmp)->size, (unsigned char*)&saltedId, sizeof(saltedId));
-        *((long long*)requestHeader) = tmp;
-
-        if (!((dejavu0[saltedId >> 6] | dejavu1[saltedId >> 6]) & (((unsigned long long)1) << (saltedId & 63))))
-        {
-            dejavu0[saltedId >> 6] |= (((unsigned long long)1) << (saltedId & 63));
-
-            bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
-            processor->responseTransmittingType = -1;
-        }
+        bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
+        processor->responseTransmittingType = -1;
     }
     break;
 
@@ -5313,24 +5251,40 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                             }
                             else
                             {
-                                for (unsigned int i = 0; i < numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS); i++)
+                                unsigned int saltedId;
+
+                                const long long tmp = *((long long*)requestResponseHeader);
+                                *((long long*)requestResponseHeader) = salt;
+                                KangarooTwelve((unsigned char*)requestResponseHeader, ((RequestResponseHeader*)&tmp)->size, (unsigned char*)&saltedId, sizeof(saltedId));
+                                *((long long*)requestResponseHeader) = tmp;
+
+                                if (!((dejavu0[saltedId >> 6] | dejavu1[saltedId >> 6]) & (((unsigned long long)1) << (saltedId & 63))))
                                 {
-                                    if (!processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].peer)
+                                    dejavu0[saltedId >> 6] |= (((unsigned long long)1) << (saltedId & 63));
+
+                                    for (unsigned int i = 0; i < numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS); i++)
                                     {
-                                        processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].peer = peer;
-                                        processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].peerId = peer->id;
-                                        bs->CopyMem(processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].requestBuffer, peer->receiveBuffer, requestResponseHeader->size);
+                                        if (!processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].peer)
+                                        {
+                                            processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].peer = peer;
+                                            processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].peerId = peer->id;
+                                            bs->CopyMem(processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].requestBuffer, peer->receiveBuffer, requestResponseHeader->size);
 
-                                        mpServicesProtocol->StartupThisAP(mpServicesProtocol, requestProcessor, processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].number, processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].event, 0, &processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i], NULL);
+                                            mpServicesProtocol->StartupThisAP(mpServicesProtocol, requestProcessor, processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].number, processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].event, 0, &processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i], NULL);
 
-                                        bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + requestResponseHeader->size, receivedDataSize -= requestResponseHeader->size);
-                                        peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + receivedDataSize;
+                                            bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + requestResponseHeader->size, receivedDataSize -= requestResponseHeader->size);
+                                            peer->receiveData.FragmentTable[0].FragmentBuffer = ((char*)peer->receiveBuffer) + receivedDataSize;
 
-                                        goto iteration;
+                                            goto iteration;
+                                        }
                                     }
-                                }
 
-                                _InterlockedIncrement64(&numberOfDiscardedRequests);
+                                    _InterlockedIncrement64(&numberOfDiscardedRequests);
+                                }
+                                else
+                                {
+                                    _InterlockedIncrement64(&numberOfDuplicateRequests);
+                                }
                             }
 
                             bs->CopyMem(peer->receiveBuffer, ((char*)peer->receiveBuffer) + requestResponseHeader->size, receivedDataSize -= requestResponseHeader->size);
@@ -6128,6 +6082,8 @@ static void loggingCallback(EFI_EVENT Event, void* Context)
     appendNumber(message, numberOfProcessedRequests - prevNumberOfProcessedRequests, TRUE);
     appendText(message, L" -");
     appendNumber(message, numberOfDiscardedRequests - prevNumberOfDiscardedRequests, TRUE);
+    appendText(message, L" *");
+    appendNumber(message, numberOfDuplicateRequests - prevNumberOfDuplicateRequests, TRUE);
     appendText(message, L"] ");
     for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
     {
@@ -6174,6 +6130,7 @@ static void loggingCallback(EFI_EVENT Event, void* Context)
     log(message);
     prevNumberOfProcessedRequests = numberOfProcessedRequests;
     prevNumberOfDiscardedRequests = numberOfDiscardedRequests;
+    prevNumberOfDuplicateRequests = numberOfDuplicateRequests;
     prevNumberOfReceivedBytes = numberOfReceivedBytes;
     prevNumberOfTransmittedBytes = numberOfTransmittedBytes;
 
