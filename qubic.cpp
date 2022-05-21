@@ -29,7 +29,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 6
-#define VERSION_C 14
+#define VERSION_C 15
 
 //#define USE_COMMUNITY_AVX2_FIX
 
@@ -4090,6 +4090,11 @@ static void requestProcessorInitializationProcessor(void* ProcedureArgument)
 }
 #endif
 
+static int dayIndex(unsigned short year, unsigned char month, unsigned char day)
+{
+    return  (year -= (month = (month + 9) % 12) / 10) * 365 + year / 4 - year / 100 + year / 400 + (month * 306 + 5) / 10 + day - 1;
+}
+
 static void requestProcessor(void* ProcedureArgument)
 {
 #ifdef USE_COMMUNITY_AVX2_FIX
@@ -4286,7 +4291,7 @@ static void requestProcessor(void* ProcedureArgument)
 
                             if (request->computorState.tick > system.tick)
                             {
-                                if (_InterlockedCompareExchange8(&systemLock, 1, 0))
+                                if (!_InterlockedCompareExchange8(&systemLock, 1, 0))
                                 {
                                     if (request->computorState.tick > system.tick)
                                     {
@@ -4379,17 +4384,13 @@ static void requestProcessor(void* ProcedureArgument)
             && request->tickEnding.second <= 59
             && request->tickEnding.millisecond <= 999)
         {
-            const int month = (request->tickEnding.month + 9) % 12;
-            const int year = 2000 + request->tickEnding.year - month / 10;
-            const int dayIndex = year * 365 + year / 4 - year / 100 + year / 400 + (month * 306 + 5) / 10 + request->tickEnding.day - 1;
+            const int dayIndex = ::dayIndex(2000 + request->tickEnding.year, request->tickEnding.month, request->tickEnding.day);
 
             EFI_TIME time;
 
             //rs->GetTime(&time, NULL);
 
-            const int ownMonth = (time.Month + 9) % 12;
-            const int ownYear = time.Year - ownMonth / 10;
-            const int ownDayIndex = ownYear * 365 + ownYear / 4 - ownYear / 100 + ownYear / 400 + (ownMonth * 306 + 5) / 10 + time.Day - 1;
+            const int ownDayIndex = ::dayIndex(time.Year, time.Month, time.Day);
 
             /*if ((((((long long)dayIndex) * 24 + request->tickEnding.hour) * 60 + request->tickEnding.minute) * 60 + request->tickEnding.second) * 1000 + request->tickEnding.millisecond
                 <= (((((long long)ownDayIndex) * 24 + time.Hour) * 60 + time.Minute) * 60 + time.Second + 1) * 1000 + time.Nanosecond / 1000000)*/
@@ -5835,6 +5836,8 @@ static BOOLEAN initialize()
 
     EFI_STATUS status;
 
+    bs->SetMem(&system, sizeof(system), 0);
+
 #if NUMBER_OF_COMPUTING_PROCESSORS || NUMBER_OF_MINING_PROCESSORS
     EFI_GUID simpleFileSystemProtocolGuid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
     bs->LocateProtocol(&simpleFileSystemProtocolGuid, NULL, (void**)&simpleFileSystemProtocol);
@@ -5857,8 +5860,6 @@ static BOOLEAN initialize()
         }
         else
         {
-            bs->SetMem(&system, sizeof(system), 0);
-
             unsigned long long size = sizeof(system);
             status = dataFile->Read(dataFile, &size, &system);
             dataFile->Close(dataFile);
@@ -6574,11 +6575,12 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 {
                                     for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
                                     {
-                                        EFI_TCP4_PROTOCOL* cachedTcp4Protocol = peers[i].tcp4Protocol;
-                                        if (((unsigned long long)cachedTcp4Protocol) > 1 && peers[i].type >= 0)
+                                        const EFI_TPL tpl = bs->RaiseTPL(TPL_CALLBACK);
+                                        if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type >= 0)
                                         {
-                                            cachedTcp4Protocol->Poll(cachedTcp4Protocol);
+                                            peers[i].tcp4Protocol->Poll(peers[i].tcp4Protocol);
                                         }
+                                        bs->RestoreTPL(tpl);
                                     }
 
                                     EFI_INPUT_KEY key;
