@@ -29,46 +29,14 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 6
-#define VERSION_C 13
+#define VERSION_C 14
 
 //#define USE_COMMUNITY_AVX2_FIX
 
 #define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
 
 static const unsigned char knownPublicPeers[][4] = {
-    { 2, 139, 196, 162 },
-    { 5, 39, 218, 46 },
-    { 37, 48, 102, 161 },
-    { 46, 140, 52, 174 },
-    { 65, 108, 100, 43 },
-    { 65, 108, 140, 15 },
-    { 78, 94, 64, 185 },
-    { 78, 159, 108, 162 },
-    { 82, 114, 88, 225 },
-    { 84, 147, 172, 34 },
-    { 84, 208, 169, 239 },
     { 88, 99, 67, 51 },
-    { 88, 153, 194, 78 },
-    { 90, 163, 132, 86 },
-    { 91, 5, 122, 76 },
-    { 92, 186, 12, 120 },
-    { 93, 125, 10, 240 },
-    { 93, 125, 105, 208 },
-    { 95, 168, 174, 218 },
-    { 95, 216, 66, 164},
-    { 95, 216, 243, 217 },
-    { 95, 217, 33, 155 },
-    { 134, 17, 25, 28 },
-    { 178, 13, 73, 101 },
-    { 178, 168, 208, 71 },
-    { 178, 172, 194, 143 },
-    { 178, 172, 194, 149 },
-    { 185, 130, 226, 27 },
-    { 185, 130, 226, 102 },
-    { 212, 40, 234, 76 },
-    { 213, 127, 147, 70 },
-    { 213, 184, 249, 83 },
-    { 217, 92, 76, 28 }
 };
 
 
@@ -115,6 +83,13 @@ static const unsigned char knownPublicPeers[][4] = {
 #define EFI_COMPROMISED_DATA (33 | 0x8000000000000000)
 #define EFI_IP_ADDRESS_CONFLICT (34 | 0x8000000000000000)
 #define EFI_HTTP_ERROR (35 | 0x8000000000000000)
+#define EFI_NETWORK_UNREACHABLE (100 | 0x8000000000000000)
+#define EFI_HOST_UNREACHABLE (101 | 0x8000000000000000)
+#define EFI_PROTOCOL_UNREACHABLE (102 | 0x8000000000000000)
+#define EFI_PORT_UNREACHABLE (103 | 0x8000000000000000)
+#define EFI_CONNECTION_FIN (104 | 0x8000000000000000)
+#define EFI_CONNECTION_RESET (105 | 0x8000000000000000)
+#define EFI_CONNECTION_REFUSED (106 | 0x8000000000000000)
 
 #define EFI_MP_SERVICES_PROTOCOL_GUID {0x3fdda605, 0xa76e, 0x4f46, {0xad, 0x29, 0x12, 0xf4, 0x53, 0x1b, 0x3d, 0x08}}
 #define EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID {0x0964e5b22, 0x6459, 0x11d2, {0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b}}
@@ -3706,8 +3681,8 @@ static unsigned long long totalRatingOfPublicPeers = 0;
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
 static EFI_EVENT computorEvents[NUMBER_OF_COMPUTING_PROCESSORS];
-static unsigned long long numberOfTickEndings[NUMBER_OF_COMPUTORS];
 #endif
+static unsigned long long numberOfTickEndings[NUMBER_OF_COMPUTORS];
 
 static volatile unsigned int bestMiningScore = 0;
 static unsigned int knownMiningScore = 0;
@@ -3833,6 +3808,13 @@ static void appendErrorStatus(CHAR16* dst, const EFI_STATUS status)
     case EFI_COMPROMISED_DATA:		appendText(dst, L"EFI_COMPROMISED_DATA");		break;
     case EFI_IP_ADDRESS_CONFLICT:	appendText(dst, L"EFI_IP_ADDRESS_CONFLICT");	break;
     case EFI_HTTP_ERROR:			appendText(dst, L"EFI_HTTP_ERROR");				break;
+    case EFI_NETWORK_UNREACHABLE:	appendText(dst, L"EFI_NETWORK_UNREACHABLE");	break;
+    case EFI_HOST_UNREACHABLE:		appendText(dst, L"EFI_HOST_UNREACHABLE");		break;
+    case EFI_PROTOCOL_UNREACHABLE:	appendText(dst, L"EFI_PROTOCOL_UNREACHABLE");	break;
+    case EFI_PORT_UNREACHABLE:		appendText(dst, L"EFI_PORT_UNREACHABLE");		break;
+    case EFI_CONNECTION_FIN:		appendText(dst, L"EFI_CONNECTION_FIN");			break;
+    case EFI_CONNECTION_RESET:		appendText(dst, L"EFI_CONNECTION_RESET");		break;
+    case EFI_CONNECTION_REFUSED:	appendText(dst, L"EFI_CONNECTION_REFUSED");		break;
     default: appendNumber(dst, status, FALSE);
     }
 }
@@ -4828,16 +4810,23 @@ static void receive(Peer* peer)
             }
             else
             {
-                EFI_STATUS status;
-                if (status = peer->tcp4Protocol->Receive(peer->tcp4Protocol, &peer->receiveToken))
+                if (((unsigned long long)peer->tcp4Protocol) <= 1)
                 {
-                    logStatus(L"EFI_TCP4_PROTOCOL.Receive() fails", status);
-
-                    close(peer);
+                    log(L"REPORT ERROR #1!");
                 }
                 else
                 {
-                    peer->isReceiving = TRUE;
+                    EFI_STATUS status;
+                    if (status = peer->tcp4Protocol->Receive(peer->tcp4Protocol, &peer->receiveToken))
+                    {
+                        logStatus(L"EFI_TCP4_PROTOCOL.Receive() fails", status);
+
+                        close(peer);
+                    }
+                    else
+                    {
+                        peer->isReceiving = TRUE;
+                    }
                 }
             }
         }
@@ -4888,17 +4877,24 @@ static void transmit(Peer* peer)
             ((unsigned char*)peer->transmitData.FragmentTable[0].FragmentBuffer)[0] = 0x82;
         }
 
-        peer->transmitData.DataLength = peer->transmitData.FragmentTable[0].FragmentLength = size;
-        EFI_STATUS status;
-        if (status = peer->tcp4Protocol->Transmit(peer->tcp4Protocol, &peer->transmitToken))
+        if (((unsigned long long)peer->tcp4Protocol) <= 1)
         {
-            logStatus(L"EFI_TCP4_PROTOCOL.Transmit() fails", status);
-
-            close(peer);
+            log(L"REPORT ERROR #2!");
         }
         else
         {
-            peer->isTransmitting = TRUE;
+            peer->transmitData.DataLength = peer->transmitData.FragmentTable[0].FragmentLength = size;
+            EFI_STATUS status;
+            if (status = peer->tcp4Protocol->Transmit(peer->tcp4Protocol, &peer->transmitToken))
+            {
+                logStatus(L"EFI_TCP4_PROTOCOL.Transmit() fails", status);
+
+                close(peer);
+            }
+            else
+            {
+                peer->isTransmitting = TRUE;
+            }
         }
     }
 }
@@ -6270,12 +6266,12 @@ static void loggingCallback(EFI_EVENT Event, void* Context)
 #endif
 }
 
+#if NUMBER_OF_COMPUTING_PROCESSORS
 static void systemDataSavingCallback(EFI_EVENT Event, void* Context)
 {
-#if NUMBER_OF_COMPUTING_PROCESSORS
     saveSystem();
-#endif
 }
+#endif
 
 static void peerRatingCallback(EFI_EVENT Event, void* Context)
 {
@@ -6551,7 +6547,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                             EFI_EVENT loggingEvent, systemDataSavingEvent, peerRatingEvent, broadcastResourceTestingSolutionEvent, tickGeneratingEvent;
                             if ((status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, loggingCallback, NULL, &loggingEvent))
+#if NUMBER_OF_COMPUTING_PROCESSORS
                                 || (status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, systemDataSavingCallback, NULL, &systemDataSavingEvent))
+#endif
                                 || (status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, peerRatingCallback, NULL, &peerRatingEvent))
 #if NUMBER_OF_MINING_PROCESSORS
                                 || (status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, broadcastResourceTestingSolutionCallback, NULL, &broadcastResourceTestingSolutionEvent))
@@ -6576,9 +6574,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 {
                                     for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
                                     {
-                                        if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].type >= 0)
+                                        EFI_TCP4_PROTOCOL* cachedTcp4Protocol = peers[i].tcp4Protocol;
+                                        if (((unsigned long long)cachedTcp4Protocol) > 1 && peers[i].type >= 0)
                                         {
-                                            peers[i].tcp4Protocol->Poll(peers[i].tcp4Protocol);
+                                            cachedTcp4Protocol->Poll(cachedTcp4Protocol);
                                         }
                                     }
 
@@ -6643,7 +6642,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 bs->CloseEvent(broadcastResourceTestingSolutionEvent);
 #endif
                                 bs->CloseEvent(peerRatingEvent);
+#if NUMBER_OF_COMPUTING_PROCESSORS
                                 bs->CloseEvent(systemDataSavingEvent);
+#endif
                                 bs->CloseEvent(loggingEvent);
                             }
 
