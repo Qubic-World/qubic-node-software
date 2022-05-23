@@ -29,7 +29,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 7
-#define VERSION_C 1
+#define VERSION_C 2
 
 //#define USE_COMMUNITY_AVX2_FIX
 
@@ -3353,6 +3353,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define QUORUM (NUMBER_OF_COMPUTORS * 2 / 3 + 1)
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 60
 #define SYSTEM_DATA_SAVING_PERIOD 60
+#define TICK_ENDING_PUBLICATION_PERIOD 5
 
 static __m256i ZERO;
 
@@ -3682,6 +3683,7 @@ static struct System
 } system, systemToSave;
 static unsigned char tickPhase = 0;
 static unsigned int tickPhaseNumberOfComputors = 0;
+static unsigned long long latestTickEndingPublicationTick = 0;
 
 static Entity* entities = NULL;
 static TransferSuperstatus* transferSuperstatuses = NULL;
@@ -6515,7 +6517,7 @@ static void tickingCallback(EFI_EVENT Event, void* Context)
 
     if (system.ownComputorIndex >= 0)
     {
-        if (!tickPhase)
+        if (!tickPhase || (tickPhase == 1 && __rdtsc() - latestTickEndingPublicationTick >= TICK_ENDING_PUBLICATION_PERIOD * frequency))
         {
             tickEnding.header.size = sizeof(tickEnding);
             tickEnding.header.protocol = PROTOCOL;
@@ -6549,6 +6551,8 @@ static void tickingCallback(EFI_EVENT Event, void* Context)
                     push(&peers[i], &tickEnding.header);
                 }
             }
+
+            latestTickEndingPublicationTick = __rdtsc();
 
             while (_InterlockedCompareExchange8(&latestTickEndingsLock, 1, 0))
             {
