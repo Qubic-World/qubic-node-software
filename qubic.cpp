@@ -28,8 +28,8 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 7
-#define VERSION_C 2
+#define VERSION_B 8
+#define VERSION_C 0
 
 //#define USE_COMMUNITY_AVX2_FIX
 
@@ -3349,7 +3349,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define NUMBER_OF_NEURONS 20000
 #define PEER_RATING_PERIOD 10
 #define PORT 21841
-#define PROTOCOL 259
+#define PROTOCOL 260
 #define QUORUM (NUMBER_OF_COMPUTORS * 2 / 3 + 1)
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 60
 #define SYSTEM_DATA_SAVING_PERIOD 60
