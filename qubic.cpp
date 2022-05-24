@@ -29,7 +29,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 9
-#define VERSION_C 0
+#define VERSION_C 1
 
 //#define USE_COMMUNITY_AVX2_FIX
 
@@ -6667,21 +6667,21 @@ static void tickingCallback(EFI_EVENT Event, void* Context)
             for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
             {
                 if (latestTickBeginnings[i].epoch == latestTickBeginnings[system.ownComputorIndex].epoch
-                    && latestTickBeginnings[i].tick == latestTickBeginnings[system.ownComputorIndex].tick
-                    && *((unsigned long long*) & latestTickBeginnings[i].millisecond) == *((unsigned long long*) & latestTickBeginnings[system.ownComputorIndex].millisecond)
-                    && *((unsigned long long*) & latestTickBeginnings[i].prevMillisecond) == *((unsigned long long*) & latestTickBeginnings[system.ownComputorIndex].prevMillisecond)
+                    && (latestTickBeginnings[i].tick == latestTickBeginnings[system.ownComputorIndex].tick || latestTickBeginnings[i].tick == system.tick + 1)
+                    && *((unsigned long long*)&latestTickBeginnings[i].millisecond) == *((unsigned long long*)&latestTickBeginnings[system.ownComputorIndex].millisecond)
+                    && *((unsigned long long*)&latestTickBeginnings[i].prevMillisecond) == *((unsigned long long*)&latestTickBeginnings[system.ownComputorIndex].prevMillisecond)
                     && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)latestTickBeginnings[i].prevStateDigest), *((__m256i*)latestTickBeginnings[system.ownComputorIndex].prevStateDigest))) == 0xFFFFFFFF
                     && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)latestTickBeginnings[i].stateDigest), *((__m256i*)latestTickBeginnings[system.ownComputorIndex].stateDigest))) == 0xFFFFFFFF)
                 {
                     unsigned int declaredNumberOfComputors = 0;
                     for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
                     {
-                        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*) & latestTickBeginnings[i].prevTickEndingSignatures[j][0]), ZERO)) != 0xFFFFFFFF
-                            || _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*) & latestTickBeginnings[i].prevTickEndingSignatures[j][32]), ZERO)) != 0xFFFFFFFF)
+                        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)&latestTickBeginnings[i].prevTickEndingSignatures[j][0]), ZERO)) != 0xFFFFFFFF
+                            || _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)&latestTickBeginnings[i].prevTickEndingSignatures[j][32]), ZERO)) != 0xFFFFFFFF)
                         {
                             tickEnding.broadcastTickEnding.tickEnding.computorIndex = j;
                             tickEnding.broadcastTickEnding.tickEnding.epoch = latestTickBeginnings[i].epoch;
-                            tickEnding.broadcastTickEnding.tickEnding.tick = latestTickBeginnings[i].tick;
+                            tickEnding.broadcastTickEnding.tickEnding.tick = latestTickBeginnings[i].tick - 1;
                             *((unsigned long long*) & tickEnding.broadcastTickEnding.tickEnding.millisecond) = *((unsigned long long*) & latestTickBeginnings[i].prevMillisecond);
                             bs->CopyMem(tickEnding.broadcastTickEnding.tickEnding.prevStateDigest, &latestTickBeginnings[i].prevStateDigest, 32);
                             bs->CopyMem(tickEnding.broadcastTickEnding.tickEnding.saltedStateDigest, &latestTickBeginnings[i].stateDigest, 32);
@@ -6694,7 +6694,16 @@ static void tickingCallback(EFI_EVENT Event, void* Context)
 
                                 break;
                             }
-                            declaredNumberOfComputors++;
+                            else
+                            {
+                                declaredNumberOfComputors++;
+
+                                if (latestTickEndings[j].tick < latestTickBeginnings[i].tick - 1)
+                                {
+                                    bs->CopyMem(&latestTickEndings[j], &tickEnding.broadcastTickEnding.tickEnding, sizeof(TickEnding) - 64);
+                                    bs->CopyMem(latestTickEndings[j].signature, latestTickBeginnings[i].prevTickEndingSignatures[j], 64);
+                                }
+                            }
                         }
                     }
                     if (declaredNumberOfComputors >= QUORUM)
