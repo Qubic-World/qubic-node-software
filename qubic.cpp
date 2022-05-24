@@ -29,7 +29,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 9
-#define VERSION_C 2
+#define VERSION_C 3
 
 //#define USE_COMMUNITY_AVX2_FIX
 
@@ -4412,7 +4412,7 @@ static void requestProcessor(void* ProcedureArgument)
                             if (verify(latestComputors.publicKeys[request->tickBeginning.computorIndex], digest, ((const unsigned char*)processor->requestBuffer + requestHeader->size - 64 - 8)))
                             {
                                 bs->CopyMem(&latestTickBeginnings[request->tickBeginning.computorIndex], &request->tickBeginning, sizeof(TickBeginning));
-                                bs->CopyMem(&latestTickBeginningSignatures[request->tickBeginning.computorIndex], ((unsigned char*)processor->requestBuffer + requestHeader->size - 64), 64);
+                                bs->CopyMem(&latestTickBeginningSignatures[request->tickBeginning.computorIndex], ((unsigned char*)processor->requestBuffer + requestHeader->size - 64 - 8), 64);
 
                                 bs->CopyMem(responseHeader, requestHeader, requestHeader->size);
                                 processor->responseTransmittingType = -1;
