@@ -29,7 +29,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 9
-#define VERSION_C 3
+#define VERSION_C 4
 
 //#define USE_COMMUNITY_AVX2_FIX
 
@@ -6647,7 +6647,8 @@ static void tickingCallback(EFI_EVENT Event, void* Context)
                             bs->CopyMem(tickEnding.broadcastTickEnding.tickEnding.saltedStateDigest, &latestTickBeginnings[i].stateDigest, 32);
                             unsigned char digest[32];
                             tickEnding.broadcastTickEnding.tickEnding.computorIndex ^= 5;
-                            KangarooTwelve((unsigned char*)&tickEnding, sizeof(TickEnding) - 64, digest, sizeof(digest));
+                            KangarooTwelve((unsigned char*)&tickEnding.broadcastTickEnding.tickEnding, sizeof(TickEnding) - 64, digest, sizeof(digest));
+                            tickEnding.broadcastTickEnding.tickEnding.computorIndex ^= 5;
                             if (!verify(cachedComputors.publicKeys[j], digest, latestTickBeginnings[i].prevTickEndingSignatures[j]))
                             {
                                 declaredNumberOfComputors = 0;
