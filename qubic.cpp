@@ -28,8 +28,8 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 9
-#define VERSION_C 6
+#define VERSION_B 10
+#define VERSION_C 0
 
 //#define USE_COMMUNITY_AVX2_FIX
 
@@ -3349,7 +3349,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define NUMBER_OF_NEURONS 20000
 #define PEER_RATING_PERIOD 10
 #define PORT 21841
-#define PROTOCOL 261
+#define PROTOCOL 262
 #define QUORUM (NUMBER_OF_COMPUTORS * 2 / 3 + 1)
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 60
 #define SYSTEM_DATA_SAVING_PERIOD 60
@@ -3896,6 +3896,7 @@ static void log(const CHAR16* message)
     timestampedMessage[12] = ' ';
     timestampedMessage[13] = 0;
 
+#if NUMBER_OF_COMPUTING_PROCESSORS
     appendText(timestampedMessage, L"[");
     appendNumber(timestampedMessage, tickPhase1NumberOfComputors, FALSE);
     appendText(timestampedMessage, L"|");
@@ -3905,6 +3906,7 @@ static void log(const CHAR16* message)
     appendText(timestampedMessage, L".");
     appendNumber(timestampedMessage, system.epoch, FALSE);
     appendText(timestampedMessage, L" ");
+#endif
 
     appendText(timestampedMessage, message);
     appendText(timestampedMessage, L"\r\n");
@@ -4528,15 +4530,18 @@ static void requestProcessor(void* ProcedureArgument)
                     {
                         bs->CopyMem(&system.computors, &request->computors, sizeof(Computors));
 
-                        unsigned int i;
-                        for (i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                        if (system.computors.epoch == request->computors.epoch)
                         {
-                            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->computors.publicKeys[i]), *((__m256i*)ownPublicKey))) == 0xFFFFFFFF)
+                            unsigned int i;
+                            for (i = 0; i < NUMBER_OF_COMPUTORS; i++)
                             {
-                                break;
+                                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->computors.publicKeys[i]), *((__m256i*)ownPublicKey))) == 0xFFFFFFFF)
+                                {
+                                    break;
+                                }
                             }
+                            system.ownComputorIndex = (i < NUMBER_OF_COMPUTORS ? i : -1);
                         }
-                        system.ownComputorIndex = (i < NUMBER_OF_COMPUTORS ? i : -1);
                     }
 
                     _InterlockedCompareExchange8(&systemLock, 0, 1);
@@ -5125,6 +5130,19 @@ static void minerProcessor(void* ProcedureArgument)
             bs->CopyMem(bestNeuronLinks, neuronLinks[miningProcessorIndex], sizeof(bestNeuronLinks));
             _InterlockedCompareExchange8(&neuronNetworkLock, 0, 1);
         }
+        else
+        {
+            if (!miningScore)
+            {
+                for (unsigned int i = 0; i < NUMBER_OF_NEURONS; i++)
+                {
+                    _rdrand32_step(&neuronLinks[miningProcessorIndex][i][0]);
+                    _rdrand32_step(&neuronLinks[miningProcessorIndex][i][1]);
+                    neuronLinks[miningProcessorIndex][i][0] %= NUMBER_OF_NEURONS;
+                    neuronLinks[miningProcessorIndex][i][1] %= NUMBER_OF_NEURONS;
+                }
+            }
+        }
     }
 }
 
@@ -5458,7 +5476,7 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                                         if (peers[i].tcp4Protocol && peers[i].isConnectedAccepted && peers[i].exchangedPublicPeers && !peers[i].isClosing && peers[i].type > 0
                                             && i != peer->index)
                                         {
-                                            push(&peers[i], &solution.header);
+                                            push(&peers[i], requestResponseHeader);
                                         }
                                     }
 
@@ -6030,7 +6048,7 @@ static BOOLEAN initialize()
                     return FALSE;
                 }
 
-                miningData[0] ^= 435;
+                miningData[0] ^= 931;
 
                 unsigned char* miningDataBytes = (unsigned char*)miningData;
                 for (unsigned int i = 0; i < sizeof(computorPublicKey); i++)
@@ -6478,6 +6496,7 @@ static void broadcastResourceTestingSolutionCallback(EFI_EVENT Event, void* Cont
 }
 #endif
 
+#if NUMBER_OF_COMPUTING_PROCESSORS
 static void tickingCallback(EFI_EVENT Event, void* Context)
 {
     while (_InterlockedCompareExchange8(&systemLock, 1, 0))
@@ -6649,6 +6668,7 @@ static void tickingCallback(EFI_EVENT Event, void* Context)
         }
     }
 }
+#endif
 
 EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 {
@@ -6775,12 +6795,13 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             if ((status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, loggingCallback, NULL, &loggingEvent))
 #if NUMBER_OF_COMPUTING_PROCESSORS
                                 || (status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, systemDataSavingCallback, NULL, &systemDataSavingEvent))
+                                || (status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, tickingCallback, NULL, &tickingEvent))
 #endif
                                 || (status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, peerRatingCallback, NULL, &peerRatingEvent))
 #if NUMBER_OF_MINING_PROCESSORS
                                 || (status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, broadcastResourceTestingSolutionCallback, NULL, &broadcastResourceTestingSolutionEvent))
 #endif
-                                || (status = bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, tickingCallback, NULL, &tickingEvent)))
+                                )
                             {
                                 logStatus(L"EFI_BOOT_SERVICES.CreateEvent() fails", status);
                             }
@@ -6789,12 +6810,12 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 bs->SetTimer(loggingEvent, TimerPeriodic, 10000000UL);
 #if NUMBER_OF_COMPUTING_PROCESSORS
                                 bs->SetTimer(systemDataSavingEvent, TimerPeriodic, SYSTEM_DATA_SAVING_PERIOD * 10000000UL);
+                                bs->SetTimer(tickingEvent, TimerPeriodic, 10000000UL);
 #endif
                                 bs->SetTimer(peerRatingEvent, TimerPeriodic, PEER_RATING_PERIOD * 10000000UL);
 #if NUMBER_OF_MINING_PROCESSORS
                                 bs->SetTimer(broadcastResourceTestingSolutionEvent, TimerPeriodic, RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD * 10000000UL);
 #endif
-                                bs->SetTimer(tickingEvent, TimerPeriodic, 10000000UL);
 
                                 while (!state)
                                 {
@@ -6848,22 +6869,22 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     }
                                 }
 
-                                bs->SetTimer(tickingEvent, TimerCancel, 0);
 #if NUMBER_OF_MINING_PROCESSORS
                                 bs->SetTimer(broadcastResourceTestingSolutionEvent, TimerCancel, 0);
 #endif
                                 bs->SetTimer(peerRatingEvent, TimerCancel, 0);
 #if NUMBER_OF_COMPUTING_PROCESSORS
+                                bs->SetTimer(tickingEvent, TimerCancel, 0);
                                 bs->SetTimer(systemDataSavingEvent, TimerCancel, 0);
 #endif
                                 bs->SetTimer(loggingEvent, TimerCancel, 0);
 
-                                bs->CloseEvent(tickingEvent);
 #if NUMBER_OF_MINING_PROCESSORS
                                 bs->CloseEvent(broadcastResourceTestingSolutionEvent);
 #endif
                                 bs->CloseEvent(peerRatingEvent);
 #if NUMBER_OF_COMPUTING_PROCESSORS
+                                bs->CloseEvent(tickingEvent);
                                 bs->CloseEvent(systemDataSavingEvent);
 #endif
                                 bs->CloseEvent(loggingEvent);
