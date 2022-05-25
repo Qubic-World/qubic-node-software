@@ -29,7 +29,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 9
-#define VERSION_C 5
+#define VERSION_C 6
 
 //#define USE_COMMUNITY_AVX2_FIX
 
@@ -5453,6 +5453,15 @@ static void receiveCallback(EFI_EVENT Event, void* Context)
                                         }
                                     }
 
+                                    for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
+                                    {
+                                        if (peers[i].tcp4Protocol && peers[i].isConnectedAccepted && peers[i].exchangedPublicPeers && !peers[i].isClosing && peers[i].type > 0
+                                            && i != peer->index)
+                                        {
+                                            push(&peers[i], &solution.header);
+                                        }
+                                    }
+
                                     _InterlockedIncrement64(&numberOfDiscardedRequests);
                                 }
                                 else
@@ -6478,7 +6487,7 @@ static void tickingCallback(EFI_EVENT Event, void* Context)
     bs->CopyMem(&cachedSystem, &system, sizeof(System));
     _InterlockedCompareExchange8(&systemLock, 0, 1);
 
-    if (system.ownComputorIndex >= 0)
+    if (cachedSystem.ownComputorIndex >= 0)
     {
         if (__rdtsc() - latestTickEndingPublicationTick >= TICK_PUBLICATION_PERIOD * frequency)
         {
@@ -6486,9 +6495,9 @@ static void tickingCallback(EFI_EVENT Event, void* Context)
             tickEnding.header.protocol = PROTOCOL;
             tickEnding.header.type = BROADCAST_TICK_ENDING;
 
-            tickEnding.broadcastTickEnding.tickEnding.computorIndex = system.ownComputorIndex;
-            tickEnding.broadcastTickEnding.tickEnding.epoch = system.epoch;
-            tickEnding.broadcastTickEnding.tickEnding.tick = system.tick;
+            tickEnding.broadcastTickEnding.tickEnding.computorIndex = cachedSystem.ownComputorIndex;
+            tickEnding.broadcastTickEnding.tickEnding.epoch = cachedSystem.epoch;
+            tickEnding.broadcastTickEnding.tickEnding.tick = cachedSystem.tick;
 
             tickEnding.broadcastTickEnding.tickEnding.year = 0;
             tickEnding.broadcastTickEnding.tickEnding.month = 0;
@@ -6513,7 +6522,7 @@ static void tickingCallback(EFI_EVENT Event, void* Context)
             {
                 _mm_pause();
             }
-            bs->CopyMem(&latestTickEndings[system.ownComputorIndex], &tickEnding.broadcastTickEnding.tickEnding, sizeof(TickEnding));
+            bs->CopyMem(&latestTickEndings[cachedSystem.ownComputorIndex], &tickEnding.broadcastTickEnding.tickEnding, sizeof(TickEnding));
             _InterlockedCompareExchange8(&latestTickEndingsLock, 0, 1);
 
             for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
@@ -6534,12 +6543,11 @@ static void tickingCallback(EFI_EVENT Event, void* Context)
         }
         for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
         {
-            if (latestTickEndings[i].epoch
-                && latestTickEndings[i].epoch == latestTickEndings[system.ownComputorIndex].epoch
-                && latestTickEndings[i].tick == latestTickEndings[system.ownComputorIndex].tick
-                && *((unsigned long long*) & latestTickEndings[i].millisecond) == *((unsigned long long*) & latestTickEndings[system.ownComputorIndex].millisecond)
-                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)latestTickEndings[i].prevStateDigest), *((__m256i*)latestTickEndings[system.ownComputorIndex].prevStateDigest))) == 0xFFFFFFFF
-                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)latestTickEndings[i].saltedStateDigest), *((__m256i*)latestTickEndings[system.ownComputorIndex].saltedStateDigest))) == 0xFFFFFFFF)
+            if (latestTickEndings[i].epoch == cachedSystem.epoch
+                && latestTickEndings[i].tick == cachedSystem.tick
+                && *((unsigned long long*) & latestTickEndings[i].millisecond) == *((unsigned long long*) & latestTickEndings[cachedSystem.ownComputorIndex].millisecond)
+                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)latestTickEndings[i].prevStateDigest), *((__m256i*)latestTickEndings[cachedSystem.ownComputorIndex].prevStateDigest))) == 0xFFFFFFFF
+                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)latestTickEndings[i].saltedStateDigest), *((__m256i*)latestTickEndings[cachedSystem.ownComputorIndex].saltedStateDigest))) == 0xFFFFFFFF)
             {
                 tickPhase1NumberOfComputors++;
             }
@@ -6553,9 +6561,9 @@ static void tickingCallback(EFI_EVENT Event, void* Context)
                 tickBeginning.header.protocol = PROTOCOL;
                 tickBeginning.header.type = BROADCAST_TICK_BEGINNING;
 
-                tickBeginning.broadcastTickBeginning.tickBeginning.computorIndex = system.ownComputorIndex;
-                tickBeginning.broadcastTickBeginning.tickBeginning.epoch = system.epoch;
-                tickBeginning.broadcastTickBeginning.tickBeginning.tick = system.tick + 1;
+                tickBeginning.broadcastTickBeginning.tickBeginning.computorIndex = cachedSystem.ownComputorIndex;
+                tickBeginning.broadcastTickBeginning.tickBeginning.epoch = cachedSystem.epoch;
+                tickBeginning.broadcastTickBeginning.tickBeginning.tick = cachedSystem.tick + 1;
 
                 EFI_TIME time;
                 rs->GetTime(&time, NULL);
@@ -6592,7 +6600,7 @@ static void tickingCallback(EFI_EVENT Event, void* Context)
                 {
                     _mm_pause();
                 }
-                bs->CopyMem(&latestTickBeginnings[system.ownComputorIndex], &tickBeginning.broadcastTickBeginning.tickBeginning, sizeof(TickEnding));
+                bs->CopyMem(&latestTickBeginnings[cachedSystem.ownComputorIndex], &tickBeginning.broadcastTickBeginning.tickBeginning, sizeof(TickEnding));
                 _InterlockedCompareExchange8(&latestTickBeginningsLock, 0, 1);
 
                 for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
@@ -6614,13 +6622,12 @@ static void tickingCallback(EFI_EVENT Event, void* Context)
         }
         for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
         {
-            if (latestTickBeginnings[i].epoch
-                && latestTickBeginnings[i].epoch == latestTickBeginnings[system.ownComputorIndex].epoch
-                && (latestTickBeginnings[i].tick == latestTickBeginnings[system.ownComputorIndex].tick || latestTickBeginnings[i].tick == latestTickEndings[system.ownComputorIndex].tick + 1)
-                && *((unsigned long long*)&latestTickBeginnings[i].millisecond) == *((unsigned long long*)&latestTickBeginnings[system.ownComputorIndex].millisecond)
-                && *((unsigned long long*)&latestTickBeginnings[i].prevMillisecond) == *((unsigned long long*)&latestTickBeginnings[system.ownComputorIndex].prevMillisecond)
-                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)latestTickBeginnings[i].prevStateDigest), *((__m256i*)latestTickBeginnings[system.ownComputorIndex].prevStateDigest))) == 0xFFFFFFFF
-                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)latestTickBeginnings[i].stateDigest), *((__m256i*)latestTickBeginnings[system.ownComputorIndex].stateDigest))) == 0xFFFFFFFF)
+            if (latestTickBeginnings[i].epoch == cachedSystem.epoch
+                && (latestTickBeginnings[i].tick == cachedSystem.tick + 1)
+                && *((unsigned long long*)&latestTickBeginnings[i].millisecond) == *((unsigned long long*)&latestTickBeginnings[cachedSystem.ownComputorIndex].millisecond)
+                && *((unsigned long long*)&latestTickBeginnings[i].prevMillisecond) == *((unsigned long long*)&latestTickBeginnings[cachedSystem.ownComputorIndex].prevMillisecond)
+                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)latestTickBeginnings[i].prevStateDigest), *((__m256i*)latestTickBeginnings[cachedSystem.ownComputorIndex].prevStateDigest))) == 0xFFFFFFFF
+                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)latestTickBeginnings[i].stateDigest), *((__m256i*)latestTickBeginnings[cachedSystem.ownComputorIndex].stateDigest))) == 0xFFFFFFFF)
             {
                 tickPhase2NumberOfComputors++;
             }
@@ -6628,8 +6635,12 @@ static void tickingCallback(EFI_EVENT Event, void* Context)
         _InterlockedCompareExchange8(&latestTickBeginningsLock, 0, 1);
         if (tickPhase2NumberOfComputors >= QUORUM)
         {
-            system.epoch = latestTickBeginnings[system.ownComputorIndex].epoch;
-            system.tick = latestTickBeginnings[system.ownComputorIndex].tick;
+            while (_InterlockedCompareExchange8(&systemLock, 1, 0))
+            {
+                _mm_pause();
+            }
+            system.tick++;
+            _InterlockedCompareExchange8(&systemLock, 0, 1);
 
             tickPhase1NumberOfComputors = 0;
             tickPhase2NumberOfComputors = 0;
