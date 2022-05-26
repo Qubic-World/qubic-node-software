@@ -29,7 +29,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 10
-#define VERSION_C 1
+#define VERSION_C 2
 
 //#define USE_COMMUNITY_AVX2_FIX
 
@@ -3729,7 +3729,7 @@ static unsigned long long totalRatingOfPublicPeers = 0;
 static EFI_EVENT computorEvents[NUMBER_OF_COMPUTING_PROCESSORS];
 #endif
 
-static volatile unsigned int bestMiningScore = 0;
+static volatile unsigned int bestMiningScore = 0, registeredMiningScore = 0, miningRatingPlace = 0;
 static unsigned int knownMiningScore = 0;
 static long long prevNumberOfMiningIterations = 0;
 static unsigned long long prevMiningPerformanceTick = 0;
@@ -4528,15 +4528,32 @@ static void requestProcessor(void* ProcedureArgument)
 
                         if (system.computors.epoch == request->computors.epoch)
                         {
-                            unsigned int i;
-                            for (i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                            system.ownComputorIndex = -1;
+                            registeredMiningScore = 0;
+                            for (unsigned int i = 0; i < sizeof(request->computors.scores) / sizeof(request->computors.scores[0]); i++)
                             {
                                 if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->computors.publicKeys[i]), *((__m256i*)ownPublicKey))) == 0xFFFFFFFF)
                                 {
+                                    if (i < NUMBER_OF_COMPUTORS)
+                                    {
+                                        system.ownComputorIndex = i;
+                                    }
+                                    registeredMiningScore = request->computors.scores[i];
+
                                     break;
                                 }
                             }
-                            system.ownComputorIndex = (i < NUMBER_OF_COMPUTORS ? i : -1);
+                            miningRatingPlace = 0;
+                            if (registeredMiningScore)
+                            {
+                                for (unsigned int i = 0; i < sizeof(request->computors.scores) / sizeof(request->computors.scores[0]); i++)
+                                {
+                                    if (request->computors.scores[i] >= registeredMiningScore)
+                                    {
+                                        miningRatingPlace++;
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -6348,15 +6365,22 @@ static void loggingCallback(EFI_EVENT Event, void* Context)
         appendNumber(message, NUMBER_OF_MINING_PROCESSORS, TRUE);
         appendText(message, L"+");
         appendNumber(message, numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS), TRUE);
-        appendText(message, L" | Score = ");
+        appendText(message, L" | Local score = ");
         appendNumber(message, bestMiningScore, TRUE);
+        appendText(message, L" / Reg. score = ");
+        appendNumber(message, registeredMiningScore, TRUE);
+        if (miningRatingPlace)
+        {
+            appendText(message, L" / #");
+            appendNumber(message, miningRatingPlace, TRUE);
+        }
         appendText(message, L" (");
         appendNumber(message, (numberOfMiningIterations - prevNumberOfMiningIterations) * frequency / (__rdtsc() - prevMiningPerformanceTick), TRUE);
         prevMiningPerformanceTick = __rdtsc();
         prevNumberOfMiningIterations = numberOfMiningIterations;
         appendText(message, L" it/s);");
 #if NUMBER_OF_COMPUTING_PROCESSORS
-        appendText(message, L" own computor index = ");
+        appendText(message, L" computor index = ");
         if (system.ownComputorIndex < 0)
         {
             appendText(message, L"?.");
