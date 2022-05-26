@@ -29,7 +29,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 10
-#define VERSION_C 2
+#define VERSION_C 3
 
 //#define USE_COMMUNITY_AVX2_FIX
 
@@ -3739,8 +3739,8 @@ static unsigned int bestNeuronLinks[NUMBER_OF_NEURONS][2];
 static volatile char neuronNetworkLock = 0;
 static EFI_EVENT minerEvents[NUMBER_OF_MINING_PROCESSORS];
 static unsigned int neuronLinks[NUMBER_OF_MINING_PROCESSORS][NUMBER_OF_NEURONS][2];
-static unsigned int neuronValues[NUMBER_OF_MINING_PROCESSORS][NUMBER_OF_NEURONS];
-static unsigned int neuronValuesForVerification[NUMBER_OF_NEURONS];
+static unsigned char neuronValues[NUMBER_OF_MINING_PROCESSORS][NUMBER_OF_NEURONS];
+static unsigned char neuronValuesForVerification[NUMBER_OF_NEURONS];
 static volatile long long numberOfMiningIterations = 0;
 
 static struct
@@ -4526,7 +4526,7 @@ static void requestProcessor(void* ProcedureArgument)
                     {
                         bs->CopyMem(&system.computors, &request->computors, sizeof(Computors));
 
-                        if (system.computors.epoch == request->computors.epoch)
+                        if (request->computors.epoch == system.epoch)
                         {
                             system.ownComputorIndex = -1;
                             registeredMiningScore = 0;
@@ -4589,7 +4589,7 @@ static void responseCallback(EFI_EVENT Event, void* Context)
             if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)broadcastResourceTestingSolution->resourceTestingSolution.computorPublicKey), *((__m256i*)computorPublicKey))) == 0xFFFFFFFF
                 && broadcastResourceTestingSolution->resourceTestingSolution.score > bestMiningScore)
             {
-                bs->SetMem(neuronValuesForVerification, NUMBER_OF_NEURONS * sizeof(unsigned int), 0xFF);
+                bs->SetMem(neuronValuesForVerification, NUMBER_OF_NEURONS * sizeof(unsigned char), 0xFF);
 
                 unsigned int outputLength = 0;
                 while (outputLength < (sizeof(miningData) << 3))
@@ -5079,11 +5079,11 @@ static void minerProcessor(void* ProcedureArgument)
                 neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex] %= NUMBER_OF_NEURONS;
             }
 
-            bs->SetMem(neuronValues[miningProcessorIndex], NUMBER_OF_NEURONS * sizeof(unsigned int), 0xFF);
+            bs->SetMem(neuronValues[miningProcessorIndex], NUMBER_OF_NEURONS * sizeof(unsigned char), 0xFF);
 
             unsigned int limiter = 10000;
             unsigned int outputLength = 0;
-            while (outputLength < (sizeof(miningData) << 3) && limiter-- > 0)
+            while (true)
             {
                 const unsigned int prevValue0 = neuronValues[miningProcessorIndex][NUMBER_OF_NEURONS - 1];
                 const unsigned int prevValue1 = neuronValues[miningProcessorIndex][NUMBER_OF_NEURONS - 2];
@@ -5115,19 +5115,23 @@ static void minerProcessor(void* ProcedureArgument)
 
                         outputLength++;
                     }
+                    else
+                    {
+                        if (!(--limiter))
+                        {
+                            break;
+                        }
+                    }
                 }
             }
 
-            if (limiter)
+            if (outputLength < miningScore)
             {
-                if (outputLength < miningScore)
-                {
-                    neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex] = prevNeuronLink;
-                }
-                else
-                {
-                    miningScore = outputLength;
-                }
+                neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex] = prevNeuronLink;
+            }
+            else
+            {
+                miningScore = outputLength;
             }
 
             _InterlockedIncrement64(&numberOfMiningIterations);
@@ -6005,7 +6009,7 @@ static BOOLEAN initialize()
             {
                 if (size < sizeof(system))
                 {
-                    if (size < 8)
+                    if (size && size < 8)
                     {
                         log(L"System data file is too small!");
 
@@ -6014,18 +6018,38 @@ static BOOLEAN initialize()
                 }
                 else
                 {
-                    system.tick = TICK;
-
-                    unsigned int i;
-                    for (i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                    if (system.computors.epoch == system.epoch)
                     {
-                        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)system.computors.publicKeys[i]), *((__m256i*)ownPublicKey))) == 0xFFFFFFFF)
+                        system.ownComputorIndex = -1;
+                        registeredMiningScore = 0;
+                        for (unsigned int i = 0; i < sizeof(system.computors.scores) / sizeof(system.computors.scores[0]); i++)
                         {
-                            break;
+                            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)system.computors.publicKeys[i]), *((__m256i*)ownPublicKey))) == 0xFFFFFFFF)
+                            {
+                                if (i < NUMBER_OF_COMPUTORS)
+                                {
+                                    system.ownComputorIndex = i;
+                                }
+                                registeredMiningScore = system.computors.scores[i];
+
+                                break;
+                            }
+                        }
+                        miningRatingPlace = 0;
+                        if (registeredMiningScore)
+                        {
+                            for (unsigned int i = 0; i < sizeof(system.computors.scores) / sizeof(system.computors.scores[0]); i++)
+                            {
+                                if (system.computors.scores[i] >= registeredMiningScore)
+                                {
+                                    miningRatingPlace++;
+                                }
+                            }
                         }
                     }
-                    system.ownComputorIndex = (i < NUMBER_OF_COMPUTORS ? i : -1);
                 }
+
+                system.tick = TICK;
             }
         }
 #endif
