@@ -29,7 +29,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 10
-#define VERSION_C 3
+#define VERSION_C 4
 
 //#define USE_COMMUNITY_AVX2_FIX
 
@@ -3739,7 +3739,6 @@ static unsigned int bestNeuronLinks[NUMBER_OF_NEURONS][2];
 static volatile char neuronNetworkLock = 0;
 static EFI_EVENT minerEvents[NUMBER_OF_MINING_PROCESSORS];
 static unsigned int neuronLinks[NUMBER_OF_MINING_PROCESSORS][NUMBER_OF_NEURONS][2];
-static unsigned char neuronValues[NUMBER_OF_MINING_PROCESSORS][NUMBER_OF_NEURONS];
 static unsigned char neuronValuesForVerification[NUMBER_OF_NEURONS];
 static volatile long long numberOfMiningIterations = 0;
 
@@ -5073,28 +5072,29 @@ static void minerProcessor(void* ProcedureArgument)
             _rdrand32_step(&changedInputIndex);
             changedInputIndex &= 1;
             unsigned int prevNeuronLink = neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex];
-            if (miningScore > 0)
+            if (miningScore)
             {
                 _rdrand32_step(&neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex]);
                 neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex] %= NUMBER_OF_NEURONS;
             }
 
-            bs->SetMem(neuronValues[miningProcessorIndex], NUMBER_OF_NEURONS * sizeof(unsigned char), 0xFF);
+            unsigned char neuronValues[NUMBER_OF_NEURONS];
+            bs->SetMem(neuronValues, sizeof(neuronValues), 0xFF);
 
-            unsigned int limiter = 10000;
+            unsigned int limiter = 1000;
             unsigned int outputLength = 0;
             while (true)
             {
-                const unsigned int prevValue0 = neuronValues[miningProcessorIndex][NUMBER_OF_NEURONS - 1];
-                const unsigned int prevValue1 = neuronValues[miningProcessorIndex][NUMBER_OF_NEURONS - 2];
+                const unsigned int prevValue0 = neuronValues[NUMBER_OF_NEURONS - 1];
+                const unsigned int prevValue1 = neuronValues[NUMBER_OF_NEURONS - 2];
 
                 for (unsigned int i = 0; i < NUMBER_OF_NEURONS; i++)
                 {
-                    neuronValues[miningProcessorIndex][i] = ~(neuronValues[miningProcessorIndex][neuronLinks[miningProcessorIndex][i][0]] & neuronValues[miningProcessorIndex][neuronLinks[miningProcessorIndex][i][1]]);
+                    neuronValues[i] = ~(neuronValues[neuronLinks[miningProcessorIndex][i][0]] & neuronValues[neuronLinks[miningProcessorIndex][i][1]]);
                 }
 
-                if (neuronValues[miningProcessorIndex][NUMBER_OF_NEURONS - 1] != prevValue0
-                    && neuronValues[miningProcessorIndex][NUMBER_OF_NEURONS - 2] == prevValue1)
+                if (neuronValues[NUMBER_OF_NEURONS - 1] != prevValue0
+                    && neuronValues[NUMBER_OF_NEURONS - 2] == prevValue1)
                 {
                     if ((miningData[outputLength >> 6] >> (outputLength & 63)) & 1)
                     {
@@ -5105,8 +5105,8 @@ static void minerProcessor(void* ProcedureArgument)
                 }
                 else
                 {
-                    if (neuronValues[miningProcessorIndex][NUMBER_OF_NEURONS - 2] != prevValue1
-                        && neuronValues[miningProcessorIndex][NUMBER_OF_NEURONS - 1] == prevValue0)
+                    if (neuronValues[NUMBER_OF_NEURONS - 2] != prevValue1
+                        && neuronValues[NUMBER_OF_NEURONS - 1] == prevValue0)
                     {
                         if (!((miningData[outputLength >> 6] >> (outputLength & 63)) & 1))
                         {
