@@ -29,13 +29,13 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 10
-#define VERSION_C 5
+#define VERSION_C 6
 
 //#define USE_COMMUNITY_AVX2_FIX
 
 #define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
 
-#define TICK 2500003
+#define TICK 2500004
 
 static const unsigned char knownPublicPeers[][4] = {
     { 88, 99, 67, 51 },
@@ -6560,9 +6560,8 @@ static void tickingCallback(EFI_EVENT Event, void* Context)
         }
         for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
         {
-            if (actualTickEndings[cachedSystem.ownComputorIndex].epoch
-                && actualTickEndings[i].epoch == actualTickEndings[cachedSystem.ownComputorIndex].epoch
-                && actualTickEndings[i].tick == actualTickEndings[cachedSystem.ownComputorIndex].tick
+            if (actualTickEndings[i].epoch == cachedSystem.epoch
+                && actualTickEndings[i].tick == cachedSystem.tick
                 && *((unsigned long long*)&actualTickEndings[i].millisecond) == *((unsigned long long*)&actualTickEndings[cachedSystem.ownComputorIndex].millisecond)
                 && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTickEndings[i].prevStateDigest), *((__m256i*)actualTickEndings[cachedSystem.ownComputorIndex].prevStateDigest))) == 0xFFFFFFFF
                 && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTickEndings[i].saltedStateDigest), *((__m256i*)actualTickEndings[cachedSystem.ownComputorIndex].saltedStateDigest))) == 0xFFFFFFFF)
@@ -6643,9 +6642,8 @@ static void tickingCallback(EFI_EVENT Event, void* Context)
         }
         for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
         {
-            if (actualTickBeginnings[cachedSystem.ownComputorIndex].epoch
-                && actualTickBeginnings[i].epoch == actualTickBeginnings[cachedSystem.ownComputorIndex].epoch
-                && actualTickBeginnings[i].tick == actualTickBeginnings[cachedSystem.ownComputorIndex].tick
+            if (actualTickBeginnings[i].epoch == cachedSystem.epoch
+                && actualTickBeginnings[i].tick == cachedSystem.tick + 1
                 && *((unsigned long long*)&actualTickBeginnings[i].millisecond) == *((unsigned long long*)&actualTickBeginnings[cachedSystem.ownComputorIndex].millisecond)
                 && *((unsigned long long*)&actualTickBeginnings[i].prevMillisecond) == *((unsigned long long*)&actualTickBeginnings[cachedSystem.ownComputorIndex].prevMillisecond)
                 && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTickBeginnings[i].prevStateDigest), *((__m256i*)actualTickBeginnings[cachedSystem.ownComputorIndex].prevStateDigest))) == 0xFFFFFFFF
@@ -6923,9 +6921,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             {
                                                 for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
                                                 {
-                                                    if (i != system.ownComputorIndex)
+                                                    if (i != system.ownComputorIndex && system.tickCounters[i])
                                                     {
                                                         total += (ISSUANCE_RATE / NUMBER_OF_COMPUTORS) * system.tickCounters[i] / maxCounter;
+                                                        numberOfComputors++;
                                                     }
                                                 }
                                             }
