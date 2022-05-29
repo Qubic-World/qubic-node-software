@@ -29,7 +29,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 10
-#define VERSION_C 6
+#define VERSION_C 7
 
 //#define USE_COMMUNITY_AVX2_FIX
 
@@ -6002,7 +6002,7 @@ static BOOLEAN initialize()
                     }
                 }
 
-                if (system.tick < TICK)
+                if (system.tick < TICK || system.tick >= TICK + 10)
                 {
                     system.tick = TICK;
                 }
@@ -6656,14 +6656,17 @@ static void tickingCallback(EFI_EVENT Event, void* Context)
         }
         if (tickPhase2NumberOfComputors >= QUORUM)
         {
-            unsigned int tick;
+            tickPhase1NumberOfComputors = 0;
+            tickPhase2NumberOfComputors = 0;
+            latestTickBeginningPublicationTick = 0;
+            latestTickEndingPublicationTick = 0;
 
             while (_InterlockedCompareExchange8(&systemLock, 1, 0))
             {
                 _mm_pause();
             }
             
-            tick = ++system.tick;
+            const unsigned int tick = ++system.tick;
             
             for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
             {
@@ -6671,11 +6674,6 @@ static void tickingCallback(EFI_EVENT Event, void* Context)
             }
 
             _InterlockedCompareExchange8(&systemLock, 0, 1);
-
-            tickPhase1NumberOfComputors = 0;
-            tickPhase2NumberOfComputors = 0;
-            latestTickBeginningPublicationTick = 0;
-            latestTickEndingPublicationTick = 0;
 
             while (_InterlockedCompareExchange8(&tickEndingsLock, 1, 0))
             {
