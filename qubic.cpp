@@ -28,12 +28,12 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 10
-#define VERSION_C 9
+#define VERSION_B 11
+#define VERSION_C 0
 
 #define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
 
-#define TICK 2500004
+#define TICK 2500005
 
 static const unsigned char knownPublicPeers[][4] = {
     { 88, 99, 67, 51 },
@@ -3349,7 +3349,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define NUMBER_OF_NEURONS 20000
 #define PEER_RATING_PERIOD 10
 #define PORT 21841
-#define PROTOCOL 262
+#define PROTOCOL 263
 #define QUORUM (NUMBER_OF_COMPUTORS * 2 / 3 + 1)
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 60
 #define SYSTEM_DATA_SAVING_PERIOD 60
@@ -3665,7 +3665,8 @@ const unsigned int requestResponseMinSizes[] = {
     sizeof(RequestResponseHeader) + sizeof(BroadcastResourceTestingSolution),
     sizeof(RequestResponseHeader) + sizeof(BroadcastTickBeginning) + 64 + 8,
     sizeof(RequestResponseHeader) + sizeof(BroadcastTickEnding),
-    sizeof(RequestResponseHeader) + sizeof(BroadcastComputors)
+    sizeof(RequestResponseHeader) + sizeof(BroadcastComputors),
+    0
 };
 
 static volatile int state = 0;
@@ -5140,6 +5141,7 @@ static BOOLEAN initialize()
     EFI_STATUS status;
 
     bs->SetMem(&system, sizeof(system), 0);
+    system.ownComputorIndex = -1;
 
 #if NUMBER_OF_COMPUTING_PROCESSORS || NUMBER_OF_MINING_PROCESSORS
     EFI_GUID simpleFileSystemProtocolGuid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
@@ -5930,6 +5932,19 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 #endif
 
                                                                     _InterlockedIncrement64(&numberOfProcessedRequests);
+                                                                }
+                                                                break;
+
+                                                                case 11:
+                                                                {
+                                                                    for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
+                                                                    {
+                                                                        if (peers[j].tcp4Protocol && peers[j].isConnectedAccepted && peers[j].exchangedPublicPeers && !peers[j].isClosing && peers[j].type > 0
+                                                                            && j != i)
+                                                                        {
+                                                                            push(&peers[j], requestResponseHeader);
+                                                                        }
+                                                                    }
                                                                 }
                                                                 break;
 
