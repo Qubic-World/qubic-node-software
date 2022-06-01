@@ -29,11 +29,11 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 11
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
 
-#define TICK 2500005
+#define TICK 2500007
 
 static const unsigned char knownPublicPeers[][4] = {
     { 88, 99, 67, 51 },
@@ -3352,6 +3352,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define PROTOCOL 263
 #define QUORUM (NUMBER_OF_COMPUTORS * 2 / 3 + 1)
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 60
+#define REVENUE_PUBLICATION_PERIOD 60
 #define SYSTEM_DATA_SAVING_PERIOD 60
 #define TICK_PUBLICATION_PERIOD 5
 
@@ -3444,6 +3445,14 @@ typedef struct
     unsigned int score;
     unsigned int neuronLinks[NUMBER_OF_NEURONS][2];
 } ResourceTestingSolution;
+
+typedef struct
+{
+    unsigned short computorIndex;
+    unsigned short epoch;
+    unsigned char revenuePercents[NUMBER_OF_COMPUTORS];
+    unsigned char signature[64];
+} Revenues;
 
 typedef struct
 {
@@ -3654,19 +3663,25 @@ typedef struct
     Computors computors;
 } BroadcastComputors;
 
+#define BROADCAST_REVENUES 11
+typedef struct
+{
+    Revenues revenues;
+} BroadcastRevenues;
+
 const unsigned int requestResponseMinSizes[] = {
     sizeof(RequestResponseHeader) + sizeof(ProcessWebSocketClientRequest),
     sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers),
     sizeof(RequestResponseHeader) + sizeof(BroadcastMessage) + 64,
     sizeof(RequestResponseHeader) + sizeof(BroadcastTransfer),
     sizeof(RequestResponseHeader) + sizeof(BroadcastEffect) + 64,
-    0,
+    0xFFFFFFFF,
     sizeof(RequestResponseHeader) + sizeof(BroadcastTransferStatus),
     sizeof(RequestResponseHeader) + sizeof(BroadcastResourceTestingSolution),
     sizeof(RequestResponseHeader) + sizeof(BroadcastTickBeginning) + 64 + 8,
     sizeof(RequestResponseHeader) + sizeof(BroadcastTickEnding),
     sizeof(RequestResponseHeader) + sizeof(BroadcastComputors),
-    0
+    sizeof(RequestResponseHeader) + sizeof(BroadcastRevenues)
 };
 
 static volatile int state = 0;
@@ -3687,7 +3702,7 @@ static struct System
     unsigned int tickCounters[NUMBER_OF_COMPUTORS];
 } system, systemToSave, cachedSystem;
 static unsigned int tickPhase1NumberOfComputors = 0, tickPhase2NumberOfComputors = 0;
-static unsigned long long latestTickBeginningPublicationTick = 0, latestTickEndingPublicationTick = 0;
+static unsigned long long latestTickBeginningPublicationTick = 0, latestTickEndingPublicationTick = 0, latestRevenuePublicationTick = 0;
 
 static Entity* entities = NULL;
 static TransferSuperstatus* transferSuperstatuses = NULL;
@@ -3761,6 +3776,12 @@ static struct
     RequestResponseHeader header;
     BroadcastTickEnding broadcastTickEnding;
 } tickEnding;
+
+static struct
+{
+    RequestResponseHeader header;
+    BroadcastRevenues broadcastRevenues;
+} revenues;
 
 static bool showExtendedLogging = false;
 
@@ -4517,6 +4538,40 @@ static void requestProcessor(void* ProcedureArgument)
                 }
             }
             break;
+
+            case BROADCAST_REVENUES:
+            {
+                BroadcastRevenues* request = (BroadcastRevenues*)((char*)processor->cache + sizeof(RequestResponseHeader));
+                unsigned int i;
+                for (i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                {
+                    if (request->revenues.revenuePercents[i] > 100)
+                    {
+                        break;
+                    }
+                }
+                if (i == NUMBER_OF_COMPUTORS)
+                {
+                    if (!_InterlockedCompareExchange8(&systemLock, 1, 0))
+                    {
+                        unsigned char digest[32];
+                        request->revenues.computorIndex ^= 6;
+                        KangarooTwelve((unsigned char*)&request->revenues, sizeof(Revenues) - 64, digest, sizeof(digest));
+                        request->revenues.computorIndex ^= 6;
+                        if (verify(system.computors.publicKeys[request->revenues.computorIndex], digest, request->revenues.signature))
+                        {
+                            responseSize = requestHeader->size;
+                        }
+
+                        _InterlockedCompareExchange8(&systemLock, 0, 1);
+                    }
+                    else
+                    {
+                        responseSize = requestHeader->size;
+                    }
+                }
+            }
+            break;
             }
 
             if (responseSize)
@@ -4669,88 +4724,6 @@ static EFI_HANDLE getTcp4Protocol(const unsigned char* remoteAddress, EFI_TCP4_P
                         return childHandle;
                     }
                 }
-            }
-        }
-    }
-}
-
-static void connectAccept(Peer* peer)
-{
-    if (!peer->tcp4Protocol)
-    {
-        if (peer->index < NUMBER_OF_OUTGOING_CONNECTIONS)
-        {
-            unsigned int random;
-            _rdrand32_step(&random);
-            *((int*)peer->address) = *((int*)publicPeers[random % numberOfPublicPeers].address);
-
-            unsigned int j;
-            for (j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS; j++)
-            {
-                if (peers[j].tcp4Protocol && *((int*)peers[j].address) == *((int*)peer->address))
-                {
-                    break;
-                }
-            }
-            if (j == NUMBER_OF_OUTGOING_CONNECTIONS)
-            {
-                EFI_TCP4_PROTOCOL* tcp4Protocol;
-                if (peer->connectAcceptToken.NewChildHandle = getTcp4Protocol(peer->address, &tcp4Protocol))
-                {
-                    peer->receiveData.FragmentTable[0].FragmentBuffer = peer->receiveBuffer;
-                    peer->dataToTransmitSize = 0;
-                    peer->prevNumberOfReceivedBytes = peer->numberOfReceivedBytes = 0;
-                    peer->prevNumberOfTransmittedBytes = peer->numberOfTransmittedBytes = 0;
-                    peer->id = ++latestPeerId;
-                    peer->type = 0;
-                    peer->isReceiving = FALSE;
-                    peer->isTransmitting = FALSE;
-                    peer->exchangedPublicPeers = FALSE;
-                    peer->isClosing = FALSE;
-                    peer->tcp4Protocol = tcp4Protocol;
-
-                    EFI_STATUS status;
-                    if (status = peer->tcp4Protocol->Connect(peer->tcp4Protocol, (EFI_TCP4_CONNECTION_TOKEN*)&peer->connectAcceptToken))
-                    {
-                        logStatus(L"EFI_TCP4_PROTOCOL.Connect() fails", status);
-
-                        bs->CloseProtocol(peer->connectAcceptToken.NewChildHandle, &tcp4ProtocolGuid, ih, NULL);
-                        tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peer->connectAcceptToken.NewChildHandle);
-                        peer->tcp4Protocol = NULL;
-                    }
-                    else
-                    {
-                        peer->isConnectingAccepting = TRUE;
-                        peer->handshakingTick = __rdtsc();
-                    }
-                }
-            }
-        }
-        else
-        {
-            *((int*)peer->address) = 0;
-            peer->receiveData.FragmentTable[0].FragmentBuffer = peer->receiveBuffer;
-            peer->dataToTransmitSize = 0;
-            peer->prevNumberOfReceivedBytes = peer->numberOfReceivedBytes = 0;
-            peer->prevNumberOfTransmittedBytes = peer->numberOfTransmittedBytes = 0;
-            peer->id = ++latestPeerId;
-            peer->type = 0;
-            peer->isReceiving = FALSE;
-            peer->isTransmitting = FALSE;
-            peer->exchangedPublicPeers = FALSE;
-            peer->isClosing = FALSE;
-
-            peer->tcp4Protocol = (EFI_TCP4_PROTOCOL*)1;
-            EFI_STATUS status;
-            if (status = tcp4Protocol->Accept(tcp4Protocol, &peer->connectAcceptToken))
-            {
-                logStatus(L"EFI_TCP4_PROTOCOL.Accept() fails", status);
-
-                peer->tcp4Protocol = NULL;
-            }
-            else
-            {
-                peer->isConnectingAccepting = TRUE;
             }
         }
     }
@@ -5556,10 +5529,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             }
 #endif
 
-                            unsigned long long systemDataSavingTick, loggingTick, peerRatingTick, resourceTestingSolutionPublicationTick;
-                            resourceTestingSolutionPublicationTick = peerRatingTick = loggingTick = systemDataSavingTick = __rdtsc();
+                            unsigned long long systemDataSavingTick = 0, loggingTick = 0, peerRatingTick = 0, resourceTestingSolutionPublicationTick = 0;
                             while (!state)
                             {
+                                const unsigned long long curTimeTick = __rdtsc();
+
                                 tcp4Protocol->Poll(tcp4Protocol);
 
                                 for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
@@ -5573,7 +5547,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         && peers[i].connectAcceptToken.CompletionToken.Status != -1)
                                     {
                                         peers[i].isConnectingAccepting = FALSE;
-                                        if (peers[i].index < NUMBER_OF_OUTGOING_CONNECTIONS)
+                                        if (i < NUMBER_OF_OUTGOING_CONNECTIONS)
                                         {
                                             if (peers[i].connectAcceptToken.CompletionToken.Status)
                                             {
@@ -5694,7 +5668,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     else
                                                     {
                                                         peers[i].isConnectedAccepted = TRUE;
-                                                        peers[i].handshakingTick = __rdtsc();
+                                                        peers[i].handshakingTick = curTimeTick;
 
                                                         receive(&peers[i]);
                                                     }
@@ -5704,7 +5678,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     }
 
                                     if (((unsigned long long)peers[i].tcp4Protocol) > 1
-                                        && peers[i].handshakingTick && __rdtsc() - peers[i].handshakingTick > HANDSHAKING_TIMER_LIMIT * frequency)
+                                        && peers[i].handshakingTick && curTimeTick - peers[i].handshakingTick > HANDSHAKING_TIMER_LIMIT * frequency)
                                     {
                                         peers[i].handshakingTick = 0;
                                         close(&peers[i]);
@@ -5777,7 +5751,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                         peers[i].handshakingTick = 0;
                                                                         peers[i].exchangedPublicPeers = TRUE;
 
-                                                                        if (peers[i].index >= NUMBER_OF_OUTGOING_CONNECTIONS && peers[i].dataToTransmitSize <= (BUFFER_SIZE / 2))
+                                                                        if (i >= NUMBER_OF_OUTGOING_CONNECTIONS && peers[i].dataToTransmitSize <= (BUFFER_SIZE / 2))
                                                                         {
                                                                             void* responseBuffer = &peers[i].dataToTransmit[peers[i].dataToTransmitSize];
                                                                             ExchangePublicPeers* response = (ExchangePublicPeers*)(((char*)responseBuffer) + sizeof(RequestResponseHeader));
@@ -5935,19 +5909,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                 }
                                                                 break;
 
-                                                                case 11:
-                                                                {
-                                                                    for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
-                                                                    {
-                                                                        if (peers[j].tcp4Protocol && peers[j].isConnectedAccepted && peers[j].exchangedPublicPeers && !peers[j].isClosing && peers[j].type > 0
-                                                                            && j != i)
-                                                                        {
-                                                                            push(&peers[j], requestResponseHeader);
-                                                                        }
-                                                                    }
-                                                                }
-                                                                break;
-
                                                                 default:
                                                                 {
                                                                     unsigned int saltedId;
@@ -5982,15 +5943,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                                 peers[i].receiveData.FragmentTable[0].FragmentBuffer = ((char*)peers[i].receiveBuffer) + receivedDataSize;
 
                                                                                 goto iteration;
-                                                                            }
-                                                                        }
-
-                                                                        for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
-                                                                        {
-                                                                            if (peers[j].tcp4Protocol && peers[j].isConnectedAccepted && peers[j].exchangedPublicPeers && !peers[j].isClosing && peers[j].type > 0
-                                                                                && j != i)
-                                                                            {
-                                                                                push(&peers[j], requestResponseHeader);
                                                                             }
                                                                         }
 
@@ -6369,20 +6321,97 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         }
                                     }
 
-                                    connectAccept(&peers[i]);
+                                    if (!peers[i].tcp4Protocol)
+                                    {
+                                        if (i < NUMBER_OF_OUTGOING_CONNECTIONS)
+                                        {
+                                            unsigned int random;
+                                            _rdrand32_step(&random);
+                                            *((int*)peers[i].address) = *((int*)publicPeers[random % numberOfPublicPeers].address);
+
+                                            unsigned int j;
+                                            for (j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS; j++)
+                                            {
+                                                if (peers[j].tcp4Protocol && *((int*)peers[j].address) == *((int*)peers[i].address))
+                                                {
+                                                    break;
+                                                }
+                                            }
+                                            if (j == NUMBER_OF_OUTGOING_CONNECTIONS)
+                                            {
+                                                EFI_TCP4_PROTOCOL* tcp4Protocol;
+                                                if (peers[i].connectAcceptToken.NewChildHandle = getTcp4Protocol(peers[i].address, &tcp4Protocol))
+                                                {
+                                                    peers[i].receiveData.FragmentTable[0].FragmentBuffer = peers[i].receiveBuffer;
+                                                    peers[i].dataToTransmitSize = 0;
+                                                    peers[i].prevNumberOfReceivedBytes = peers[i].numberOfReceivedBytes = 0;
+                                                    peers[i].prevNumberOfTransmittedBytes = peers[i].numberOfTransmittedBytes = 0;
+                                                    peers[i].id = ++latestPeerId;
+                                                    peers[i].type = 0;
+                                                    peers[i].isReceiving = FALSE;
+                                                    peers[i].isTransmitting = FALSE;
+                                                    peers[i].exchangedPublicPeers = FALSE;
+                                                    peers[i].isClosing = FALSE;
+                                                    peers[i].tcp4Protocol = tcp4Protocol;
+
+                                                    EFI_STATUS status;
+                                                    if (status = peers[i].tcp4Protocol->Connect(peers[i].tcp4Protocol, (EFI_TCP4_CONNECTION_TOKEN*)&peers[i].connectAcceptToken))
+                                                    {
+                                                        logStatus(L"EFI_TCP4_PROTOCOL.Connect() fails", status);
+
+                                                        bs->CloseProtocol(peers[i].connectAcceptToken.NewChildHandle, &tcp4ProtocolGuid, ih, NULL);
+                                                        tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peers[i].connectAcceptToken.NewChildHandle);
+                                                        peers[i].tcp4Protocol = NULL;
+                                                    }
+                                                    else
+                                                    {
+                                                        peers[i].isConnectingAccepting = TRUE;
+                                                        peers[i].handshakingTick = curTimeTick;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        else
+                                        {
+                                            *((int*)peers[i].address) = 0;
+                                            peers[i].receiveData.FragmentTable[0].FragmentBuffer = peers[i].receiveBuffer;
+                                            peers[i].dataToTransmitSize = 0;
+                                            peers[i].prevNumberOfReceivedBytes = peers[i].numberOfReceivedBytes = 0;
+                                            peers[i].prevNumberOfTransmittedBytes = peers[i].numberOfTransmittedBytes = 0;
+                                            peers[i].id = ++latestPeerId;
+                                            peers[i].type = 0;
+                                            peers[i].isReceiving = FALSE;
+                                            peers[i].isTransmitting = FALSE;
+                                            peers[i].exchangedPublicPeers = FALSE;
+                                            peers[i].isClosing = FALSE;
+
+                                            peers[i].tcp4Protocol = (EFI_TCP4_PROTOCOL*)1;
+                                            EFI_STATUS status;
+                                            if (status = tcp4Protocol->Accept(tcp4Protocol, &peers[i].connectAcceptToken))
+                                            {
+                                                logStatus(L"EFI_TCP4_PROTOCOL.Accept() fails", status);
+
+                                                peers[i].tcp4Protocol = NULL;
+                                            }
+                                            else
+                                            {
+                                                peers[i].isConnectingAccepting = TRUE;
+                                            }
+                                        }
+                                    }
                                 }
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
-                                if (__rdtsc() - systemDataSavingTick >= SYSTEM_DATA_SAVING_PERIOD * frequency)
+                                if (curTimeTick - systemDataSavingTick >= SYSTEM_DATA_SAVING_PERIOD * frequency)
                                 {
-                                    systemDataSavingTick = __rdtsc();
+                                    systemDataSavingTick = curTimeTick;
                                     saveSystem();
                                 }
 #endif
 
-                                if (__rdtsc() - loggingTick >= frequency)
+                                if (curTimeTick - loggingTick >= frequency)
                                 {
-                                    loggingTick = __rdtsc();
+                                    loggingTick = curTimeTick;
 
                                     unsigned long long numberOfWaitingBytes = 0;
 
@@ -6428,7 +6457,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             }
                                             else
                                             {
-                                                if (peers[i].index < NUMBER_OF_OUTGOING_CONNECTIONS)
+                                                if (i < NUMBER_OF_OUTGOING_CONNECTIONS)
                                                 {
                                                     appendText(message, peers[i].type ? L"X" : L".");
                                                 }
@@ -6515,8 +6544,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             appendNumber(message, miningRatingPlace, TRUE);
                                         }
                                         appendText(message, L" (");
-                                        appendNumber(message, (numberOfMiningIterations - prevNumberOfMiningIterations) * frequency / (__rdtsc() - prevMiningPerformanceTick), TRUE);
-                                        prevMiningPerformanceTick = __rdtsc();
+                                        appendNumber(message, (numberOfMiningIterations - prevNumberOfMiningIterations) * frequency / (curTimeTick - prevMiningPerformanceTick), TRUE);
+                                        prevMiningPerformanceTick = curTimeTick;
                                         prevNumberOfMiningIterations = numberOfMiningIterations;
                                         appendText(message, L" it/s);");
 #if NUMBER_OF_COMPUTING_PROCESSORS
@@ -6547,7 +6576,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                     if (cachedSystem.ownComputorIndex >= 0)
                                     {
-                                        if (__rdtsc() - latestTickEndingPublicationTick >= TICK_PUBLICATION_PERIOD * frequency)
+                                        if (curTimeTick - latestTickEndingPublicationTick >= TICK_PUBLICATION_PERIOD * frequency)
                                         {
                                             tickEnding.header.size = sizeof(tickEnding);
                                             tickEnding.header.protocol = PROTOCOL;
@@ -6592,7 +6621,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 }
                                             }
 
-                                            latestTickEndingPublicationTick = __rdtsc();
+                                            latestTickEndingPublicationTick = curTimeTick;
                                         }
 
                                         unsigned int counters[NUMBER_OF_COMPUTORS];
@@ -6619,7 +6648,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         _InterlockedCompareExchange8(&tickEndingsLock, 0, 1);
                                         if (tickPhase1NumberOfComputors >= QUORUM)
                                         {
-                                            if (__rdtsc() - latestTickBeginningPublicationTick >= TICK_PUBLICATION_PERIOD * frequency)
+                                            if (curTimeTick - latestTickBeginningPublicationTick >= TICK_PUBLICATION_PERIOD * frequency)
                                             {
                                                 tickBeginning.header.size = sizeof(tickBeginning);
                                                 tickBeginning.header.protocol = PROTOCOL;
@@ -6676,7 +6705,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     }
                                                 }
 
-                                                latestTickBeginningPublicationTick = __rdtsc();
+                                                latestTickBeginningPublicationTick = curTimeTick;
                                             }
                                         }
 
@@ -6738,13 +6767,53 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             _InterlockedCompareExchange8(&tickEndingsLock, 0, 1);
                                         }
                                         _InterlockedCompareExchange8(&tickBeginningsLock, 0, 1);
+
+                                        if (curTimeTick - latestRevenuePublicationTick >= REVENUE_PUBLICATION_PERIOD * frequency)
+                                        {
+                                            latestRevenuePublicationTick = curTimeTick;
+
+                                            revenues.header.size = sizeof(revenues);
+                                            revenues.header.protocol = PROTOCOL;
+                                            revenues.header.type = BROADCAST_REVENUES;
+
+                                            revenues.broadcastRevenues.revenues.computorIndex = cachedSystem.ownComputorIndex;
+                                            revenues.broadcastRevenues.revenues.epoch = cachedSystem.epoch;
+
+                                            unsigned int maxCounter = 0;
+                                            for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                                            {
+                                                if (cachedSystem.tickCounters[i] > maxCounter
+                                                    && i != cachedSystem.ownComputorIndex)
+                                                {
+                                                    maxCounter = cachedSystem.tickCounters[i];
+                                                }
+                                            }
+                                            for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                                            {
+                                                revenues.broadcastRevenues.revenues.revenuePercents[i] = (i == cachedSystem.ownComputorIndex || !maxCounter) ? 100 : (cachedSystem.tickCounters[i] * 100UL / maxCounter);
+                                            }
+
+                                            unsigned char digest[32];
+                                            revenues.broadcastRevenues.revenues.computorIndex ^= 6;
+                                            KangarooTwelve((unsigned char*)&revenues.broadcastRevenues.revenues, sizeof(Revenues) - 64, digest, sizeof(digest));
+                                            revenues.broadcastRevenues.revenues.computorIndex ^= 6;
+                                            sign(ownSubseed, ownPublicKey, digest, revenues.broadcastRevenues.revenues.signature);
+
+                                            for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
+                                            {
+                                                if (peers[i].tcp4Protocol && peers[i].isConnectedAccepted && peers[i].exchangedPublicPeers && !peers[i].isClosing && peers[i].type > 0)
+                                                {
+                                                    push(&peers[i], &revenues.header);
+                                                }
+                                            }
+                                        }
                                     }
 #endif
                                 }
 
-                                if (__rdtsc() - peerRatingTick >= PEER_RATING_PERIOD * frequency)
+                                if (curTimeTick - peerRatingTick >= PEER_RATING_PERIOD * frequency)
                                 {
-                                    peerRatingTick = __rdtsc();
+                                    peerRatingTick = curTimeTick;
 
                                     bool doPeerRating = true;
                                     for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
@@ -6825,9 +6894,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 }
 
 #if NUMBER_OF_MINING_PROCESSORS
-                                if (__rdtsc() - resourceTestingSolutionPublicationTick >= RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD * frequency)
+                                if (curTimeTick - resourceTestingSolutionPublicationTick >= RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD * frequency)
                                 {
-                                    resourceTestingSolutionPublicationTick = __rdtsc();
+                                    resourceTestingSolutionPublicationTick = curTimeTick;
 
                                     if (bestMiningScore > knownMiningScore)
                                     {
