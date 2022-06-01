@@ -28,12 +28,12 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 11
-#define VERSION_C 1
+#define VERSION_B 12
+#define VERSION_C 0
 
 #define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
 
-#define TICK 2500007
+#define TICK 2500008
 
 static const unsigned char knownPublicPeers[][4] = {
     { 88, 99, 67, 51 },
@@ -3349,7 +3349,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define NUMBER_OF_NEURONS 20000
 #define PEER_RATING_PERIOD 10
 #define PORT 21841
-#define PROTOCOL 263
+#define PROTOCOL 264
 #define QUORUM (NUMBER_OF_COMPUTORS * 2 / 3 + 1)
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 60
 #define REVENUE_PUBLICATION_PERIOD 60
@@ -5193,7 +5193,11 @@ static BOOLEAN initialize()
 
                 if (system.tick < TICK || system.tick >= TICK + 10)
                 {
-                    system.epoch = 6;
+                    if (system.epoch == 6)
+                    {
+                        bs->SetMem(&system.tickCounters, sizeof(system.tickCounters), 0);
+                    }
+                    system.epoch = 7;
                     system.tick = TICK;
                 }
             }
@@ -5227,7 +5231,7 @@ static BOOLEAN initialize()
                     return FALSE;
                 }
 
-                miningData[0] ^= 931;
+                miningData[0] ^= 357;
 
                 unsigned char* miningDataBytes = (unsigned char*)miningData;
                 for (unsigned int i = 0; i < sizeof(computorPublicKey); i++)
