@@ -8,7 +8,7 @@
 #define NUMBER_OF_MINING_PROCESSORS 0
 
 // Do NOT share the data of "Private Settings" section with anyone!!!
-static unsigned char ownSeed[55 + 1] = "<seed>";
+static unsigned char ownSeeds[][55 + 1] = { "<seed>" };
 
 static const unsigned char ownAddress[4] = { 0, 0, 0, 0 };
 static const unsigned char ownMask[4] = { 255, 255, 255, 255 };
@@ -29,7 +29,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 12
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
 
@@ -3683,7 +3683,8 @@ const unsigned int requestResponseMinSizes[] = {
 
 static volatile int state = 0;
 
-static unsigned char ownSubseed[32], ownPrivateKey[32], ownPublicKey[32], operatorPublicKey[32], computorPublicKey[32], adminPublicKey[32];
+static unsigned char ownSubseeds[sizeof(ownSeeds) / sizeof(ownSeeds[0])][32], ownPrivateKeys[sizeof(ownSeeds) / sizeof(ownSeeds[0])][32], ownPublicKeys[sizeof(ownSeeds) / sizeof(ownSeeds[0])][32];
+static unsigned char operatorPublicKey[32], computorPublicKey[32], adminPublicKey[32];
 static unsigned long long latestOperatorTimestamp;
 static unsigned long long salt;
 
@@ -3692,11 +3693,13 @@ static EFI_FILE_PROTOCOL* root = NULL;
 static volatile char systemLock = 0;
 static struct System
 {
-    short ownComputorIndex;
+    short deprecatedOwnComputorIndex;
     unsigned short epoch;
     unsigned int tick;
     Computors computors;
     unsigned int tickCounters[NUMBER_OF_COMPUTORS];
+    unsigned short numberOfOwnComputorIndices;
+    short ownComputorIndices[NUMBER_OF_COMPUTORS];
 } system, systemToSave, cachedSystem;
 static unsigned int tickPhase1NumberOfComputors = 0, tickPhase2NumberOfComputors = 0;
 static unsigned long long latestTickBeginningPublicationTick = 0, latestTickEndingPublicationTick = 0, latestRevenuePublicationTick = 0;
@@ -3741,7 +3744,7 @@ static unsigned long long totalRatingOfPublicPeers = 0;
 static EFI_EVENT computorEvents[NUMBER_OF_COMPUTING_PROCESSORS];
 #endif
 
-static volatile unsigned int bestMiningScore = 0, registeredMiningScore = 0, miningRatingPlace = 0;
+static volatile unsigned int bestMiningScore = 0;
 static unsigned int knownMiningScore = 0;
 static long long prevNumberOfMiningIterations = 0;
 static unsigned long long prevMiningPerformanceTick = 0;
@@ -4297,10 +4300,10 @@ static void requestProcessor(void* ProcedureArgument)
                     KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - 64, digest, sizeof(digest));
                     if (verify(request->message.sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastMessage) + request->message.messageSize)))
                     {
-                        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->message.destinationPublicKey), *((__m256i*)ownPublicKey))) == 0xFFFFFFFF)
+                        /*if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->message.destinationPublicKey), *((__m256i*)ownPublicKey))) == 0xFFFFFFFF)
                         {
                             //log(L"Receives a message for self.");
-                        }
+                        }*/
 
                         responseSize = requestHeader->size;
                     }
@@ -4498,29 +4501,16 @@ static void requestProcessor(void* ProcedureArgument)
 
                                 if (request->computors.epoch == system.epoch)
                                 {
-                                    system.ownComputorIndex = -1;
-                                    registeredMiningScore = 0;
-                                    for (unsigned int i = 0; i < sizeof(request->computors.scores) / sizeof(request->computors.scores[0]); i++)
+                                    system.numberOfOwnComputorIndices = 0;
+                                    for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
                                     {
-                                        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->computors.publicKeys[i]), *((__m256i*)ownPublicKey))) == 0xFFFFFFFF)
+                                        for (unsigned int j = 0; j < sizeof(ownSeeds) / sizeof(ownSeeds[0]); j++)
                                         {
-                                            if (i < NUMBER_OF_COMPUTORS)
+                                            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->computors.publicKeys[i]), *((__m256i*)ownPublicKeys[j]))) == 0xFFFFFFFF)
                                             {
-                                                system.ownComputorIndex = i;
-                                            }
-                                            registeredMiningScore = request->computors.scores[i];
+                                                system.ownComputorIndices[system.numberOfOwnComputorIndices++] = i;
 
-                                            break;
-                                        }
-                                    }
-                                    miningRatingPlace = 0;
-                                    if (registeredMiningScore)
-                                    {
-                                        for (unsigned int i = 0; i < sizeof(request->computors.scores) / sizeof(request->computors.scores[0]); i++)
-                                        {
-                                            if (request->computors.scores[i] >= registeredMiningScore)
-                                            {
-                                                miningRatingPlace++;
+                                                break;
                                             }
                                         }
                                     }
@@ -4978,12 +4968,15 @@ static BOOLEAN initialize()
 
     ZERO = _mm256_setzero_si256();
 
-    if (!getSubseed(ownSeed, ownSubseed))
+    for (unsigned int i = 0; i < sizeof(ownSeeds) / sizeof(ownSeeds[0]); i++)
     {
-        return FALSE;
+        if (!getSubseed(ownSeeds[i], ownSubseeds[i]))
+        {
+            return FALSE;
+        }
+        getPrivateKey(ownSubseeds[i], ownPrivateKeys[i]);
+        getPublicKey(ownPrivateKeys[i], ownPublicKeys[i]);
     }
-    getPrivateKey(ownSubseed, ownPrivateKey);
-    getPublicKey(ownPrivateKey, ownPublicKey);
     getPublicKeyFromIdentity((const unsigned char*)OPERATOR, operatorPublicKey);
     getPublicKeyFromIdentity((const unsigned char*)COMPUTOR, computorPublicKey);
     getPublicKeyFromIdentity((const unsigned char*)ADMIN, adminPublicKey);
@@ -5013,7 +5006,6 @@ static BOOLEAN initialize()
     EFI_STATUS status;
 
     bs->SetMem(&system, sizeof(system), 0);
-    system.ownComputorIndex = -1;
 
 #if NUMBER_OF_COMPUTING_PROCESSORS || NUMBER_OF_MINING_PROCESSORS
     EFI_GUID simpleFileSystemProtocolGuid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
@@ -5061,29 +5053,16 @@ static BOOLEAN initialize()
                 {
                     if (system.computors.epoch == system.epoch)
                     {
-                        system.ownComputorIndex = -1;
-                        registeredMiningScore = 0;
-                        for (unsigned int i = 0; i < sizeof(system.computors.scores) / sizeof(system.computors.scores[0]); i++)
+                        system.numberOfOwnComputorIndices = 0;
+                        for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
                         {
-                            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)system.computors.publicKeys[i]), *((__m256i*)ownPublicKey))) == 0xFFFFFFFF)
+                            for (unsigned int j = 0; j < sizeof(ownSeeds) / sizeof(ownSeeds[0]); j++)
                             {
-                                if (i < NUMBER_OF_COMPUTORS)
+                                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)system.computors.publicKeys[i]), *((__m256i*)ownPublicKeys[j]))) == 0xFFFFFFFF)
                                 {
-                                    system.ownComputorIndex = i;
-                                }
-                                registeredMiningScore = system.computors.scores[i];
+                                    system.ownComputorIndices[system.numberOfOwnComputorIndices++] = i;
 
-                                break;
-                            }
-                        }
-                        miningRatingPlace = 0;
-                        if (registeredMiningScore)
-                        {
-                            for (unsigned int i = 0; i < sizeof(system.computors.scores) / sizeof(system.computors.scores[0]); i++)
-                            {
-                                if (system.computors.scores[i] >= registeredMiningScore)
-                                {
-                                    miningRatingPlace++;
+                                    break;
                                 }
                             }
                         }
@@ -5248,10 +5227,10 @@ static BOOLEAN initialize()
 
 static void deinitialize()
 {
-    bs->SetMem(ownSeed, sizeof(ownSeed), 0);
-    bs->SetMem(ownSubseed, sizeof(ownSubseed), 0);
-    bs->SetMem(ownPrivateKey, sizeof(ownPrivateKey), 0);
-    bs->SetMem(ownPublicKey, sizeof(ownPublicKey), 0);
+    bs->SetMem(ownSeeds, sizeof(ownSeeds), 0);
+    bs->SetMem(ownSubseeds, sizeof(ownSubseeds), 0);
+    bs->SetMem(ownPrivateKeys, sizeof(ownPrivateKeys), 0);
+    bs->SetMem(ownPublicKeys, sizeof(ownPublicKeys), 0);
 
 #if NUMBER_OF_COMPUTING_PROCESSORS || NUMBER_OF_MINING_PROCESSORS
     if (root)
@@ -5339,8 +5318,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
     if (initialize())
     {
-        getIdentity(ownPublicKey, message);
-        log(message);
+        for (unsigned int i = 0; i < sizeof(ownSeeds) / sizeof(ownSeeds[0]); i++)
+        {
+            getIdentity(ownPublicKeys[i], message);
+            log(message);
+        }
 
         EFI_GUID mpServiceProtocolGuid = EFI_MP_SERVICES_PROTOCOL_GUID;
         bs->LocateProtocol(&mpServiceProtocolGuid, NULL, (void**)&mpServicesProtocol);
@@ -5563,13 +5545,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         appendNumber(message, numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS), TRUE);
                                         appendText(message, L" | Local score = ");
                                         appendNumber(message, bestMiningScore, TRUE);
-                                        appendText(message, L" / Reg. score = ");
-                                        appendNumber(message, registeredMiningScore, TRUE);
-                                        if (miningRatingPlace)
-                                        {
-                                            appendText(message, L" / #");
-                                            appendNumber(message, miningRatingPlace, TRUE);
-                                        }
                                         appendText(message, L" (");
                                         appendNumber(message, (numberOfMiningIterations - prevNumberOfMiningIterations) * frequency / (curTimeTick - prevMiningPerformanceTick), TRUE);
                                         prevMiningPerformanceTick = curTimeTick;
@@ -5577,16 +5552,19 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         appendText(message, L" it/s);");
 #if NUMBER_OF_COMPUTING_PROCESSORS
                                         appendText(message, L" computor index = ");
-                                        if (system.ownComputorIndex < 0)
+                                        if (!system.numberOfOwnComputorIndices)
                                         {
                                             appendText(message, L"?.");
                                         }
                                         else
                                         {
-                                            const CHAR16 alphabet[26][2] = { L"A", L"B", L"C", L"D", L"E", L"F", L"G", L"H", L"I", L"J", L"K", L"L", L"M", L"N", L"O", L"P", L"Q", L"R", L"S", L"T", L"U", L"V", L"W", L"X", L"Y", L"Z" };
-                                            appendText(message, alphabet[system.ownComputorIndex / 26]);
-                                            appendText(message, alphabet[system.ownComputorIndex % 26]);
-                                            appendText(message, L".");
+                                            for (unsigned int i = 0; i < system.numberOfOwnComputorIndices; i++)
+                                            {
+                                                const CHAR16 alphabet[26][2] = { L"A", L"B", L"C", L"D", L"E", L"F", L"G", L"H", L"I", L"J", L"K", L"L", L"M", L"N", L"O", L"P", L"Q", L"R", L"S", L"T", L"U", L"V", L"W", L"X", L"Y", L"Z" };
+                                                appendText(message, alphabet[system.ownComputorIndices[i] / 26]);
+                                                appendText(message, alphabet[system.ownComputorIndices[i] % 26]);
+                                                appendText(message, i < (system.numberOfOwnComputorIndices - 1) ? L"+" : L".");
+                                            }
                                         }
 #endif
                                         log(message);
@@ -5601,7 +5579,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     bs->CopyMem(&cachedSystem, &system, sizeof(System));
                                     _InterlockedCompareExchange8(&systemLock, 0, 1);
 
-                                    if (cachedSystem.ownComputorIndex >= 0)
+                                    if (cachedSystem.numberOfOwnComputorIndices)
                                     {
                                         if (curTimeTick - latestTickEndingPublicationTick >= TICK_PUBLICATION_PERIOD * frequency)
                                         {
@@ -5609,7 +5587,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             tickEnding.header.protocol = PROTOCOL;
                                             tickEnding.header.type = BROADCAST_TICK_ENDING;
 
-                                            tickEnding.broadcastTickEnding.tickEnding.computorIndex = cachedSystem.ownComputorIndex;
                                             tickEnding.broadcastTickEnding.tickEnding.epoch = cachedSystem.epoch;
                                             tickEnding.broadcastTickEnding.tickEnding.tick = cachedSystem.tick;
 
@@ -5624,27 +5601,40 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             bs->SetMem(&tickEnding.broadcastTickEnding.tickEnding.prevStateDigest, sizeof(tickEnding.broadcastTickEnding.tickEnding.prevStateDigest), 0);
                                             bs->SetMem(&tickEnding.broadcastTickEnding.tickEnding.saltedStateDigest, sizeof(tickEnding.broadcastTickEnding.tickEnding.saltedStateDigest), 0);
 
-                                            unsigned char digest[32];
-                                            tickEnding.broadcastTickEnding.tickEnding.computorIndex ^= 5;
-                                            KangarooTwelve((unsigned char*)&tickEnding.broadcastTickEnding.tickEnding, sizeof(TickEnding) - 64, digest, sizeof(digest));
-                                            tickEnding.broadcastTickEnding.tickEnding.computorIndex ^= 5;
-                                            sign(ownSubseed, ownPublicKey, digest, tickEnding.broadcastTickEnding.tickEnding.signature);
-
-                                            _rdrand64_step(&tickEnding.broadcastTickEnding.nonce);
-
-                                            while (_InterlockedCompareExchange8(&tickEndingsLock, 1, 0))
+                                            for (unsigned int i = 0; i < cachedSystem.numberOfOwnComputorIndices; i++)
                                             {
-                                                _mm_pause();
-                                            }
-                                            bs->CopyMem(&latestTickEndings[cachedSystem.ownComputorIndex], &tickEnding.broadcastTickEnding.tickEnding, sizeof(TickEnding));
-                                            bs->CopyMem(&actualTickEndings[cachedSystem.ownComputorIndex], &tickEnding.broadcastTickEnding.tickEnding, sizeof(TickEnding));
-                                            _InterlockedCompareExchange8(&tickEndingsLock, 0, 1);
+                                                tickEnding.broadcastTickEnding.tickEnding.computorIndex = cachedSystem.ownComputorIndices[i];
 
-                                            for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
-                                            {
-                                                if (peers[i].tcp4Protocol && peers[i].isConnectedAccepted && peers[i].exchangedPublicPeers && !peers[i].isClosing && peers[i].type > 0)
+                                                unsigned char digest[32];
+                                                tickEnding.broadcastTickEnding.tickEnding.computorIndex ^= 5;
+                                                KangarooTwelve((unsigned char*)&tickEnding.broadcastTickEnding.tickEnding, sizeof(TickEnding) - 64, digest, sizeof(digest));
+                                                tickEnding.broadcastTickEnding.tickEnding.computorIndex ^= 5;
+                                                for (unsigned int j = 0; j < sizeof(ownSeeds) / sizeof(ownSeeds[0]); j++)
                                                 {
-                                                    push(&peers[i], &tickEnding.header);
+                                                    if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)cachedSystem.computors.publicKeys[cachedSystem.ownComputorIndices[i]]), *((__m256i*)ownPublicKeys[j]))) == 0xFFFFFFFF)
+                                                    {
+                                                        sign(ownSubseeds[j], ownPublicKeys[j], digest, tickEnding.broadcastTickEnding.tickEnding.signature);
+
+                                                        break;
+                                                    }
+                                                }
+
+                                                _rdrand64_step(&tickEnding.broadcastTickEnding.nonce);
+
+                                                while (_InterlockedCompareExchange8(&tickEndingsLock, 1, 0))
+                                                {
+                                                    _mm_pause();
+                                                }
+                                                bs->CopyMem(&latestTickEndings[cachedSystem.ownComputorIndices[i]], &tickEnding.broadcastTickEnding.tickEnding, sizeof(TickEnding));
+                                                bs->CopyMem(&actualTickEndings[cachedSystem.ownComputorIndices[i]], &tickEnding.broadcastTickEnding.tickEnding, sizeof(TickEnding));
+                                                _InterlockedCompareExchange8(&tickEndingsLock, 0, 1);
+
+                                                for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
+                                                {
+                                                    if (peers[j].tcp4Protocol && peers[j].isConnectedAccepted && peers[j].exchangedPublicPeers && !peers[j].isClosing && peers[j].type > 0)
+                                                    {
+                                                        push(&peers[j], &tickEnding.header);
+                                                    }
                                                 }
                                             }
 
@@ -5659,17 +5649,17 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         {
                                             _mm_pause();
                                         }
-                                        for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                                        for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
                                         {
-                                            if (actualTickEndings[i].epoch == cachedSystem.epoch
-                                                && actualTickEndings[i].tick == cachedSystem.tick
-                                                && *((unsigned long long*) & actualTickEndings[i].millisecond) == *((unsigned long long*) & actualTickEndings[cachedSystem.ownComputorIndex].millisecond)
-                                                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTickEndings[i].prevStateDigest), *((__m256i*)actualTickEndings[cachedSystem.ownComputorIndex].prevStateDigest))) == 0xFFFFFFFF
-                                                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTickEndings[i].saltedStateDigest), *((__m256i*)actualTickEndings[cachedSystem.ownComputorIndex].saltedStateDigest))) == 0xFFFFFFFF)
+                                            if (actualTickEndings[j].epoch == cachedSystem.epoch
+                                                && actualTickEndings[j].tick == cachedSystem.tick
+                                                && *((unsigned long long*) & actualTickEndings[j].millisecond) == *((unsigned long long*) & actualTickEndings[cachedSystem.ownComputorIndices[0]].millisecond)
+                                                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTickEndings[j].prevStateDigest), *((__m256i*)actualTickEndings[cachedSystem.ownComputorIndices[0]].prevStateDigest))) == 0xFFFFFFFF
+                                                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTickEndings[j].saltedStateDigest), *((__m256i*)actualTickEndings[cachedSystem.ownComputorIndices[0]].saltedStateDigest))) == 0xFFFFFFFF)
                                             {
                                                 tickPhase1NumberOfComputors++;
 
-                                                counters[i] = 1;
+                                                counters[j] = 1;
                                             }
                                         }
                                         _InterlockedCompareExchange8(&tickEndingsLock, 0, 1);
@@ -5681,7 +5671,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 tickBeginning.header.protocol = PROTOCOL;
                                                 tickBeginning.header.type = BROADCAST_TICK_BEGINNING;
 
-                                                tickBeginning.broadcastTickBeginning.tickBeginning.computorIndex = cachedSystem.ownComputorIndex;
                                                 tickBeginning.broadcastTickBeginning.tickBeginning.epoch = cachedSystem.epoch;
                                                 tickBeginning.broadcastTickBeginning.tickBeginning.tick = cachedSystem.tick + 1;
 
@@ -5708,27 +5697,40 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 tickBeginning.broadcastTickBeginning.tickBeginning.numberOfTransfers = 0;
                                                 tickBeginning.broadcastTickBeginning.tickBeginning.numberOfEffects = 0;
 
-                                                unsigned char digest[32];
-                                                tickBeginning.broadcastTickBeginning.tickBeginning.computorIndex ^= 4;
-                                                KangarooTwelve((unsigned char*)&tickBeginning.broadcastTickBeginning.tickBeginning, tickBeginning.header.size - sizeof(RequestResponseHeader) - 64 - 8, digest, sizeof(digest));
-                                                tickBeginning.broadcastTickBeginning.tickBeginning.computorIndex ^= 4;
-                                                sign(ownSubseed, ownPublicKey, digest, tickBeginning.signature);
-
-                                                _rdrand64_step(&tickBeginning.nonce);
-
-                                                while (_InterlockedCompareExchange8(&tickBeginningsLock, 1, 0))
+                                                for (unsigned int i = 0; i < cachedSystem.numberOfOwnComputorIndices; i++)
                                                 {
-                                                    _mm_pause();
-                                                }
-                                                bs->CopyMem(&latestTickBeginnings[cachedSystem.ownComputorIndex], &tickBeginning.broadcastTickBeginning.tickBeginning, sizeof(TickBeginning));
-                                                bs->CopyMem(&actualTickBeginnings[cachedSystem.ownComputorIndex], &tickBeginning.broadcastTickBeginning.tickBeginning, sizeof(TickBeginning));
-                                                _InterlockedCompareExchange8(&tickBeginningsLock, 0, 1);
+                                                    tickBeginning.broadcastTickBeginning.tickBeginning.computorIndex = cachedSystem.ownComputorIndices[i];
 
-                                                for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
-                                                {
-                                                    if (peers[i].tcp4Protocol && peers[i].isConnectedAccepted && peers[i].exchangedPublicPeers && !peers[i].isClosing && peers[i].type > 0)
+                                                    unsigned char digest[32];
+                                                    tickBeginning.broadcastTickBeginning.tickBeginning.computorIndex ^= 4;
+                                                    KangarooTwelve((unsigned char*)&tickBeginning.broadcastTickBeginning.tickBeginning, tickBeginning.header.size - sizeof(RequestResponseHeader) - 64 - 8, digest, sizeof(digest));
+                                                    tickBeginning.broadcastTickBeginning.tickBeginning.computorIndex ^= 4;
+                                                    for (unsigned int j = 0; j < sizeof(ownSeeds) / sizeof(ownSeeds[0]); j++)
                                                     {
-                                                        push(&peers[i], &tickBeginning.header);
+                                                        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)cachedSystem.computors.publicKeys[cachedSystem.ownComputorIndices[i]]), *((__m256i*)ownPublicKeys[j]))) == 0xFFFFFFFF)
+                                                        {
+                                                            sign(ownSubseeds[j], ownPublicKeys[j], digest, tickBeginning.signature);
+
+                                                            break;
+                                                        }
+                                                    }
+
+                                                    _rdrand64_step(&tickBeginning.nonce);
+
+                                                    while (_InterlockedCompareExchange8(&tickBeginningsLock, 1, 0))
+                                                    {
+                                                        _mm_pause();
+                                                    }
+                                                    bs->CopyMem(&latestTickBeginnings[cachedSystem.ownComputorIndices[i]], &tickBeginning.broadcastTickBeginning.tickBeginning, sizeof(TickBeginning));
+                                                    bs->CopyMem(&actualTickBeginnings[cachedSystem.ownComputorIndices[i]], &tickBeginning.broadcastTickBeginning.tickBeginning, sizeof(TickBeginning));
+                                                    _InterlockedCompareExchange8(&tickBeginningsLock, 0, 1);
+
+                                                    for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
+                                                    {
+                                                        if (peers[j].tcp4Protocol && peers[j].isConnectedAccepted && peers[j].exchangedPublicPeers && !peers[j].isClosing && peers[j].type > 0)
+                                                        {
+                                                            push(&peers[j], &tickBeginning.header);
+                                                        }
                                                     }
                                                 }
 
@@ -5741,18 +5743,18 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         {
                                             _mm_pause();
                                         }
-                                        for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                                        for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
                                         {
-                                            if (actualTickBeginnings[i].epoch == cachedSystem.epoch
-                                                && actualTickBeginnings[i].tick == cachedSystem.tick + 1
-                                                && *((unsigned long long*) & actualTickBeginnings[i].millisecond) == *((unsigned long long*) & actualTickBeginnings[cachedSystem.ownComputorIndex].millisecond)
-                                                && *((unsigned long long*) & actualTickBeginnings[i].prevMillisecond) == *((unsigned long long*) & actualTickBeginnings[cachedSystem.ownComputorIndex].prevMillisecond)
-                                                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTickBeginnings[i].prevStateDigest), *((__m256i*)actualTickBeginnings[cachedSystem.ownComputorIndex].prevStateDigest))) == 0xFFFFFFFF
-                                                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTickBeginnings[i].stateDigest), *((__m256i*)actualTickBeginnings[cachedSystem.ownComputorIndex].stateDigest))) == 0xFFFFFFFF)
+                                            if (actualTickBeginnings[j].epoch == cachedSystem.epoch
+                                                && actualTickBeginnings[j].tick == cachedSystem.tick + 1
+                                                && *((unsigned long long*) & actualTickBeginnings[j].millisecond) == *((unsigned long long*) & actualTickBeginnings[cachedSystem.ownComputorIndices[0]].millisecond)
+                                                && *((unsigned long long*) & actualTickBeginnings[j].prevMillisecond) == *((unsigned long long*) & actualTickBeginnings[cachedSystem.ownComputorIndices[0]].prevMillisecond)
+                                                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTickBeginnings[j].prevStateDigest), *((__m256i*)actualTickBeginnings[cachedSystem.ownComputorIndices[0]].prevStateDigest))) == 0xFFFFFFFF
+                                                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTickBeginnings[j].stateDigest), *((__m256i*)actualTickBeginnings[cachedSystem.ownComputorIndices[0]].stateDigest))) == 0xFFFFFFFF)
                                             {
                                                 tickPhase2NumberOfComputors++;
 
-                                                counters[i]++;
+                                                counters[j]++;
                                             }
                                         }
                                         if (tickPhase2NumberOfComputors >= QUORUM)
@@ -5769,9 +5771,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                             const unsigned int tick = ++system.tick;
 
-                                            for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                                            for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
                                             {
-                                                system.tickCounters[i] += counters[i];
+                                                system.tickCounters[j] += counters[j];
                                             }
 
                                             _InterlockedCompareExchange8(&systemLock, 0, 1);
@@ -5780,15 +5782,15 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             {
                                                 _mm_pause();
                                             }
-                                            for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                                            for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
                                             {
-                                                if (latestTickBeginnings[i].tick == tick + 1)
+                                                if (latestTickBeginnings[j].tick == tick + 1)
                                                 {
-                                                    bs->CopyMem(&actualTickBeginnings[i], &latestTickBeginnings[i], sizeof(TickBeginning));
+                                                    bs->CopyMem(&actualTickBeginnings[j], &latestTickBeginnings[j], sizeof(TickBeginning));
                                                 }
-                                                if (latestTickEndings[i].tick == tick)
+                                                if (latestTickEndings[j].tick == tick)
                                                 {
-                                                    bs->CopyMem(&actualTickEndings[i], &latestTickEndings[i], sizeof(TickEnding));
+                                                    bs->CopyMem(&actualTickEndings[j], &latestTickEndings[j], sizeof(TickEnding));
                                                 }
                                             }
                                             _InterlockedCompareExchange8(&tickEndingsLock, 0, 1);
@@ -5803,34 +5805,46 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             revenues.header.protocol = PROTOCOL;
                                             revenues.header.type = BROADCAST_REVENUES;
 
-                                            revenues.broadcastRevenues.revenues.computorIndex = cachedSystem.ownComputorIndex;
                                             revenues.broadcastRevenues.revenues.epoch = cachedSystem.epoch;
 
-                                            unsigned int maxCounter = 0;
-                                            for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                                            for (unsigned int i = 0; i < cachedSystem.numberOfOwnComputorIndices; i++)
                                             {
-                                                if (cachedSystem.tickCounters[i] > maxCounter
-                                                    && i != cachedSystem.ownComputorIndex)
+                                                revenues.broadcastRevenues.revenues.computorIndex = cachedSystem.ownComputorIndices[i];
+
+                                                unsigned int maxCounter = 0;
+                                                unsigned int ownCounter = cachedSystem.tickCounters[cachedSystem.ownComputorIndices[0]];
+                                                for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
                                                 {
-                                                    maxCounter = cachedSystem.tickCounters[i];
+                                                    if (cachedSystem.tickCounters[j] > maxCounter && cachedSystem.tickCounters[j] < ownCounter)
+                                                    {
+                                                        maxCounter = cachedSystem.tickCounters[j];
+                                                    }
                                                 }
-                                            }
-                                            for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
-                                            {
-                                                revenues.broadcastRevenues.revenues.revenuePercents[i] = (i == cachedSystem.ownComputorIndex || !maxCounter) ? 100 : (cachedSystem.tickCounters[i] * 100UL / maxCounter);
-                                            }
-
-                                            unsigned char digest[32];
-                                            revenues.broadcastRevenues.revenues.computorIndex ^= 6;
-                                            KangarooTwelve((unsigned char*)&revenues.broadcastRevenues.revenues, sizeof(Revenues) - 64, digest, sizeof(digest));
-                                            revenues.broadcastRevenues.revenues.computorIndex ^= 6;
-                                            sign(ownSubseed, ownPublicKey, digest, revenues.broadcastRevenues.revenues.signature);
-
-                                            for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
-                                            {
-                                                if (peers[i].tcp4Protocol && peers[i].isConnectedAccepted && peers[i].exchangedPublicPeers && !peers[i].isClosing && peers[i].type > 0)
+                                                for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
                                                 {
-                                                    push(&peers[i], &revenues.header);
+                                                    revenues.broadcastRevenues.revenues.revenuePercents[j] = (j == cachedSystem.ownComputorIndices[i] || !maxCounter) ? 100 : (cachedSystem.tickCounters[i] * 100UL / maxCounter);
+                                                }
+
+                                                unsigned char digest[32];
+                                                revenues.broadcastRevenues.revenues.computorIndex ^= 6;
+                                                KangarooTwelve((unsigned char*)&revenues.broadcastRevenues.revenues, sizeof(Revenues) - 64, digest, sizeof(digest));
+                                                revenues.broadcastRevenues.revenues.computorIndex ^= 6;
+                                                for (unsigned int j = 0; j < sizeof(ownSeeds) / sizeof(ownSeeds[0]); j++)
+                                                {
+                                                    if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)cachedSystem.computors.publicKeys[cachedSystem.ownComputorIndices[i]]), *((__m256i*)ownPublicKeys[j]))) == 0xFFFFFFFF)
+                                                    {
+                                                        sign(ownSubseeds[j], ownPublicKeys[j], digest, revenues.broadcastRevenues.revenues.signature);
+
+                                                        break;
+                                                    }
+                                                }
+
+                                                for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
+                                                {
+                                                    if (peers[j].tcp4Protocol && peers[j].isConnectedAccepted && peers[j].exchangedPublicPeers && !peers[j].isClosing && peers[j].type > 0)
+                                                    {
+                                                        push(&peers[j], &revenues.header);
+                                                    }
                                                 }
                                             }
                                         }
@@ -6861,46 +6875,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         system.tick++;
                                         latestTickBeginningPublicationTick = 0;
                                         latestTickEndingPublicationTick = 0;
-                                    }
-                                    break;
-
-                                    case 0x12:
-                                    {
-                                        while (_InterlockedCompareExchange8(&systemLock, 1, 0))
-                                        {
-                                            _mm_pause();
-                                        }
-                                        unsigned int maxCounter = 0;
-                                        for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
-                                        {
-                                            if (i != system.ownComputorIndex)
-                                            {
-                                                if (system.tickCounters[i] > maxCounter)
-                                                {
-                                                    maxCounter = system.tickCounters[i];
-                                                }
-                                            }
-                                        }
-                                        unsigned long long total = ISSUANCE_RATE / NUMBER_OF_COMPUTORS;
-                                        unsigned short numberOfComputors = 1;
-                                        if (maxCounter)
-                                        {
-                                            for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
-                                            {
-                                                if (i != system.ownComputorIndex && system.tickCounters[i])
-                                                {
-                                                    total += (ISSUANCE_RATE / NUMBER_OF_COMPUTORS) * system.tickCounters[i] / maxCounter;
-                                                    numberOfComputors++;
-                                                }
-                                            }
-                                        }
-                                        _InterlockedCompareExchange8(&systemLock, 0, 1);
-                                        setText(message, L"Proposed revenue of ");
-                                        appendNumber(message, numberOfComputors, TRUE);
-                                        appendText(message, L" computors = ");
-                                        appendNumber(message, total, TRUE);
-                                        appendText(message, L" qus.");
-                                        log(message);
                                     }
                                     break;
 
