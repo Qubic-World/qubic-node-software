@@ -29,7 +29,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 13
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
 
@@ -4682,7 +4682,7 @@ static EFI_HANDLE getTcp4Protocol(const unsigned char* remoteAddress, const unsi
     }
 }
 
-static void close(const unsigned int peerIndex)
+static void closePeer(const unsigned int peerIndex)
 {
     if (((unsigned long long)peers[peerIndex].tcp4Protocol) > 1)
     {
@@ -4709,6 +4709,32 @@ static void close(const unsigned int peerIndex)
             peers[peerIndex].exchangedPublicPeers = FALSE;
             peers[peerIndex].isClosing = FALSE;
             peers[peerIndex].tcp4Protocol = NULL;
+        }
+    }
+}
+
+static void closeClient(const unsigned int clientIndex)
+{
+    if (((unsigned long long)clients[clientIndex].tcp4Protocol) > 1)
+    {
+        if (!clients[clientIndex].isClosing)
+        {
+            EFI_STATUS status;
+            if (status = clients[clientIndex].tcp4Protocol->Configure(clients[clientIndex].tcp4Protocol, NULL))
+            {
+                logStatus(L"EFI_TCP4_PROTOCOL.Configure() fails", status);
+            }
+
+            clients[clientIndex].isClosing = TRUE;
+        }
+
+        if (!clients[clientIndex].isAccepting && !clients[clientIndex].isReceiving && !clients[clientIndex].isTransmitting)
+        {
+            bs->CloseProtocol(clients[clientIndex].acceptToken.NewChildHandle, &tcp4ProtocolGuid, ih, NULL);
+
+            clients[clientIndex].isAccepted = FALSE;
+            clients[clientIndex].isClosing = FALSE;
+            clients[clientIndex].tcp4Protocol = NULL;
         }
     }
 }
@@ -5788,11 +5814,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                 for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
                                 {
-                                    if (((unsigned long long)peers[i].tcp4Protocol) > 1)
-                                    {
-                                        peers[i].tcp4Protocol->Poll(peers[i].tcp4Protocol);
-                                    }
-
                                     if (((unsigned long long)peers[i].tcp4Protocol)
                                         && peers[i].connectAcceptToken.CompletionToken.Status != -1)
                                     {
@@ -5803,14 +5824,14 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             {
                                                 peers[i].connectAcceptToken.CompletionToken.Status = -1;
                                                 forget(*((int*)peers[i].address));
-                                                close(i);
+                                                closePeer(i);
                                             }
                                             else
                                             {
                                                 peers[i].connectAcceptToken.CompletionToken.Status = -1;
                                                 if (peers[i].isClosing)
                                                 {
-                                                    close(i);
+                                                    closePeer(i);
                                                 }
                                                 else
                                                 {
@@ -5900,7 +5921,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 peers[i].connectAcceptToken.CompletionToken.Status = -1;
                                                 if (peers[i].isClosing)
                                                 {
-                                                    close(i);
+                                                    closePeer(i);
                                                 }
                                                 else
                                                 {
@@ -5922,20 +5943,25 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                     if (((unsigned long long)peers[i].tcp4Protocol) > 1)
                                     {
+                                        peers[i].tcp4Protocol->Poll(peers[i].tcp4Protocol);
+                                    }
+
+                                    if (((unsigned long long)peers[i].tcp4Protocol) > 1)
+                                    {
                                         if (peers[i].receiveToken.CompletionToken.Status != -1)
                                         {
                                             peers[i].isReceiving = FALSE;
                                             if (peers[i].receiveToken.CompletionToken.Status)
                                             {
                                                 peers[i].receiveToken.CompletionToken.Status = -1;
-                                                close(i);
+                                                closePeer(i);
                                             }
                                             else
                                             {
                                                 peers[i].receiveToken.CompletionToken.Status = -1;
                                                 if (peers[i].isClosing)
                                                 {
-                                                    close(i);
+                                                    closePeer(i);
                                                 }
                                                 else
                                                 {
@@ -5952,7 +5978,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                             || requestResponseHeader->type >= sizeof(peerRequestResponseMinSizes) / sizeof(peerRequestResponseMinSizes[0])
                                                             || requestResponseHeader->size < peerRequestResponseMinSizes[requestResponseHeader->type])
                                                         {
-                                                            close(i);
+                                                            closePeer(i);
                                                         }
                                                         else
                                                         {
@@ -6078,9 +6104,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                             const unsigned int prevValue0 = neuronValues[NUMBER_OF_NEURONS - 1];
                                                                             const unsigned int prevValue1 = neuronValues[NUMBER_OF_NEURONS - 2];
 
-                                                                            for (unsigned int i = 0; i < NUMBER_OF_NEURONS; i++)
+                                                                            for (unsigned int j = 0; j < NUMBER_OF_NEURONS; j++)
                                                                             {
-                                                                                neuronValues[i] = ~(neuronValues[broadcastResourceTestingSolution->resourceTestingSolution.neuronLinks[i][0] % NUMBER_OF_NEURONS] & neuronValues[broadcastResourceTestingSolution->resourceTestingSolution.neuronLinks[i][1] % NUMBER_OF_NEURONS]);
+                                                                                neuronValues[j] = ~(neuronValues[broadcastResourceTestingSolution->resourceTestingSolution.neuronLinks[j][0] % NUMBER_OF_NEURONS] & neuronValues[broadcastResourceTestingSolution->resourceTestingSolution.neuronLinks[j][1] % NUMBER_OF_NEURONS]);
                                                                             }
 
                                                                             if (neuronValues[NUMBER_OF_NEURONS - 1] != prevValue0
@@ -6189,7 +6215,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 }
                                             }
                                         }
-
+                                    }
+                                    if (((unsigned long long)peers[i].tcp4Protocol) > 1)
+                                    {
                                         if (!peers[i].isReceiving && peers[i].isConnectedAccepted && !peers[i].isClosing)
                                         {
                                             if (((unsigned long long)peers[i].receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peers[i].receiveBuffer) < BUFFER_SIZE)
@@ -6202,7 +6230,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     {
                                                         logStatus(L"EFI_TCP4_PROTOCOL.Receive() fails", status);
 
-                                                        close(i);
+                                                        closePeer(i);
                                                     }
                                                     else
                                                     {
@@ -6221,14 +6249,14 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if (peers[i].transmitToken.CompletionToken.Status)
                                             {
                                                 peers[i].transmitToken.CompletionToken.Status = -1;
-                                                close(i);
+                                                closePeer(i);
                                             }
                                             else
                                             {
                                                 peers[i].transmitToken.CompletionToken.Status = -1;
                                                 if (peers[i].isClosing)
                                                 {
-                                                    close(i);
+                                                    closePeer(i);
                                                 }
                                                 else
                                                 {
@@ -6236,7 +6264,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 }
                                             }
                                         }
-
+                                    }
+                                    if (((unsigned long long)peers[i].tcp4Protocol) > 1)
+                                    {
                                         if (peers[i].dataToTransmitSize && !peers[i].isTransmitting && peers[i].isConnectedAccepted && !peers[i].isClosing)
                                         {
                                             const unsigned int size = ((RequestResponseHeader*)peers[i].dataToTransmit)->size;
@@ -6248,7 +6278,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             {
                                                 logStatus(L"EFI_TCP4_PROTOCOL.Transmit() fails", status);
 
-                                                close(i);
+                                                closePeer(i);
                                             }
                                             else
                                             {
@@ -6275,8 +6305,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             }
                                             if (j == NUMBER_OF_OUTGOING_CONNECTIONS)
                                             {
-                                                EFI_TCP4_PROTOCOL* tcp4Protocol;
-                                                if (peers[i].connectAcceptToken.NewChildHandle = getTcp4Protocol(peers[i].address, PORT, &tcp4Protocol))
+                                                if (peers[i].connectAcceptToken.NewChildHandle = getTcp4Protocol(peers[i].address, PORT, &peers[i].tcp4Protocol))
                                                 {
                                                     peers[i].receiveData.FragmentTable[0].FragmentBuffer = peers[i].receiveBuffer;
                                                     peers[i].dataToTransmitSize = 0;
@@ -6285,7 +6314,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     peers[i].isTransmitting = FALSE;
                                                     peers[i].exchangedPublicPeers = FALSE;
                                                     peers[i].isClosing = FALSE;
-                                                    peers[i].tcp4Protocol = tcp4Protocol;
 
                                                     EFI_STATUS status;
                                                     if (status = peers[i].tcp4Protocol->Connect(peers[i].tcp4Protocol, (EFI_TCP4_CONNECTION_TOKEN*)&peers[i].connectAcceptToken))
@@ -6301,6 +6329,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                         peers[i].isConnectingAccepting = TRUE;
                                                     }
                                                 }
+                                                else
+                                                {
+                                                    peers[i].tcp4Protocol = NULL;
+                                                }
                                             }
                                         }
                                         else
@@ -6313,17 +6345,15 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             peers[i].exchangedPublicPeers = FALSE;
                                             peers[i].isClosing = FALSE;
 
-                                            peers[i].tcp4Protocol = (EFI_TCP4_PROTOCOL*)1;
                                             EFI_STATUS status;
                                             if (status = peerTcp4Protocol->Accept(peerTcp4Protocol, &peers[i].connectAcceptToken))
                                             {
                                                 logStatus(L"EFI_TCP4_PROTOCOL.Accept() fails", status);
-
-                                                peers[i].tcp4Protocol = NULL;
                                             }
                                             else
                                             {
                                                 peers[i].isConnectingAccepting = TRUE;
+                                                peers[i].tcp4Protocol = (EFI_TCP4_PROTOCOL*)1;
                                             }
                                         }
                                     }
@@ -6334,11 +6364,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                 for (unsigned int i = 0; i < NUMBER_OF_CLIENT_CONNECTIONS; i++)
                                 {
-                                    if (((unsigned long long)clients[i].tcp4Protocol) > 1)
-                                    {
-                                        clients[i].tcp4Protocol->Poll(clients[i].tcp4Protocol);
-                                    }
-
                                     if (((unsigned long long)clients[i].tcp4Protocol)
                                         && clients[i].acceptToken.CompletionToken.Status != -1)
                                     {
@@ -6353,7 +6378,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             clients[i].acceptToken.CompletionToken.Status = -1;
                                             if (clients[i].isClosing)
                                             {
-                                                close(i);
+                                                closeClient(i);
                                             }
                                             else
                                             {
@@ -6374,20 +6399,25 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                     if (((unsigned long long)clients[i].tcp4Protocol) > 1)
                                     {
+                                        clients[i].tcp4Protocol->Poll(clients[i].tcp4Protocol);
+                                    }
+
+                                    if (((unsigned long long)clients[i].tcp4Protocol) > 1)
+                                    {
                                         if (clients[i].receiveToken.CompletionToken.Status != -1)
                                         {
                                             clients[i].isReceiving = FALSE;
                                             if (clients[i].receiveToken.CompletionToken.Status)
                                             {
                                                 clients[i].receiveToken.CompletionToken.Status = -1;
-                                                close(i);
+                                                closeClient(i);
                                             }
                                             else
                                             {
                                                 clients[i].receiveToken.CompletionToken.Status = -1;
                                                 if (clients[i].isClosing)
                                                 {
-                                                    close(i);
+                                                    closeClient(i);
                                                 }
                                                 else
                                                 {
@@ -6633,7 +6663,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                             }
                                                             else
                                                             {
-                                                                close(i);
+                                                                closeClient(i);
                                                             }
                                                         }
                                                         else
@@ -6667,7 +6697,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     || requestResponseHeader->size < clientRequestResponseMinSizes[requestResponseHeader->type]
                                                                     || receivedDataSize < ptr + requestResponseHeader->size)
                                                                 {
-                                                                    close(i);
+                                                                    closeClient(i);
                                                                 }
                                                                 else
                                                                 {
@@ -6702,7 +6732,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 }
                                             }
                                         }
-
+                                    }
+                                    if (((unsigned long long)clients[i].tcp4Protocol) > 1)
+                                    {
                                         if (!clients[i].isReceiving && clients[i].isAccepted && !clients[i].isClosing)
                                         {
                                             if (((unsigned long long)clients[i].receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)clients[i].receiveBuffer) < BUFFER_SIZE)
@@ -6715,7 +6747,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     {
                                                         logStatus(L"EFI_TCP4_PROTOCOL.Receive() fails", status);
 
-                                                        close(i);
+                                                        closeClient(i);
                                                     }
                                                     else
                                                     {
@@ -6734,14 +6766,14 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if (clients[i].transmitToken.CompletionToken.Status)
                                             {
                                                 clients[i].transmitToken.CompletionToken.Status = -1;
-                                                close(i);
+                                                closeClient(i);
                                             }
                                             else
                                             {
                                                 clients[i].transmitToken.CompletionToken.Status = -1;
                                                 if (clients[i].isClosing)
                                                 {
-                                                    close(i);
+                                                    closeClient(i);
                                                 }
                                                 else
                                                 {
@@ -6749,12 +6781,14 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 }
                                             }
                                         }
-
+                                    }
+                                    if (((unsigned long long)clients[i].tcp4Protocol) > 1)
+                                    {
                                         if (clients[i].dataToTransmitSize && !clients[i].isTransmitting && clients[i].isAccepted && !clients[i].isClosing)
                                         {
-                                            unsigned int size = ((RequestResponseHeader*)clients[i].dataToTransmit)->size;
+                                            unsigned int size = clients[i].dataToTransmitSize;
                                             bs->CopyMem(clients[i].transmitData.FragmentTable[0].FragmentBuffer, clients[i].dataToTransmit, size);
-                                            bs->CopyMem(clients[i].dataToTransmit, &clients[i].dataToTransmit[size], clients[i].dataToTransmitSize -= size);
+                                            clients[i].dataToTransmitSize = 0;
 
                                             if (clients[i].type)
                                             {
@@ -6795,7 +6829,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             {
                                                 logStatus(L"EFI_TCP4_PROTOCOL.Transmit() fails", status);
 
-                                                close(i);
+                                                closeClient(i);
                                             }
                                             else
                                             {
@@ -6814,17 +6848,15 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         clients[i].isTransmitting = FALSE;
                                         clients[i].isClosing = FALSE;
 
-                                        clients[i].tcp4Protocol = (EFI_TCP4_PROTOCOL*)1;
                                         EFI_STATUS status;
-                                        if (status = peerTcp4Protocol->Accept(peerTcp4Protocol, &clients[i].acceptToken))
+                                        if (status = clientTcp4Protocol->Accept(clientTcp4Protocol, &clients[i].acceptToken))
                                         {
                                             logStatus(L"EFI_TCP4_PROTOCOL.Accept() fails", status);
-
-                                            clients[i].tcp4Protocol = NULL;
                                         }
                                         else
                                         {
                                             clients[i].isAccepting = TRUE;
+                                            clients[i].tcp4Protocol = (EFI_TCP4_PROTOCOL*)1;
                                         }
                                     }
                                 }
@@ -6846,7 +6878,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     {
                                         unsigned int peerIndex;
                                         _rdrand32_step(&peerIndex);
-                                        close(peerIndex % (NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS));
+                                        closePeer(peerIndex % (NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS));
                                     }
                                 }
 
@@ -6940,7 +6972,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         {
                                             if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].isConnectedAccepted)
                                             {
-                                                close(i);
+                                                closePeer(i);
                                             }
                                         }
                                     }
