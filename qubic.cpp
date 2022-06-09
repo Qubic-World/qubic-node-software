@@ -31,11 +31,11 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 14
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
 
-#define TICK 2500019
+#define TICK 2500026
 
 static const unsigned char knownPublicPeers[][4] = {
     { 88, 99, 67, 51 },
@@ -3537,8 +3537,8 @@ typedef struct
 {
     unsigned char sourcePublicKey[32];
     unsigned char destinationPublicKey[32];
-    unsigned long long timestamp;
-    unsigned long long messageSize;
+    unsigned int tick;
+    unsigned int messageSize;
 } Message;
 
 typedef struct
@@ -3552,9 +3552,9 @@ typedef struct
 {
     unsigned char sourcePublicKey[32];
     unsigned char destinationPublicKey[32];
-    unsigned long long timestamp;
     long long amount;
-    unsigned char signature[64];
+    unsigned int tick;
+    unsigned int descriptionSize;
 } Transfer;
 
 typedef struct
@@ -3568,14 +3568,32 @@ typedef struct
 {
     unsigned char sourcePublicKey[32];
     unsigned char destinationEnvironment[32];
-    unsigned long long timestamp;
-    unsigned long long effectSize;
+    unsigned int tick;
+    unsigned int effectSize;
 } Effect;
 
 typedef struct
 {
     Effect effect;
 } BroadcastEffect;
+
+#define BROADCAST_CHOSEN_TRANSFERS_AND_EFFECTS 8
+
+typedef struct
+{
+    unsigned short computorIndex;
+
+    unsigned short epoch;
+    unsigned int tick;
+
+    unsigned int numberOfTransfers;
+    unsigned int numberOfEffects;
+} ChosenTransfersAndEffects;
+
+typedef struct
+{
+    ChosenTransfersAndEffects chosenTransfersAndEffects;
+} BroadcastChosenTransfersAndEffects;
 
 static volatile int state = 0;
 
@@ -4155,7 +4173,8 @@ static void requestProcessor(void* ProcedureArgument)
 
                 case BROADCAST_TRANSFER:
                 {
-                    BroadcastTransfer* request = (BroadcastTransfer*)((char*)processor->cache + sizeof(RequestResponseHeader));
+                    responseSize = requestHeader->size;
+                    /*BroadcastTransfer* request = (BroadcastTransfer*)((char*)processor->cache + sizeof(RequestResponseHeader));
                     if (request->transfer.amount >= MIN_ENERGY_AMOUNT && request->transfer.amount <= MAX_ENERGY_AMOUNT)
                     {
                         unsigned char digest[32];
@@ -4166,7 +4185,7 @@ static void requestProcessor(void* ProcedureArgument)
                         {
                             responseSize = requestHeader->size;
                         }
-                    }
+                    }*/
                 }
                 break;
 
@@ -4184,6 +4203,12 @@ static void requestProcessor(void* ProcedureArgument)
                             responseSize = requestHeader->size;
                         }
                     }
+                }
+                break;
+
+                case BROADCAST_CHOSEN_TRANSFERS_AND_EFFECTS:
+                {
+                    responseSize = requestHeader->size;
                 }
                 break;
                 }
@@ -4384,6 +4409,7 @@ static void closePeer(const unsigned int peerIndex)
     }
 }
 
+#if NUMBER_OF_CLIENT_CONNECTIONS
 static void closeClient(const unsigned int clientIndex)
 {
     if (((unsigned long long)clients[clientIndex].tcp4Protocol) > 1)
@@ -4409,6 +4435,7 @@ static void closeClient(const unsigned int clientIndex)
         }
     }
 }
+#endif
 
 static void push(Peer* peer, RequestResponseHeader* requestResponseHeader)
 {
@@ -4671,6 +4698,7 @@ static BOOLEAN initialize()
     bs->SetMem(&latestTickSignatures, sizeof(latestTickSignatures), 0);
     bs->SetMem(&actualTicks, sizeof(actualTicks), 0);
     bs->SetMem(&actualTickSignatures, sizeof(actualTickSignatures), 0);
+    bs->SetMem(&tick, sizeof(tick), 0);
 
     bs->SetMem(processors, sizeof(processors), 0);
     bs->SetMem(peers, sizeof(peers), 0);
@@ -5296,66 +5324,69 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             tick.header.protocol = VERSION_B;
                                             tick.header.type = BROADCAST_TICK;
 
-                                            tick.broadcastTick.tick.epoch = cachedSystem.epoch;
-                                            tick.broadcastTick.tick.tick = cachedSystem.tick + 1;
-
-                                            EFI_TIME time;
-                                            rs->GetTime(&time, NULL);
-                                            tick.broadcastTick.tick.millisecond = 0;// time.Nanosecond / 1000000;
-                                            tick.broadcastTick.tick.second = 0;// time.Second;
-                                            tick.broadcastTick.tick.minute = 0;// time.Minute;
-                                            tick.broadcastTick.tick.hour = 0;// time.Hour;
-                                            tick.broadcastTick.tick.day = 0;// time.Day;
-                                            tick.broadcastTick.tick.month = 0;// time.Month;
-                                            tick.broadcastTick.tick.year = 0;// time.Year - 2000;
-                                            tick.broadcastTick.tick.prevMillisecond = 0;
-                                            tick.broadcastTick.tick.prevSecond = 0;
-                                            tick.broadcastTick.tick.prevMinute = 0;
-                                            tick.broadcastTick.tick.prevHour = 0;
-                                            tick.broadcastTick.tick.prevDay = 0;
-                                            tick.broadcastTick.tick.prevMonth = 0;
-                                            tick.broadcastTick.tick.prevYear = 0;
-
-                                            bs->SetMem(&tick.broadcastTick.tick.saltedStateDigest, sizeof(tick.broadcastTick.tick.saltedStateDigest), 0);
-                                            bs->SetMem(&tick.broadcastTick.tick.prevStateDigest, sizeof(tick.broadcastTick.tick.prevStateDigest), 0);
-
-                                            tick.broadcastTick.tick.numberOfTransfers = 0;
-                                            tick.broadcastTick.tick.numberOfEffects = 0;
-
-                                            for (unsigned int i = 0; i < cachedSystem.numberOfOwnComputorIndices; i++)
+                                            for (unsigned int tickNumber = cachedSystem.tick; tickNumber <= cachedSystem.tick + 1; tickNumber++)
                                             {
-                                                tick.broadcastTick.tick.computorIndex = cachedSystem.ownComputorIndices[i] ^ 4;
+                                                tick.broadcastTick.tick.epoch = cachedSystem.epoch;
+                                                tick.broadcastTick.tick.tick = tickNumber;
 
-                                                unsigned char digest[32];
-                                                KangarooTwelve((unsigned char*)&tick.broadcastTick.tick, tick.header.size - sizeof(RequestResponseHeader) - 64 - 8, digest, sizeof(digest));
-                                                tick.broadcastTick.tick.computorIndex ^= 4;
-                                                for (unsigned int j = 0; j < sizeof(ownSeeds) / sizeof(ownSeeds[0]); j++)
+                                                EFI_TIME time;
+                                                rs->GetTime(&time, NULL);
+                                                tick.broadcastTick.tick.millisecond = 0;// time.Nanosecond / 1000000;
+                                                tick.broadcastTick.tick.second = 0;// time.Second;
+                                                tick.broadcastTick.tick.minute = 0;// time.Minute;
+                                                tick.broadcastTick.tick.hour = 0;// time.Hour;
+                                                tick.broadcastTick.tick.day = 0;// time.Day;
+                                                tick.broadcastTick.tick.month = 0;// time.Month;
+                                                tick.broadcastTick.tick.year = 0;// time.Year - 2000;
+                                                tick.broadcastTick.tick.prevMillisecond = 0;
+                                                tick.broadcastTick.tick.prevSecond = 0;
+                                                tick.broadcastTick.tick.prevMinute = 0;
+                                                tick.broadcastTick.tick.prevHour = 0;
+                                                tick.broadcastTick.tick.prevDay = 0;
+                                                tick.broadcastTick.tick.prevMonth = 0;
+                                                tick.broadcastTick.tick.prevYear = 0;
+
+                                                bs->SetMem(&tick.broadcastTick.tick.saltedStateDigest, sizeof(tick.broadcastTick.tick.saltedStateDigest), 0);
+                                                bs->SetMem(&tick.broadcastTick.tick.prevStateDigest, sizeof(tick.broadcastTick.tick.prevStateDigest), 0);
+
+                                                tick.broadcastTick.tick.numberOfTransfers = 0;
+                                                tick.broadcastTick.tick.numberOfEffects = 0;
+
+                                                for (unsigned int i = 0; i < cachedSystem.numberOfOwnComputorIndices; i++)
                                                 {
-                                                    if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)cachedSystem.computors.publicKeys[cachedSystem.ownComputorIndices[i]]), *((__m256i*)ownPublicKeys[j]))) == 0xFFFFFFFF)
-                                                    {
-                                                        sign(ownSubseeds[j], ownPublicKeys[j], digest, tick.signature);
+                                                    tick.broadcastTick.tick.computorIndex = cachedSystem.ownComputorIndices[i] ^ 4;
 
-                                                        break;
+                                                    unsigned char digest[32];
+                                                    KangarooTwelve((unsigned char*)&tick.broadcastTick.tick, tick.header.size - sizeof(RequestResponseHeader) - 64 - 8, digest, sizeof(digest));
+                                                    tick.broadcastTick.tick.computorIndex ^= 4;
+                                                    for (unsigned int j = 0; j < sizeof(ownSeeds) / sizeof(ownSeeds[0]); j++)
+                                                    {
+                                                        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)cachedSystem.computors.publicKeys[cachedSystem.ownComputorIndices[i]]), *((__m256i*)ownPublicKeys[j]))) == 0xFFFFFFFF)
+                                                        {
+                                                            sign(ownSubseeds[j], ownPublicKeys[j], digest, tick.signature);
+
+                                                            break;
+                                                        }
                                                     }
-                                                }
 
-                                                _rdrand64_step(&tick.nonce);
+                                                    _rdrand64_step(&tick.nonce);
 
-                                                while (_InterlockedCompareExchange8(&ticksLock, 1, 0))
-                                                {
-                                                    _mm_pause();
-                                                }
-                                                bs->CopyMem(&latestTicks[cachedSystem.ownComputorIndices[i]], &tick.broadcastTick.tick, sizeof(Tick));
-                                                bs->CopyMem(&latestTickSignatures[cachedSystem.ownComputorIndices[i]], &tick.signature, 64);
-                                                bs->CopyMem(&actualTicks[cachedSystem.ownComputorIndices[i]], &tick.broadcastTick.tick, sizeof(Tick));
-                                                bs->CopyMem(&actualTickSignatures[cachedSystem.ownComputorIndices[i]], &tick.signature, 64);
-                                                _InterlockedCompareExchange8(&ticksLock, 0, 1);
-
-                                                for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
-                                                {
-                                                    if (peers[j].tcp4Protocol && peers[j].isConnectedAccepted && peers[j].exchangedPublicPeers && !peers[j].isClosing)
+                                                    while (_InterlockedCompareExchange8(&ticksLock, 1, 0))
                                                     {
-                                                        push(&peers[j], &tick.header);
+                                                        _mm_pause();
+                                                    }
+                                                    bs->CopyMem(&latestTicks[cachedSystem.ownComputorIndices[i]], &tick.broadcastTick.tick, sizeof(Tick));
+                                                    bs->CopyMem(&latestTickSignatures[cachedSystem.ownComputorIndices[i]], &tick.signature, 64);
+                                                    bs->CopyMem(&actualTicks[cachedSystem.ownComputorIndices[i]], &tick.broadcastTick.tick, sizeof(Tick));
+                                                    bs->CopyMem(&actualTickSignatures[cachedSystem.ownComputorIndices[i]], &tick.signature, 64);
+                                                    _InterlockedCompareExchange8(&ticksLock, 0, 1);
+
+                                                    for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
+                                                    {
+                                                        if (peers[j].tcp4Protocol && peers[j].isConnectedAccepted && peers[j].exchangedPublicPeers && !peers[j].isClosing)
+                                                        {
+                                                            push(&peers[j], &tick.header);
+                                                        }
                                                     }
                                                 }
                                             }
