@@ -31,11 +31,11 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 14
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
 
-#define TICK 2500026
+#define TICK 2500033
 
 static const unsigned char knownPublicPeers[][4] = {
     { 88, 99, 67, 51 },
@@ -3342,6 +3342,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define MAX_ENERGY_AMOUNT 9223372036854775807
 #define MAX_NUMBER_OF_PROCESSORS 1024
 #define MAX_NUMBER_OF_PUBLIC_PEERS 256
+#define MAX_TRANSFER_DESCRIPTION_SIZE 112
 #define MIN_ENERGY_AMOUNT 1000000
 #define NUMBER_OF_COMPUTORS (26 * 26)
 #define NUMBER_OF_EXCHANGED_PEERS 4
@@ -5298,6 +5299,18 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 const CHAR16 alphabet[26][2] = { L"A", L"B", L"C", L"D", L"E", L"F", L"G", L"H", L"I", L"J", L"K", L"L", L"M", L"N", L"O", L"P", L"Q", L"R", L"S", L"T", L"U", L"V", L"W", L"X", L"Y", L"Z" };
                                                 appendText(message, alphabet[system.ownComputorIndices[i] / 26]);
                                                 appendText(message, alphabet[system.ownComputorIndices[i] % 26]);
+                                                if (!i)
+                                                {
+                                                    appendText(message, L"[in ");
+                                                    appendNumber(message, ((system.ownComputorIndices[i] + NUMBER_OF_COMPUTORS) - system.tick % NUMBER_OF_COMPUTORS) % NUMBER_OF_COMPUTORS, FALSE);
+                                                    appendText(message, L" ticks/0 transfers]");
+                                                }
+                                                else
+                                                {
+                                                    appendText(message, L"[");
+                                                    appendNumber(message, ((system.ownComputorIndices[i] + NUMBER_OF_COMPUTORS) - system.tick % NUMBER_OF_COMPUTORS) % NUMBER_OF_COMPUTORS, FALSE);
+                                                    appendText(message, L"/0]");
+                                                }
                                                 appendText(message, i < (unsigned int)(system.numberOfOwnComputorIndices - 1) ? L"+" : L".");
                                             }
                                         }
@@ -5324,10 +5337,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             tick.header.protocol = VERSION_B;
                                             tick.header.type = BROADCAST_TICK;
 
-                                            for (unsigned int tickNumber = cachedSystem.tick; tickNumber <= cachedSystem.tick + 1; tickNumber++)
+                                            for (tick.broadcastTick.tick.tick = cachedSystem.tick; tick.broadcastTick.tick.tick <= cachedSystem.tick + 1; tick.broadcastTick.tick.tick++)
                                             {
                                                 tick.broadcastTick.tick.epoch = cachedSystem.epoch;
-                                                tick.broadcastTick.tick.tick = tickNumber;
 
                                                 EFI_TIME time;
                                                 rs->GetTime(&time, NULL);
