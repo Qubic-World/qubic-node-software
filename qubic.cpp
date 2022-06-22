@@ -30,7 +30,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 15
+#define VERSION_B 16
 #define VERSION_C 0
 
 #define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
@@ -39,7 +39,7 @@ static const unsigned char knownPublicPeers[][4] = {
     { 88, 99, 67, 51 },
 };
 
-#define TICK 2500367
+#define TICK 2501132
 
 
 
@@ -4001,6 +4001,30 @@ inline long long ms(unsigned short year, unsigned char month, unsigned char day,
     return (((((long long)dayIndex(year, month, day)) * 24 + hour) * 60 + minute) * 60 + second) * 1000 + millisecond;
 }
 
+static void push(Peer* peer, RequestResponseHeader* requestResponseHeader)
+{
+    if (peer->dataToTransmitSize + requestResponseHeader->size > BUFFER_SIZE)
+    {
+        peer->dataToTransmitSize = 0;
+    }
+
+    bs->CopyMem(&peer->dataToTransmit[peer->dataToTransmitSize], requestResponseHeader, requestResponseHeader->size);
+    peer->dataToTransmitSize += requestResponseHeader->size;
+
+    _InterlockedIncrement64(&numberOfDisseminatedRequests);
+}
+
+static void push(Client* client, RequestResponseHeader* requestResponseHeader)
+{
+    if (client->dataToTransmitSize + requestResponseHeader->size > BUFFER_SIZE - 10) // Extra 10 bytes for WebSocket
+    {
+        client->dataToTransmitSize = 0;
+    }
+
+    bs->CopyMem(&client->dataToTransmit[client->dataToTransmitSize], requestResponseHeader, requestResponseHeader->size);
+    client->dataToTransmitSize += requestResponseHeader->size;
+}
+
 static void requestProcessor(void* ProcedureArgument)
 {
     enableAVX2();
@@ -4286,6 +4310,30 @@ static void requestProcessor(void* ProcedureArgument)
             {
                 switch (requestHeader->type)
                 {
+                case BROADCAST_TRANSFER:
+                {
+                    responseSize = requestHeader->size;
+                    BroadcastTransfer* request = (BroadcastTransfer*)((char*)processor->cache + sizeof(RequestResponseHeader));
+                    if (request->transfer.amount >= MIN_ENERGY_AMOUNT && request->transfer.amount <= MAX_ENERGY_AMOUNT
+                        && request->transfer.descriptionSize <= MAX_TRANSFER_DESCRIPTION_SIZE && requestHeader->size == sizeof(RequestResponseHeader) + sizeof(Transfer) + request->transfer.descriptionSize + SIGNATURE_SIZE)
+                    {
+                        unsigned char digest[32];
+                        request->transfer.sourcePublicKey[0] ^= BROADCAST_TRANSFER;
+                        KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
+                        request->transfer.sourcePublicKey[0] ^= BROADCAST_TRANSFER;
+                        if (verify(request->transfer.sourcePublicKey, digest, ((const unsigned char*)processor->cache + requestHeader->size - SIGNATURE_SIZE)))
+                        {
+                            for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
+                            {
+                                if (peers[i].tcp4Protocol && peers[i].isConnectedAccepted && peers[i].exchangedPublicPeers && !peers[i].isClosing)
+                                {
+                                    push(&peers[i], requestHeader);
+                                }
+                            }
+                        }
+                    }
+                }
+                break;
                 }
             }
 
@@ -4505,30 +4553,6 @@ static void closeClient(const unsigned int clientIndex)
     }
 }
 #endif
-
-static void push(Peer* peer, RequestResponseHeader* requestResponseHeader)
-{
-    if (peer->dataToTransmitSize + requestResponseHeader->size > BUFFER_SIZE)
-    {
-        peer->dataToTransmitSize = 0;
-    }
-
-    bs->CopyMem(&peer->dataToTransmit[peer->dataToTransmitSize], requestResponseHeader, requestResponseHeader->size);
-    peer->dataToTransmitSize += requestResponseHeader->size;
-
-    _InterlockedIncrement64(&numberOfDisseminatedRequests);
-}
-
-static void push(Client* client, RequestResponseHeader* requestResponseHeader)
-{
-    if (client->dataToTransmitSize + requestResponseHeader->size > BUFFER_SIZE - 10) // Extra 10 bytes for WebSocket
-    {
-        client->dataToTransmitSize = 0;
-    }
-
-    bs->CopyMem(&client->dataToTransmit[client->dataToTransmitSize], requestResponseHeader, requestResponseHeader->size);
-    client->dataToTransmitSize += requestResponseHeader->size;
-}
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
 static void computorProcessor(void* ProcedureArgument)
@@ -4843,11 +4867,11 @@ static BOOLEAN initialize()
                     }
                 }
 
-                if (system.epoch == 8)
+                if (system.epoch == 9)
                 {
                     bs->SetMem(&system.tickCounters, sizeof(system.tickCounters), 0);
                 }
-                system.epoch = 9;
+                system.epoch = 10;
                 if (system.tick < TICK)
                 {
                     system.tick = TICK;
@@ -4883,7 +4907,7 @@ static BOOLEAN initialize()
                     return FALSE;
                 }
 
-                miningData[0] ^= 998340;
+                miningData[0] ^= 818;
 
                 unsigned char* miningDataBytes = (unsigned char*)miningData;
                 for (unsigned int i = 0; i < sizeof(computorPublicKey); i++)
