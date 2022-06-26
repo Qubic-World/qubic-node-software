@@ -31,7 +31,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 16
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
 
@@ -39,7 +39,7 @@ static const unsigned char knownPublicPeers[][4] = {
     { 88, 99, 67, 51 },
 };
 
-#define TICK 2501132
+#define TICK 2501648
 
 
 
@@ -3444,6 +3444,7 @@ typedef struct
 } RequestResponseHeader;
 
 #define EXCHANGE_PUBLIC_PEERS 0
+#define GET_INFO 0
 
 typedef struct
 {
@@ -3819,7 +3820,7 @@ static void appendErrorStatus(CHAR16* dst, const EFI_STATUS status)
 
 static void log(const CHAR16* message)
 {
-    CHAR16 timestampedMessage[256];
+    CHAR16 timestampedMessage[2048];
 
     EFI_TIME time;
     rs->GetTime(&time, NULL);
@@ -4310,6 +4311,27 @@ static void requestProcessor(void* ProcedureArgument)
             {
                 switch (requestHeader->type)
                 {
+                case GET_INFO:
+                {
+                    switch (*((unsigned long long*)((char*)processor->cache + sizeof(RequestResponseHeader))))
+                    {
+                    case 0x45706F6368: // Epoch
+                    {
+                        *((unsigned short*)(((char*)processor->cache) + sizeof(RequestResponseHeader))) = 0;
+                        responseSize = sizeof(unsigned short);
+                    }
+                    break;
+
+                    case 0x5469636B: // Tick
+                    {
+                        *((unsigned int*)(((char*)processor->cache) + sizeof(RequestResponseHeader))) = 0;
+                        responseSize = sizeof(unsigned int);
+                    }
+                    break;
+                    }
+                }
+                break;
+
                 case BROADCAST_TRANSFER:
                 {
                     responseSize = requestHeader->size;
@@ -5145,7 +5167,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
     st->ConOut->ClearScreen(st->ConOut);
-    CHAR16 message[1024];
+    CHAR16 message[2048];
     setText(message, L"Qubic ");
     appendNumber(message, VERSION_A, FALSE);
     appendText(message, L".");
@@ -6591,7 +6613,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             bs->CopyMem(clients[i].transmitData.FragmentTable[0].FragmentBuffer, clients[i].dataToTransmit, size);
                                             clients[i].dataToTransmitSize = 0;
 
-                                            if (clients[i].type)
+                                            if (clients[i].type > 1)
                                             {
                                                 if (size <= 125)
                                                 {
@@ -6622,6 +6644,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     }
                                                 }
                                                 ((unsigned char*)clients[i].transmitData.FragmentTable[0].FragmentBuffer)[0] = 0x82;
+                                            }
+                                            if (clients[i].type)
+                                            {
+                                                clients[i].type = 2;
                                             }
 
                                             clients[i].transmitData.DataLength = clients[i].transmitData.FragmentTable[0].FragmentLength = size;
