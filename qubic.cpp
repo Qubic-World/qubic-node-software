@@ -31,7 +31,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 17
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
 
@@ -3640,6 +3640,7 @@ typedef struct
 {
     Computors computors;
     unsigned int tick;
+    unsigned char peers[NUMBER_OF_EXCHANGED_PEERS][4];
 } ComputerState;
 
 static volatile int state = 0;
@@ -4447,7 +4448,7 @@ static void requestProcessor(void* ProcedureArgument)
                 {
                 case GET_COMPUTER_STATE:
                 {
-                    responseHeader->size = sizeof(RequestResponseHeader) + sizeof(ComputerState);
+                    responseSize = sizeof(RequestResponseHeader) + sizeof(ComputerState);
                     responseHeader->type = GET_COMPUTER_STATE;
 
                     ComputerState* computerState = (ComputerState*)((char*)processor->cache + sizeof(RequestResponseHeader));
@@ -4506,7 +4507,30 @@ static void requestProcessor(void* ProcedureArgument)
                         computerState->tick = 0;
                     }
 
-                    pushToAll(responseHeader);
+                    bool noVerifiedPublicPeers = true;
+                    for (unsigned int i = 0; i < numberOfPublicPeers; i++)
+                    {
+                        if (publicPeers[i].isVerified)
+                        {
+                            noVerifiedPublicPeers = false;
+
+                            break;
+                        }
+                    }
+                    for (unsigned int i = 0; i < NUMBER_OF_EXCHANGED_PEERS; i++)
+                    {
+                        unsigned int random;
+                        _rdrand32_step(&random);
+                        const unsigned int publicPeerIndex = random % numberOfPublicPeers;
+                        if (publicPeers[publicPeerIndex].isVerified || noVerifiedPublicPeers)
+                        {
+                            *((int*)computerState->peers[i]) = *((int*)publicPeers[publicPeerIndex].address);
+                        }
+                        else
+                        {
+                            i--;
+                        }
+                    }
                 }
                 break;
 
