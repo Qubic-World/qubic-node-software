@@ -22,6 +22,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 #define OPERATOR "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 #define COMPUTOR "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 #define SYSTEM_DATA_FILE_NAME L"system.data"
+#define LEDGER_DATA_FILE_NAME L"ledger.data"
 #define MINING_DATA_FILE_NAME L"mining.data"
 #define SOLUTION_DATA_FILE_NAME L"solution.data"
 
@@ -31,7 +32,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 17
-#define VERSION_C 2
+#define VERSION_C 3
 
 #define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
 
@@ -3339,6 +3340,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define BUFFER_SIZE 4194304
 #define DEJAVU_SWAP_LIMIT 2621440 // False duplicate chance < 2%
 #define ISSUANCE_RATE 1000000000000
+#define LEDGER_DATA_SAVING_PERIOD 70
 #define MAX_ANSWER_SIZE 1024
 #define MAX_EFFECT_SIZE 1024
 #define MAX_ENERGY_AMOUNT (ISSUANCE_RATE * 1000)
@@ -3369,11 +3371,10 @@ static __m256i ZERO;
 typedef struct
 {
     unsigned char publicKey[32];
-    unsigned long long latestTimestamp;
     long long amount;
-    long long initialAmount;
-    volatile char lock;
-    char padding[7];
+    unsigned int latestChangeTick;
+    unsigned short latestOutgoingTransferEpoch;
+    char padding[2];
 } Entity;
 
 typedef struct
@@ -3671,6 +3672,7 @@ static unsigned int numberOfChosenTransfers[NUMBER_OF_COMPUTORS];
 static Transfer chosenTransfers[NUMBER_OF_COMPUTORS][MAX_NUMBER_OF_TRANSFERS_PER_TICK];
 static unsigned char chosenTransferDescriptions[NUMBER_OF_COMPUTORS][MAX_NUMBER_OF_TRANSFERS_PER_TICK][MAX_TRANSFER_DESCRIPTION_SIZE];
 static unsigned char chosenTransferSignatures[NUMBER_OF_COMPUTORS][MAX_NUMBER_OF_TRANSFERS_PER_TICK][SIGNATURE_SIZE];
+static volatile char entitiesLock = 0;
 static Entity* entities = NULL;
 #endif
 
@@ -3909,12 +3911,12 @@ static void logStatus(const CHAR16* message, const EFI_STATUS status)
 }
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
-static void increaseEnergy(unsigned char* publicKey, long long amount)
+static void increaseEnergy(unsigned char* publicKey, long long amount, unsigned int tick, unsigned short epoch)
 {
     unsigned int index = (*((unsigned int*)publicKey)) & 0xFFFFFF;
 
 iteration:
-    while (_InterlockedCompareExchange8(&entities[index].lock, 1, 0))
+    while (_InterlockedCompareExchange8(&entitiesLock, 1, 0))
     {
         _mm_pause();
     }
@@ -3922,6 +3924,7 @@ iteration:
     if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)entities[index].publicKey), *((__m256i*)publicKey))) == 0xFFFFFFFF)
     {
         entities[index].amount += amount;
+        entities[index].latestChangeTick = tick;
     }
     else
     {
@@ -3929,65 +3932,61 @@ iteration:
         {
             *((__m256i*)entities[index].publicKey) = *((__m256i*)publicKey);
             entities[index].amount = amount;
+            entities[index].latestChangeTick = tick;
+            entities[index].latestOutgoingTransferEpoch = epoch;
         }
         else
         {
-            _InterlockedCompareExchange8(&entities[index].lock, 0, 1);
-
             index = (index + 1) & 0xFFFFFF;
 
             goto iteration;
         }
     }
 
-    _InterlockedCompareExchange8(&entities[index].lock, 0, 1);
+    _InterlockedCompareExchange8(&entitiesLock, 0, 1);
 }
 
-static BOOLEAN decreaseEnergy(unsigned char* publicKey, unsigned long long timestamp, long long amount)
+static BOOLEAN decreaseEnergy(unsigned char* publicKey, long long amount, unsigned int tick, unsigned short epoch)
 {
     unsigned int index = (*((unsigned int*)publicKey)) & 0xFFFFFF;
 
 iteration:
-    while (_InterlockedCompareExchange8(&entities[index].lock, 1, 0))
+    while (_InterlockedCompareExchange8(&entitiesLock, 1, 0))
     {
         _mm_pause();
     }
 
     if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)entities[index].publicKey), *((__m256i*)publicKey))) == 0xFFFFFFFF)
     {
-        if (timestamp > entities[index].latestTimestamp)
+        if (entities[index].amount >= amount)
         {
-            if (entities[index].amount >= amount)
+            if (entities[index].amount < amount + MIN_ENERGY_AMOUNT)
             {
-                entities[index].latestTimestamp = timestamp;
-                if (entities[index].amount < amount + MIN_ENERGY_AMOUNT)
-                {
-                    entities[index].amount = 0;
-                }
-                else
-                {
-                    entities[index].amount -= amount;
-                }
-
-                _InterlockedCompareExchange8(&entities[index].lock, 0, 1);
-
-                return TRUE;
+                entities[index].amount = 0;
             }
+            else
+            {
+                entities[index].amount -= amount;
+            }
+            entities[index].latestChangeTick = tick;
+            entities[index].latestOutgoingTransferEpoch = epoch;
+
+            _InterlockedCompareExchange8(&entitiesLock, 0, 1);
+
+            return TRUE;
         }
     }
     else
     {
         if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)entities[index].publicKey), ZERO)) != 0xFFFFFFFF)
         {
-            _InterlockedCompareExchange8(&entities[index].lock, 0, 1);
-
             index = (index + 1) & 0xFFFFFF;
 
             goto iteration;
         }
     }
 
-    _InterlockedCompareExchange8(&entities[index].lock, 0, 1);
+    _InterlockedCompareExchange8(&entitiesLock, 0, 1);
 
     return FALSE;
 }
@@ -4333,7 +4332,6 @@ static void requestProcessor(void* ProcedureArgument)
                         && request->chosenTransfersAndEffects.numberOfTransfers <= MAX_NUMBER_OF_TRANSFERS_PER_TICK
                         && !request->chosenTransfersAndEffects.numberOfEffects)
                     {
-#if NUMBER_OF_COMPUTING_PROCESSORS
                         if (computors.index && !_InterlockedCompareExchange8(&computorsLock, 1, 0))
                         {
                             if (request->chosenTransfersAndEffects.epoch == computors.epoch)
@@ -4371,6 +4369,8 @@ static void requestProcessor(void* ProcedureArgument)
                                     if (i == request->chosenTransfersAndEffects.numberOfTransfers)
                                     {
                                         responseSize = requestHeader->size;
+
+                                        // TODO
                                     }
                                 }
                             }
@@ -4382,7 +4382,6 @@ static void requestProcessor(void* ProcedureArgument)
                             _InterlockedCompareExchange8(&computorsLock, 0, 1);
                         }
                         else
-#endif
                         {
                             responseSize = requestHeader->size;
                         }
@@ -5034,6 +5033,41 @@ static void saveSystem()
         }
     }
 }
+
+static void saveLedger()
+{
+    EFI_FILE_PROTOCOL* dataFile;
+    EFI_STATUS status;
+    if (status = root->Open(root, (void**)&dataFile, (CHAR16*)LEDGER_DATA_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0))
+    {
+        logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status);
+    }
+    else
+    {
+        while (_InterlockedCompareExchange8(&entitiesLock, 1, 0))
+        {
+            _mm_pause();
+        }
+
+        unsigned long long size = 0x1000000 * sizeof(Entity);
+        status = dataFile->Write(dataFile, &size, entities);
+
+        _InterlockedCompareExchange8(&entitiesLock, 0, 1);
+        
+        dataFile->Close(dataFile);
+        if (status)
+        {
+            logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status);
+        }
+        else
+        {
+            CHAR16 message[256];
+            setNumber(message, size, TRUE);
+            appendText(message, L" bytes of ledger data are saved.");
+            log(message);
+        }
+    }
+}
 #endif
 
 #if NUMBER_OF_MINING_PROCESSORS
@@ -5127,6 +5161,15 @@ static BOOLEAN initialize()
         EFI_FILE_PROTOCOL* dataFile;
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
+        bs->SetMem(numberOfChosenTransfers, sizeof(numberOfChosenTransfers), 0);
+
+        if (status = bs->AllocatePool(EfiRuntimeServicesData, 0x1000000 * sizeof(Entity), (void**)&entities))
+        {
+            logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status);
+
+            return FALSE;
+        }
+
         if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SYSTEM_DATA_FILE_NAME, EFI_FILE_MODE_READ, 0))
         {
             logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status);
@@ -5164,6 +5207,34 @@ static BOOLEAN initialize()
                 if (system.tick < TICK)
                 {
                     system.tick = TICK;
+                }
+            }
+        }
+
+        if (status = root->Open(root, (void**)&dataFile, (CHAR16*)LEDGER_DATA_FILE_NAME, EFI_FILE_MODE_READ, 0))
+        {
+            logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status);
+
+            return FALSE;
+        }
+        else
+        {
+            unsigned long long size = sizeof(0x1000000 * sizeof(Entity));
+            status = dataFile->Read(dataFile, &size, entities);
+            dataFile->Close(dataFile);
+            if (status)
+            {
+                logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status);
+
+                return FALSE;
+            }
+            else
+            {
+                if (size < 0x1000000 * sizeof(Entity))
+                {
+                    log(L"Ledger data file is too small!");
+
+                    return FALSE;
                 }
             }
         }
@@ -5248,17 +5319,6 @@ static BOOLEAN initialize()
         }
 #endif
     }
-#endif
-
-#if NUMBER_OF_COMPUTING_PROCESSORS
-    bs->SetMem(numberOfChosenTransfers, sizeof(numberOfChosenTransfers), 0);
-    if (status = bs->AllocatePool(EfiRuntimeServicesData, 0x1000000 * sizeof(Entity), (void**)&entities))
-    {
-        logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status);
-
-        return FALSE;
-    }
-    bs->SetMem(entities, 0x1000000 * sizeof(Entity), 0);
 #endif
 
     if ((status = bs->AllocatePool(EfiRuntimeServicesData, 536870912, (void**)&dejavu0))
@@ -5551,7 +5611,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             unsigned long long salt;
                             _rdrand64_step(&salt);
 
-                            unsigned long long systemDataSavingTick = 0, loggingTick = 0, peerRefreshingTick = 0, resourceTestingSolutionPublicationTick = 0;
+                            unsigned long long systemDataSavingTick = 0, ledgerDataSavingTick = 0, loggingTick = 0, peerRefreshingTick = 0, resourceTestingSolutionPublicationTick = 0;
                             while (!state)
                             {
                                 const unsigned long long curTimeTick = __rdtsc();
@@ -6970,6 +7030,16 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     systemDataSavingTick = curTimeTick;
                                     saveSystem();
                                 }
+                                if (curTimeTick - ledgerDataSavingTick >= LEDGER_DATA_SAVING_PERIOD * frequency)
+                                {
+                                    ledgerDataSavingTick = curTimeTick;
+                                    unsigned long long delta = __rdtsc();
+                                    saveLedger();
+                                    delta = __rdtsc() - delta;
+                                    setNumber(message, delta * 1000 / frequency, TRUE);
+                                    appendText(message, L" ms is spent on storing the ledger data.");
+                                    log(message);
+                                }
 #endif
 
                                 if (curTimeTick - peerRefreshingTick >= PEER_REFRESHING_PERIOD * frequency)
@@ -7114,6 +7184,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
                             saveSystem();
+                            saveLedger();
 #endif
 
                             setText(message, L"Qubic ");
