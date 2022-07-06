@@ -31,8 +31,8 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 17
-#define VERSION_C 3
+#define VERSION_B 18
+#define VERSION_C 0
 
 #define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
 
@@ -3333,6 +3333,16 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
     return (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)A), *((__m256i*)signature))) == 0xFFFFFFFF);
 }
 
+static void getHash(unsigned char* digest, CHAR16* hash)
+{
+    for (int i = 0; i < 32; i++)
+    {
+        hash[i << 1] = (digest[i] >> 4) + L'a';
+        hash[(i << 1) + 1] = (digest[i] & 0xF) + L'a';
+    }
+    hash[64] = 0;
+}
+
 
 
 ////////// Qubic \\\\\\\\\\
@@ -3340,7 +3350,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define BUFFER_SIZE 4194304
 #define DEJAVU_SWAP_LIMIT 2621440 // False duplicate chance < 2%
 #define ISSUANCE_RATE 1000000000000
-#define LEDGER_DATA_SAVING_PERIOD 70
+#define LEDGER_DATA_SAVING_PERIOD 300
 #define MAX_ANSWER_SIZE 1024
 #define MAX_EFFECT_SIZE 1024
 #define MAX_ENERGY_AMOUNT (ISSUANCE_RATE * 1000)
@@ -5199,11 +5209,11 @@ static BOOLEAN initialize()
                     }
                 }
 
-                if (system.epoch < 11)
+                if (system.epoch < 12)
                 {
                     bs->SetMem(&system.tickCounters, sizeof(system.tickCounters), 0);
                 }
-                system.epoch = 11;
+                system.epoch = 12;
                 if (system.tick < TICK)
                 {
                     system.tick = TICK;
@@ -5219,7 +5229,7 @@ static BOOLEAN initialize()
         }
         else
         {
-            unsigned long long size = sizeof(0x1000000 * sizeof(Entity));
+            unsigned long long size = 0x1000000 * sizeof(Entity);
             status = dataFile->Read(dataFile, &size, entities);
             dataFile->Close(dataFile);
             if (status)
@@ -5235,6 +5245,33 @@ static BOOLEAN initialize()
                     log(L"Ledger data file is too small!");
 
                     return FALSE;
+                }
+                else
+                {
+                    unsigned char digest[32];
+                    CHAR16 hash[64 + 1];
+                    unsigned int numberOfEntities = 0;
+                    unsigned long long totalAmount = 0;
+
+                    KangarooTwelve((unsigned char*)entities, 0x1000000 * sizeof(Entity), digest, sizeof(digest));
+                    getHash(digest, hash);
+
+                    for (unsigned int i = 0; i < 0x1000000; i++)
+                    {
+                        if (entities[i].amount)
+                        {
+                            numberOfEntities++;
+                            totalAmount += entities[i].amount;
+                        }
+                    }
+
+                    setNumber(message, totalAmount, TRUE);
+                    appendText(message, L" qus in ");
+                    appendNumber(message, numberOfEntities, TRUE);
+                    appendText(message, L" entities (ledger hash = ");
+                    appendText(message, hash);
+                    appendText(message, L").");
+                    log(message);
                 }
             }
         }
@@ -5267,7 +5304,7 @@ static BOOLEAN initialize()
                     return FALSE;
                 }
 
-                miningData[0] ^= 412381;
+                miningData[0] ^= 738001;
 
                 unsigned char* miningDataBytes = (unsigned char*)miningData;
                 for (unsigned int i = 0; i < sizeof(computorPublicKey); i++)
