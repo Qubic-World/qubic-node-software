@@ -9,7 +9,7 @@
 
 // Do NOT share the data of "Private Settings" section with anybody!!!
 static unsigned char ownSeeds[][55 + 1] = {
-    "<seed1>",
+    "<seed1>"
 };
 
 static const unsigned char ownAddress[4] = { 0, 0, 0, 0 };
@@ -32,7 +32,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 18
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
 
@@ -3350,7 +3350,6 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define BUFFER_SIZE 4194304
 #define DEJAVU_SWAP_LIMIT 2621440 // False duplicate chance < 2%
 #define ISSUANCE_RATE 1000000000000
-#define LEDGER_DATA_SAVING_PERIOD 300
 #define MAX_ANSWER_SIZE 1024
 #define MAX_EFFECT_SIZE 1024
 #define MAX_ENERGY_AMOUNT (ISSUANCE_RATE * 1000)
@@ -3386,6 +3385,13 @@ typedef struct
     unsigned short latestOutgoingTransferEpoch;
     char padding[2];
 } Entity;
+
+typedef struct
+{
+    unsigned int index;
+    char padding[4];
+    Entity entity;
+} StoredEntity;
 
 typedef struct
 {
@@ -3636,6 +3642,7 @@ typedef struct
 {
     unsigned short computorIndex;
     unsigned short epoch;
+    unsigned char destinationPublicKey[32];
     unsigned char questionDigest[32];
     unsigned int answerSize;
 } Answer;
@@ -3678,11 +3685,14 @@ static unsigned long long latestTickPublicationTick = 0, latestRevenuePublicatio
 static unsigned short numberOfOwnComputorIndices = 0;
 static short ownComputorIndices[NUMBER_OF_COMPUTORS];
 
+static unsigned int numberOfBufferedTransfers[sizeof(ownSeeds) / sizeof(ownSeeds[0])];
+static Transfer bufferedTransfers[sizeof(ownSeeds) / sizeof(ownSeeds[0])][MAX_NUMBER_OF_TRANSFERS_PER_TICK];
 static unsigned int numberOfChosenTransfers[NUMBER_OF_COMPUTORS];
 static Transfer chosenTransfers[NUMBER_OF_COMPUTORS][MAX_NUMBER_OF_TRANSFERS_PER_TICK];
 static unsigned char chosenTransferDescriptions[NUMBER_OF_COMPUTORS][MAX_NUMBER_OF_TRANSFERS_PER_TICK][MAX_TRANSFER_DESCRIPTION_SIZE];
 static unsigned char chosenTransferSignatures[NUMBER_OF_COMPUTORS][MAX_NUMBER_OF_TRANSFERS_PER_TICK][SIGNATURE_SIZE];
 static volatile char entitiesLock = 0;
+static StoredEntity storedEntities[1024];
 static Entity* entities = NULL;
 #endif
 
@@ -4123,7 +4133,7 @@ static void requestProcessor(void* ProcedureArgument)
                 case BROADCAST_COMPUTORS:
                 {
                     BroadcastComputors* request = (BroadcastComputors*)((char*)processor->cache + sizeof(RequestResponseHeader));
-                    if (request->computors.index > computors.index)
+                    if (request->computors.epoch > computors.epoch || (request->computors.epoch == computors.epoch && request->computors.index > computors.index))
                     {
                         unsigned char digest[32];
                         KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
@@ -5043,41 +5053,6 @@ static void saveSystem()
         }
     }
 }
-
-static void saveLedger()
-{
-    EFI_FILE_PROTOCOL* dataFile;
-    EFI_STATUS status;
-    if (status = root->Open(root, (void**)&dataFile, (CHAR16*)LEDGER_DATA_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0))
-    {
-        logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status);
-    }
-    else
-    {
-        while (_InterlockedCompareExchange8(&entitiesLock, 1, 0))
-        {
-            _mm_pause();
-        }
-
-        unsigned long long size = 0x1000000 * sizeof(Entity);
-        status = dataFile->Write(dataFile, &size, entities);
-
-        _InterlockedCompareExchange8(&entitiesLock, 0, 1);
-        
-        dataFile->Close(dataFile);
-        if (status)
-        {
-            logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status);
-        }
-        else
-        {
-            CHAR16 message[256];
-            setNumber(message, size, TRUE);
-            appendText(message, L" bytes of ledger data are saved.");
-            log(message);
-        }
-    }
-}
 #endif
 
 #if NUMBER_OF_MINING_PROCESSORS
@@ -5171,6 +5146,7 @@ static BOOLEAN initialize()
         EFI_FILE_PROTOCOL* dataFile;
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
+        bs->SetMem(numberOfBufferedTransfers, sizeof(numberOfBufferedTransfers), 0);
         bs->SetMem(numberOfChosenTransfers, sizeof(numberOfChosenTransfers), 0);
 
         if (status = bs->AllocatePool(EfiRuntimeServicesData, 0x1000000 * sizeof(Entity), (void**)&entities))
@@ -5229,51 +5205,65 @@ static BOOLEAN initialize()
         }
         else
         {
-            unsigned long long size = 0x1000000 * sizeof(Entity);
-            status = dataFile->Read(dataFile, &size, entities);
-            dataFile->Close(dataFile);
-            if (status)
-            {
-                logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status);
+            bs->SetMem(entities, 0x1000000 * sizeof(Entity), 0);
 
-                return FALSE;
-            }
-            else
+            unsigned long long size;
+            do
             {
-                if (size < 0x1000000 * sizeof(Entity))
+                size = sizeof(storedEntities);
+                if (status = dataFile->Read(dataFile, &size, &storedEntities))
                 {
-                    log(L"Ledger data file is too small!");
+                    logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status);
+                    dataFile->Close(dataFile);
 
                     return FALSE;
                 }
                 else
                 {
-                    unsigned char digest[32];
-                    CHAR16 hash[64 + 1];
-                    unsigned int numberOfEntities = 0;
-                    unsigned long long totalAmount = 0;
-
-                    KangarooTwelve((unsigned char*)entities, 0x1000000 * sizeof(Entity), digest, sizeof(digest));
-                    getHash(digest, hash);
-
-                    for (unsigned int i = 0; i < 0x1000000; i++)
+                    if (size % sizeof(StoredEntity))
                     {
-                        if (entities[i].amount)
+                        log(L"Ledger data file is corrupted!");
+                        dataFile->Close(dataFile);
+
+                        return FALSE;
+                    }
+                    else
+                    {
+                        for (unsigned int i = 0; i < size / sizeof(StoredEntity); i++)
                         {
-                            numberOfEntities++;
-                            totalAmount += entities[i].amount;
+                            bs->CopyMem(&entities[storedEntities[i].index], &storedEntities[i].entity, sizeof(Entity));
                         }
                     }
+                }
 
-                    setNumber(message, totalAmount, TRUE);
-                    appendText(message, L" qus in ");
-                    appendNumber(message, numberOfEntities, TRUE);
-                    appendText(message, L" entities (ledger hash = ");
-                    appendText(message, hash);
-                    appendText(message, L").");
-                    log(message);
+            } while (size);
+
+            dataFile->Close(dataFile);
+
+            unsigned char digest[32];
+            CHAR16 hash[64 + 1];
+            unsigned int numberOfEntities = 0;
+            unsigned long long totalAmount = 0;
+
+            KangarooTwelve((unsigned char*)entities, 0x1000000 * sizeof(Entity), digest, sizeof(digest));
+            getHash(digest, hash);
+
+            for (unsigned int i = 0; i < 0x1000000; i++)
+            {
+                if (entities[i].amount)
+                {
+                    numberOfEntities++;
+                    totalAmount += entities[i].amount;
                 }
             }
+
+            setNumber(message, totalAmount, TRUE);
+            appendText(message, L" qus in ");
+            appendNumber(message, numberOfEntities, TRUE);
+            appendText(message, L" entities (ledger hash = ");
+            appendText(message, hash);
+            appendText(message, L").");
+            log(message);
         }
 #endif
 
@@ -5648,7 +5638,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             unsigned long long salt;
                             _rdrand64_step(&salt);
 
-                            unsigned long long systemDataSavingTick = 0, ledgerDataSavingTick = 0, loggingTick = 0, peerRefreshingTick = 0, resourceTestingSolutionPublicationTick = 0;
+                            unsigned long long systemDataSavingTick = 0, loggingTick = 0, peerRefreshingTick = 0, resourceTestingSolutionPublicationTick = 0;
                             while (!state)
                             {
                                 const unsigned long long curTimeTick = __rdtsc();
@@ -5786,7 +5776,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     appendText(message, L"[in ");
                                                     appendNumber(message, ((ownComputorIndices[i] + NUMBER_OF_COMPUTORS) - system.tick % NUMBER_OF_COMPUTORS) % NUMBER_OF_COMPUTORS, FALSE);
                                                     appendText(message, L" ticks/");
-                                                    appendNumber(message, numberOfChosenTransfers[ownComputorIndices[i] % NUMBER_OF_COMPUTORS], TRUE);
+                                                    appendNumber(message, numberOfBufferedTransfers[i], TRUE);
                                                     appendText(message, L" transfers]");
                                                 }
                                                 else
@@ -5794,7 +5784,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     appendText(message, L"[");
                                                     appendNumber(message, ((ownComputorIndices[i] + NUMBER_OF_COMPUTORS) - system.tick % NUMBER_OF_COMPUTORS) % NUMBER_OF_COMPUTORS, FALSE);
                                                     appendText(message, L"/");
-                                                    appendNumber(message, numberOfChosenTransfers[ownComputorIndices[i] % NUMBER_OF_COMPUTORS], TRUE);
+                                                    appendNumber(message, numberOfBufferedTransfers[i], TRUE);
                                                     appendText(message, L"]");
                                                 }
                                                 appendText(message, i < (unsigned int)(numberOfOwnComputorIndices - 1) ? L"+" : L".");
@@ -5921,7 +5911,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 counters[j] = 0;
                                             }
                                         }
-                                        if (tickNumberOfComputors >= /*QUORUM*/NUMBER_OF_COMPUTORS + 1)
+                                        if (tickNumberOfComputors >= QUORUM)
                                         {
                                             tickNumberOfComputors = 0;
                                             latestTickPublicationTick = 0;
@@ -5935,7 +5925,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                             for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
                                             {
-                                                //system.tickCounters[j] += counters[j];
+                                                system.tickCounters[j] += counters[j];
                                             }
 
                                             _InterlockedCompareExchange8(&systemLock, 0, 1);
@@ -5950,11 +5940,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             }
                                         }
                                         _InterlockedCompareExchange8(&ticksLock, 0, 1);
-
-                                        if (system.tick > cachedSystem.tick)
-                                        {
-                                            numberOfChosenTransfers[cachedSystem.tick % NUMBER_OF_COMPUTORS] = 0;
-                                        }
 
                                         if (curTimeTick - latestRevenuePublicationTick >= REVENUE_PUBLICATION_PERIOD * frequency)
                                         {
@@ -7067,16 +7052,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     systemDataSavingTick = curTimeTick;
                                     saveSystem();
                                 }
-                                if (curTimeTick - ledgerDataSavingTick >= LEDGER_DATA_SAVING_PERIOD * frequency)
-                                {
-                                    ledgerDataSavingTick = curTimeTick;
-                                    unsigned long long delta = __rdtsc();
-                                    saveLedger();
-                                    delta = __rdtsc() - delta;
-                                    setNumber(message, delta * 1000 / frequency, TRUE);
-                                    appendText(message, L" ms is spent on storing the ledger data.");
-                                    log(message);
-                                }
 #endif
 
                                 if (curTimeTick - peerRefreshingTick >= PEER_REFRESHING_PERIOD * frequency)
@@ -7183,7 +7158,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         system.tick--;
                                         latestTickPublicationTick = 0;
 
-                                        bs->SetMem(numberOfChosenTransfers, sizeof(numberOfChosenTransfers), 0);
+                                        bs->SetMem(numberOfBufferedTransfers, sizeof(numberOfBufferedTransfers), 0);
                                     }
                                     break;
 
@@ -7192,7 +7167,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         system.tick++;
                                         latestTickPublicationTick = 0;
 
-                                        bs->SetMem(numberOfChosenTransfers, sizeof(numberOfChosenTransfers), 0);
+                                        bs->SetMem(numberOfBufferedTransfers, sizeof(numberOfBufferedTransfers), 0);
                                     }
                                     break;
 #endif
@@ -7221,7 +7196,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
                             saveSystem();
-                            saveLedger();
 #endif
 
                             setText(message, L"Qubic ");
