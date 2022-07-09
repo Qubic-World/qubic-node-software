@@ -32,7 +32,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 18
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
 
@@ -40,7 +40,7 @@ static const unsigned char knownPublicPeers[][4] = {
     { 88, 99, 67, 51 },
 };
 
-#define TICK 2501787
+#define TICK 2501823
 
 
 
@@ -5051,6 +5051,49 @@ static void saveSystem()
             appendText(message, L" bytes of system data are saved.");
             log(message);
         }
+    }
+}
+
+static void saveLedger()
+{
+    EFI_FILE_PROTOCOL* dataFile;
+    EFI_STATUS status;
+    if (status = root->Open(root, (void**)&dataFile, (CHAR16*)LEDGER_DATA_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0))
+    {
+        logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status);
+    }
+    else
+    {
+        while (_InterlockedCompareExchange8(&entitiesLock, 1, 0))
+        {
+            _mm_pause();
+        }
+
+        unsigned int numberOfStoredEntities = 0;
+        for (unsigned int i = 0; i < 0x1000000; i++)
+        {
+            if (entities[i].amount)
+            {
+                storedEntities[numberOfStoredEntities].index = i;
+                bs->CopyMem(&storedEntities[numberOfStoredEntities++].entity, &entities[i], sizeof(Entity));
+            }
+            if ((numberOfStoredEntities == sizeof(storedEntities) / sizeof(storedEntities[0]) || i == 0x1000000 - 1) && numberOfStoredEntities)
+            {
+                unsigned long long size = numberOfStoredEntities * sizeof(StoredEntity);
+                if (status = dataFile->Write(dataFile, &size, &storedEntities))
+                {
+                    logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status);
+
+                    break;
+                }
+
+                numberOfStoredEntities = 0;
+            }
+        }
+
+        dataFile->Close(dataFile);
+
+        _InterlockedCompareExchange8(&entitiesLock, 0, 1);
     }
 }
 #endif
