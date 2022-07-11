@@ -9,7 +9,7 @@
 
 // Do NOT share the data of "Private Settings" section with anybody!!!
 static unsigned char ownSeeds[][55 + 1] = {
-    "<seed1>"
+    "<seed1>",
 };
 
 static const unsigned char ownAddress[4] = { 0, 0, 0, 0 };
@@ -32,7 +32,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 18
-#define VERSION_C 2
+#define VERSION_C 3
 
 #define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
 
@@ -40,7 +40,7 @@ static const unsigned char knownPublicPeers[][4] = {
     { 88, 99, 67, 51 },
 };
 
-#define TICK 2501823
+#define TICK 2502039
 
 
 
@@ -3380,10 +3380,7 @@ static __m256i ZERO;
 typedef struct
 {
     unsigned char publicKey[32];
-    long long amount;
-    unsigned int latestChangeTick;
-    unsigned short latestOutgoingTransferEpoch;
-    char padding[2];
+    long long incomingAmount, outgoingAmount;
 } Entity;
 
 typedef struct
@@ -3931,29 +3928,26 @@ static void logStatus(const CHAR16* message, const EFI_STATUS status)
 }
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
-static void increaseEnergy(unsigned char* publicKey, long long amount, unsigned int tick, unsigned short epoch)
+static void increaseEnergy(unsigned char* publicKey, long long amount)
 {
     unsigned int index = (*((unsigned int*)publicKey)) & 0xFFFFFF;
 
-iteration:
     while (_InterlockedCompareExchange8(&entitiesLock, 1, 0))
     {
         _mm_pause();
     }
 
+iteration:
     if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)entities[index].publicKey), *((__m256i*)publicKey))) == 0xFFFFFFFF)
     {
-        entities[index].amount += amount;
-        entities[index].latestChangeTick = tick;
+        entities[index].incomingAmount += amount;
     }
     else
     {
         if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)entities[index].publicKey), ZERO)) == 0xFFFFFFFF)
         {
             *((__m256i*)entities[index].publicKey) = *((__m256i*)publicKey);
-            entities[index].amount = amount;
-            entities[index].latestChangeTick = tick;
-            entities[index].latestOutgoingTransferEpoch = epoch;
+            entities[index].incomingAmount = amount;
         }
         else
         {
@@ -3966,30 +3960,28 @@ iteration:
     _InterlockedCompareExchange8(&entitiesLock, 0, 1);
 }
 
-static BOOLEAN decreaseEnergy(unsigned char* publicKey, long long amount, unsigned int tick, unsigned short epoch)
+static BOOLEAN decreaseEnergy(unsigned char* publicKey, long long amount)
 {
     unsigned int index = (*((unsigned int*)publicKey)) & 0xFFFFFF;
 
-iteration:
     while (_InterlockedCompareExchange8(&entitiesLock, 1, 0))
     {
         _mm_pause();
     }
 
+iteration:
     if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)entities[index].publicKey), *((__m256i*)publicKey))) == 0xFFFFFFFF)
     {
-        if (entities[index].amount >= amount)
+        if (entities[index].incomingAmount - entities[index].outgoingAmount >= amount)
         {
-            if (entities[index].amount < amount + MIN_ENERGY_AMOUNT)
+            if (entities[index].incomingAmount - entities[index].outgoingAmount < amount + MIN_ENERGY_AMOUNT)
             {
-                entities[index].amount = 0;
+                entities[index].outgoingAmount = entities[index].incomingAmount;
             }
             else
             {
-                entities[index].amount -= amount;
+                entities[index].outgoingAmount += amount;
             }
-            entities[index].latestChangeTick = tick;
-            entities[index].latestOutgoingTransferEpoch = epoch;
 
             _InterlockedCompareExchange8(&entitiesLock, 0, 1);
 
@@ -5072,7 +5064,7 @@ static void saveLedger()
         unsigned int numberOfStoredEntities = 0;
         for (unsigned int i = 0; i < 0x1000000; i++)
         {
-            if (entities[i].amount)
+            if (entities[i].incomingAmount - entities[i].outgoingAmount)
             {
                 storedEntities[numberOfStoredEntities].index = i;
                 bs->CopyMem(&storedEntities[numberOfStoredEntities++].entity, &entities[i], sizeof(Entity));
@@ -5293,10 +5285,10 @@ static BOOLEAN initialize()
 
             for (unsigned int i = 0; i < 0x1000000; i++)
             {
-                if (entities[i].amount)
+                if (entities[i].incomingAmount - entities[i].outgoingAmount)
                 {
                     numberOfEntities++;
-                    totalAmount += entities[i].amount;
+                    totalAmount += (entities[i].incomingAmount - entities[i].outgoingAmount);
                 }
             }
 
