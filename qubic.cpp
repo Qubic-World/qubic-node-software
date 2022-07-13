@@ -9,7 +9,7 @@
 
 // Do NOT share the data of "Private Settings" section with anybody!!!
 static unsigned char ownSeeds[][55 + 1] = {
-    "<seed1>",
+    "<seed1>"
 };
 
 static const unsigned char ownAddress[4] = { 0, 0, 0, 0 };
@@ -31,8 +31,8 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 18
-#define VERSION_C 3
+#define VERSION_B 19
+#define VERSION_C 0
 
 #define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
 
@@ -40,7 +40,7 @@ static const unsigned char knownPublicPeers[][4] = {
     { 88, 99, 67, 51 },
 };
 
-#define TICK 2502039
+#define TICK 2502277
 
 
 
@@ -3356,6 +3356,8 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define MAX_MESSAGE_SIZE 1024
 #define MAX_NUMBER_OF_PROCESSORS 1024
 #define MAX_NUMBER_OF_PUBLIC_PEERS 256
+#define MAX_NUMBER_OF_EFFECTS_PER_TICK 0
+#define MAX_NUMBER_OF_QUESTIONS_PER_TICK 0
 #define MAX_NUMBER_OF_TRANSFERS_PER_TICK 100
 #define MAX_QUESTION_SIZE 1024
 #define MAX_TRANSFER_DESCRIPTION_SIZE 112
@@ -3365,7 +3367,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define NUMBER_OF_OUTGOING_CONNECTIONS 4
 #define NUMBER_OF_INCOMING_CONNECTIONS 12
 #define NUMBER_OF_CLIENT_CONNECTIONS 100
-#define NUMBER_OF_NEURONS 5000
+#define NUMBER_OF_NEURONS 4000
 #define PEER_REFRESHING_PERIOD 15
 #define PORT 21841
 #define QUORUM (NUMBER_OF_COMPUTORS * 2 / 3 + 1)
@@ -3528,9 +3530,6 @@ typedef struct
 
     unsigned char saltedStateDigest[32];
     unsigned char prevStateDigest[32];
-
-    unsigned int numberOfTransfers;
-    unsigned int numberOfEffects;
 } Tick;
 
 typedef struct
@@ -3599,7 +3598,7 @@ typedef struct
     Effect effect;
 } BroadcastEffect;
 
-#define BROADCAST_CHOSEN_TRANSFERS_AND_EFFECTS 8
+#define BROADCAST_CHOSEN_TRANSFERS_EFFECTS_AND_QUESTIONS 8
 
 typedef struct
 {
@@ -3610,12 +3609,15 @@ typedef struct
 
     unsigned int numberOfTransfers;
     unsigned int numberOfEffects;
-} ChosenTransfersAndEffects;
+    unsigned int numberOfQuestions;
+
+    char padding[4];
+} ChosenTransfersEffectsAndQuestions;
 
 typedef struct
 {
-    ChosenTransfersAndEffects chosenTransfersAndEffects;
-} BroadcastChosenTransfersAndEffects;
+    ChosenTransfersEffectsAndQuestions chosenTransfersEffectsAndQuestions;
+} BroadcastChosenTransfersEffectsAndQuestions;
 
 #define BROADCAST_QUESTION 9
 
@@ -3666,6 +3668,8 @@ static unsigned char operatorPublicKey[32], computorPublicKey[32], adminPublicKe
 static volatile char computorsLock = 0;
 static Computors computors, cachedComputors;
 
+static EFI_TIME time;
+
 static EFI_FILE_PROTOCOL* root = NULL;
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
@@ -3684,10 +3688,8 @@ static short ownComputorIndices[NUMBER_OF_COMPUTORS];
 
 static unsigned int numberOfBufferedTransfers[sizeof(ownSeeds) / sizeof(ownSeeds[0])];
 static Transfer bufferedTransfers[sizeof(ownSeeds) / sizeof(ownSeeds[0])][MAX_NUMBER_OF_TRANSFERS_PER_TICK];
-static unsigned int numberOfChosenTransfers[NUMBER_OF_COMPUTORS];
-static Transfer chosenTransfers[NUMBER_OF_COMPUTORS][MAX_NUMBER_OF_TRANSFERS_PER_TICK];
-static unsigned char chosenTransferDescriptions[NUMBER_OF_COMPUTORS][MAX_NUMBER_OF_TRANSFERS_PER_TICK][MAX_TRANSFER_DESCRIPTION_SIZE];
-static unsigned char chosenTransferSignatures[NUMBER_OF_COMPUTORS][MAX_NUMBER_OF_TRANSFERS_PER_TICK][SIGNATURE_SIZE];
+static char chosenTransfersEffectsAndQuestionsBytes[NUMBER_OF_COMPUTORS][sizeof(BroadcastChosenTransfersEffectsAndQuestions) + (sizeof(Transfer) + MAX_TRANSFER_DESCRIPTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_TRANSFERS_PER_TICK + (sizeof(Effect) + MAX_EFFECT_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_EFFECTS_PER_TICK + (sizeof(Question) + MAX_QUESTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_QUESTIONS_PER_TICK + SIGNATURE_SIZE];
+
 static volatile char entitiesLock = 0;
 static StoredEntity storedEntities[1024];
 static Entity* entities = NULL;
@@ -3885,7 +3887,6 @@ static void log(const CHAR16* message)
 {
     CHAR16 timestampedMessage[2048];
 
-    EFI_TIME time;
     rs->GetTime(&time, NULL);
     timestampedMessage[0] = (time.Year %= 100) / 10 + L'0';
     timestampedMessage[1] = time.Year % 10 + L'0';
@@ -4337,26 +4338,29 @@ static void requestProcessor(void* ProcedureArgument)
                 }
                 break;
 
-                case BROADCAST_CHOSEN_TRANSFERS_AND_EFFECTS:
+                case BROADCAST_CHOSEN_TRANSFERS_EFFECTS_AND_QUESTIONS:
                 {
-                    BroadcastChosenTransfersAndEffects* request = (BroadcastChosenTransfersAndEffects*)((char*)processor->cache + sizeof(RequestResponseHeader));
-                    if (request->chosenTransfersAndEffects.computorIndex < NUMBER_OF_COMPUTORS
-                        && request->chosenTransfersAndEffects.numberOfTransfers <= MAX_NUMBER_OF_TRANSFERS_PER_TICK
-                        && !request->chosenTransfersAndEffects.numberOfEffects)
+                    BroadcastChosenTransfersEffectsAndQuestions* request = (BroadcastChosenTransfersEffectsAndQuestions*)((char*)processor->cache + sizeof(RequestResponseHeader));
+                    if (requestHeader->size <= sizeof(RequestResponseHeader) + sizeof(chosenTransfersEffectsAndQuestionsBytes[0])
+                        && request->chosenTransfersEffectsAndQuestions.computorIndex < NUMBER_OF_COMPUTORS
+                        && request->chosenTransfersEffectsAndQuestions.numberOfTransfers <= MAX_NUMBER_OF_TRANSFERS_PER_TICK
+                        && request->chosenTransfersEffectsAndQuestions.numberOfEffects <= MAX_NUMBER_OF_EFFECTS_PER_TICK
+                        && request->chosenTransfersEffectsAndQuestions.numberOfQuestions <= MAX_NUMBER_OF_QUESTIONS_PER_TICK
+                        && !request->chosenTransfersEffectsAndQuestions.padding[0] && !request->chosenTransfersEffectsAndQuestions.padding[1] && !request->chosenTransfersEffectsAndQuestions.padding[2] && !request->chosenTransfersEffectsAndQuestions.padding[3])
                     {
                         if (computors.index && !_InterlockedCompareExchange8(&computorsLock, 1, 0))
                         {
-                            if (request->chosenTransfersAndEffects.epoch == computors.epoch)
+                            if (request->chosenTransfersEffectsAndQuestions.epoch == computors.epoch)
                             {
                                 unsigned char digest[32];
-                                request->chosenTransfersAndEffects.computorIndex ^= BROADCAST_CHOSEN_TRANSFERS_AND_EFFECTS;
-                                KangarooTwelve((unsigned char*)&request->chosenTransfersAndEffects, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
-                                request->chosenTransfersAndEffects.computorIndex ^= BROADCAST_CHOSEN_TRANSFERS_AND_EFFECTS;
-                                if (verify(computors.publicKeys[request->chosenTransfersAndEffects.computorIndex], digest, ((const unsigned char*)processor->cache) + requestHeader->size - SIGNATURE_SIZE))
+                                request->chosenTransfersEffectsAndQuestions.computorIndex ^= BROADCAST_CHOSEN_TRANSFERS_EFFECTS_AND_QUESTIONS;
+                                KangarooTwelve((unsigned char*)&request->chosenTransfersEffectsAndQuestions, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
+                                request->chosenTransfersEffectsAndQuestions.computorIndex ^= BROADCAST_CHOSEN_TRANSFERS_EFFECTS_AND_QUESTIONS;
+                                if (verify(computors.publicKeys[request->chosenTransfersEffectsAndQuestions.computorIndex], digest, ((const unsigned char*)processor->cache) + requestHeader->size - SIGNATURE_SIZE))
                                 {
-                                    char* ptr = ((char*)processor->cache) + sizeof(RequestResponseHeader) + sizeof(BroadcastChosenTransfersAndEffects);
+                                    char* ptr = ((char*)processor->cache) + sizeof(RequestResponseHeader) + sizeof(BroadcastChosenTransfersEffectsAndQuestions);
                                     unsigned int i;
-                                    for (i = 0; i < request->chosenTransfersAndEffects.numberOfTransfers; i++)
+                                    for (i = 0; i < request->chosenTransfersEffectsAndQuestions.numberOfTransfers; i++)
                                     {
                                         Transfer* transfer = (Transfer*)ptr;
                                         if (transfer->amount >= MIN_ENERGY_AMOUNT && transfer->amount <= MAX_ENERGY_AMOUNT
@@ -4378,11 +4382,13 @@ static void requestProcessor(void* ProcedureArgument)
                                             break;
                                         }
                                     }
-                                    if (i == request->chosenTransfersAndEffects.numberOfTransfers)
+                                    if (i == request->chosenTransfersEffectsAndQuestions.numberOfTransfers)
                                     {
                                         responseSize = requestHeader->size;
 
-                                        // TODO
+#if NUMBER_OF_COMPUTING_PROCESSORS
+                                        bs->CopyMem(&chosenTransfersEffectsAndQuestionsBytes, &request->chosenTransfersEffectsAndQuestions, requestHeader->size - sizeof(RequestResponseHeader));
+#endif
                                     }
                                 }
                             }
@@ -5182,7 +5188,7 @@ static BOOLEAN initialize()
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
         bs->SetMem(numberOfBufferedTransfers, sizeof(numberOfBufferedTransfers), 0);
-        bs->SetMem(numberOfChosenTransfers, sizeof(numberOfChosenTransfers), 0);
+        bs->SetMem(chosenTransfersEffectsAndQuestionsBytes, sizeof(chosenTransfersEffectsAndQuestionsBytes), 0);
 
         if (status = bs->AllocatePool(EfiRuntimeServicesData, 0x1000000 * sizeof(Entity), (void**)&entities))
         {
@@ -5210,21 +5216,18 @@ static BOOLEAN initialize()
             }
             else
             {
-                if (size < sizeof(system))
+                if (size < sizeof(system) && size)
                 {
-                    if (size && size < 8)
-                    {
-                        log(L"System data file is too small!");
+                    log(L"System data file is too small!");
 
-                        return FALSE;
-                    }
+                    return FALSE;
                 }
 
-                if (system.epoch < 12)
+                if (system.epoch < 13)
                 {
                     bs->SetMem(&system.tickCounters, sizeof(system.tickCounters), 0);
                 }
-                system.epoch = 12;
+                system.epoch = 13;
                 if (system.tick < TICK)
                 {
                     system.tick = TICK;
@@ -5329,7 +5332,7 @@ static BOOLEAN initialize()
                     return FALSE;
                 }
 
-                miningData[0] ^= 738001;
+                miningData[0] ^= 442998;
 
                 unsigned char* miningDataBytes = (unsigned char*)miningData;
                 for (unsigned int i = 0; i < sizeof(computorPublicKey); i++)
@@ -5859,7 +5862,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             {
                                                 tick.broadcastTick.tick.epoch = cachedSystem.epoch;
 
-                                                EFI_TIME time;
                                                 rs->GetTime(&time, NULL);
                                                 tick.broadcastTick.tick.millisecond = 0;// time.Nanosecond / 1000000;
                                                 tick.broadcastTick.tick.second = 0;// time.Second;
@@ -5878,9 +5880,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                 bs->SetMem(&tick.broadcastTick.tick.saltedStateDigest, sizeof(tick.broadcastTick.tick.saltedStateDigest), 0);
                                                 bs->SetMem(&tick.broadcastTick.tick.prevStateDigest, sizeof(tick.broadcastTick.tick.prevStateDigest), 0);
-
-                                                tick.broadcastTick.tick.numberOfTransfers = 0;
-                                                tick.broadcastTick.tick.numberOfEffects = 0;
 
                                                 for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
                                                 {
