@@ -32,7 +32,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 19
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
 
@@ -3680,6 +3680,7 @@ static struct System
     unsigned short epoch;
     unsigned int tick;
     unsigned int tickCounters[NUMBER_OF_COMPUTORS];
+    Computors computors;
 } system, systemToSave, cachedSystem;
 static unsigned int tickNumberOfComputors = 0;
 static unsigned long long latestTickPublicationTick = 0, latestRevenuePublicationTick = 0;
@@ -3688,12 +3689,12 @@ static short ownComputorIndices[NUMBER_OF_COMPUTORS];
 
 static unsigned int numberOfBufferedTransfers[sizeof(ownSeeds) / sizeof(ownSeeds[0])];
 static Transfer bufferedTransfers[sizeof(ownSeeds) / sizeof(ownSeeds[0])][MAX_NUMBER_OF_TRANSFERS_PER_TICK];
-static char chosenTransfersEffectsAndQuestionsBytes[NUMBER_OF_COMPUTORS][sizeof(BroadcastChosenTransfersEffectsAndQuestions) + (sizeof(Transfer) + MAX_TRANSFER_DESCRIPTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_TRANSFERS_PER_TICK + (sizeof(Effect) + MAX_EFFECT_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_EFFECTS_PER_TICK + (sizeof(Question) + MAX_QUESTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_QUESTIONS_PER_TICK + SIGNATURE_SIZE];
 
 static volatile char entitiesLock = 0;
 static StoredEntity storedEntities[1024];
 static Entity* entities = NULL;
 #endif
+static char chosenTransfersEffectsAndQuestionsBytes[NUMBER_OF_COMPUTORS][sizeof(BroadcastChosenTransfersEffectsAndQuestions) + (sizeof(Transfer) + MAX_TRANSFER_DESCRIPTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_TRANSFERS_PER_TICK + (sizeof(Effect) + MAX_EFFECT_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_EFFECTS_PER_TICK + (sizeof(Question) + MAX_QUESTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_QUESTIONS_PER_TICK + SIGNATURE_SIZE];
 
 static volatile char ticksLock = 0;
 static Tick latestTicks[NUMBER_OF_COMPUTORS], actualTicks[NUMBER_OF_COMPUTORS];
@@ -4137,6 +4138,7 @@ static void requestProcessor(void* ProcedureArgument)
                                 if (request->computors.index > computors.index)
                                 {
                                     bs->CopyMem(&computors, &request->computors, sizeof(Computors));
+                                    bs->CopyMem(&system.computors, &request->computors, sizeof(Computors));
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
                                     if (request->computors.epoch == system.epoch)
@@ -5216,12 +5218,12 @@ static BOOLEAN initialize()
             }
             else
             {
-                if (size < sizeof(system) && size)
+                /*if (size < sizeof(system) && size)
                 {
                     log(L"System data file is too small!");
 
                     return FALSE;
-                }
+                }*/
 
                 if (system.epoch < 13)
                 {
@@ -5231,6 +5233,23 @@ static BOOLEAN initialize()
                 if (system.tick < TICK)
                 {
                     system.tick = TICK;
+                }
+
+                if (system.computors.epoch == system.epoch)
+                {
+                    numberOfOwnComputorIndices = 0;
+                    for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                    {
+                        for (unsigned int j = 0; j < sizeof(ownSeeds) / sizeof(ownSeeds[0]); j++)
+                        {
+                            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)computors.publicKeys[i]), *((__m256i*)ownPublicKeys[j]))) == 0xFFFFFFFF)
+                            {
+                                ownComputorIndices[numberOfOwnComputorIndices++] = i;
+
+                                break;
+                            }
+                        }
+                    }
                 }
             }
         }
