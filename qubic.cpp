@@ -23,6 +23,8 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 #define COMPUTOR "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 #define SYSTEM_DATA_FILE_NAME L"system.data"
 #define LEDGER_DATA_FILE_NAME L"ledger.data"
+#define TICK_DATA_FILE_NAME_PREFIX L"tick"
+#define TICK_DATA_FILE_NAME_POSTFIX L".data"
 #define MINING_DATA_FILE_NAME L"mining.data"
 #define SOLUTION_DATA_FILE_NAME L"solution.data"
 
@@ -31,8 +33,8 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 19
-#define VERSION_C 1
+#define VERSION_B 20
+#define VERSION_C 0
 
 #define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
 
@@ -40,7 +42,7 @@ static const unsigned char knownPublicPeers[][4] = {
     { 88, 99, 67, 51 },
 };
 
-#define TICK 2502277
+#define TICK 2502524
 
 
 
@@ -3520,16 +3522,9 @@ typedef struct
     unsigned char month;
     unsigned char year;
 
-    unsigned short prevMillisecond;
-    unsigned char prevSecond;
-    unsigned char prevMinute;
-    unsigned char prevHour;
-    unsigned char prevDay;
-    unsigned char prevMonth;
-    unsigned char prevYear;
-
     unsigned char saltedStateDigest[32];
     unsigned char prevStateDigest[32];
+    unsigned char nextTickChosenTransfersEffectsAndQuestionsDigest[32];
 } Tick;
 
 typedef struct
@@ -3688,13 +3683,15 @@ static unsigned short numberOfOwnComputorIndices = 0;
 static short ownComputorIndices[NUMBER_OF_COMPUTORS];
 
 static unsigned int numberOfBufferedTransfers[sizeof(ownSeeds) / sizeof(ownSeeds[0])];
-static Transfer bufferedTransfers[sizeof(ownSeeds) / sizeof(ownSeeds[0])][MAX_NUMBER_OF_TRANSFERS_PER_TICK];
+static unsigned char bufferedTransferBytes[sizeof(ownSeeds) / sizeof(ownSeeds[0])][MAX_NUMBER_OF_TRANSFERS_PER_TICK][sizeof(Transfer) + MAX_TRANSFER_DESCRIPTION_SIZE + SIGNATURE_SIZE];
+static unsigned int chosenTransfersEffectsAndQuestionSizes[NUMBER_OF_COMPUTORS];
 
-static volatile char entitiesLock = 0;
+static Tick epochOpeningTick;
 static StoredEntity storedEntities[1024];
+static volatile char entitiesLock = 0;
 static Entity* entities = NULL;
 #endif
-static char chosenTransfersEffectsAndQuestionsBytes[NUMBER_OF_COMPUTORS][sizeof(BroadcastChosenTransfersEffectsAndQuestions) + (sizeof(Transfer) + MAX_TRANSFER_DESCRIPTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_TRANSFERS_PER_TICK + (sizeof(Effect) + MAX_EFFECT_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_EFFECTS_PER_TICK + (sizeof(Question) + MAX_QUESTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_QUESTIONS_PER_TICK + SIGNATURE_SIZE];
+static char chosenTransfersEffectsAndQuestionBytes[NUMBER_OF_COMPUTORS][sizeof(BroadcastChosenTransfersEffectsAndQuestions) + (sizeof(Transfer) + MAX_TRANSFER_DESCRIPTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_TRANSFERS_PER_TICK + (sizeof(Effect) + MAX_EFFECT_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_EFFECTS_PER_TICK + (sizeof(Question) + MAX_QUESTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_QUESTIONS_PER_TICK + SIGNATURE_SIZE];
 
 static volatile char ticksLock = 0;
 static Tick latestTicks[NUMBER_OF_COMPUTORS], actualTicks[NUMBER_OF_COMPUTORS];
@@ -4138,9 +4135,10 @@ static void requestProcessor(void* ProcedureArgument)
                                 if (request->computors.index > computors.index)
                                 {
                                     bs->CopyMem(&computors, &request->computors, sizeof(Computors));
-                                    bs->CopyMem(&system.computors, &request->computors, sizeof(Computors));
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
+                                    bs->CopyMem(&system.computors, &request->computors, sizeof(Computors));
+
                                     if (request->computors.epoch == system.epoch)
                                     {
                                         numberOfOwnComputorIndices = 0;
@@ -4179,13 +4177,8 @@ static void requestProcessor(void* ProcedureArgument)
                         && request->tick.minute <= 59
                         && request->tick.second <= 59
                         && request->tick.millisecond <= 999
-                        //&& request->tick.prevMonth >= 1 && request->tick.prevMonth <= 12
-                        //&& request->tick.prevDay >= 1 && request->tick.prevDay <= 31
-                        && request->tick.prevHour <= 23
-                        && request->tick.prevMinute <= 59
-                        && request->tick.prevSecond <= 59
-                        && request->tick.prevMillisecond <= 999
-                        && ms(request->tick.year, request->tick.month, request->tick.day, request->tick.hour, request->tick.minute, request->tick.second, request->tick.millisecond) >= ms(request->tick.prevYear, request->tick.prevMonth, request->tick.prevDay, request->tick.prevHour, request->tick.prevMinute, request->tick.prevSecond, request->tick.prevMillisecond))
+                        /*&& ms(request->tick.year, request->tick.month, request->tick.day, request->tick.hour, request->tick.minute, request->tick.second, request->tick.millisecond) >= ms(request->tick.prevYear, request->tick.prevMonth, request->tick.prevDay, request->tick.prevHour, request->tick.prevMinute, request->tick.prevSecond, request->tick.prevMillisecond)*/ // TODO
+                        )
                     {
                         if (computors.index && !_InterlockedCompareExchange8(&computorsLock, 1, 0))
                         {
@@ -4317,7 +4310,28 @@ static void requestProcessor(void* ProcedureArgument)
                         request->transfer.sourcePublicKey[0] ^= BROADCAST_TRANSFER;
                         if (verify(request->transfer.sourcePublicKey, digest, ((const unsigned char*)processor->cache + requestHeader->size - SIGNATURE_SIZE)))
                         {
+#if NUMBER_OF_COMPUTING_PROCESSORS
+                            unsigned int tick = system.tick;
+                            if (request->transfer.tick > tick && request->transfer.tick - tick <= NUMBER_OF_COMPUTORS)
+                            {
+                                responseSize = requestHeader->size;
+
+                                for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
+                                {
+                                    if (request->transfer.tick % NUMBER_OF_COMPUTORS == ownComputorIndices[i])
+                                    {
+                                        if (numberOfBufferedTransfers[i] < MAX_NUMBER_OF_TRANSFERS_PER_TICK)
+                                        {
+                                            bs->CopyMem(bufferedTransferBytes[i][numberOfBufferedTransfers[i]++], &request->transfer, sizeof(Transfer) + request->transfer.descriptionSize + SIGNATURE_SIZE);
+                                        }
+
+                                        break;
+                                    }
+                                }
+                            }
+#else
                             responseSize = requestHeader->size;
+#endif
                         }
                     }
                 }
@@ -4343,7 +4357,7 @@ static void requestProcessor(void* ProcedureArgument)
                 case BROADCAST_CHOSEN_TRANSFERS_EFFECTS_AND_QUESTIONS:
                 {
                     BroadcastChosenTransfersEffectsAndQuestions* request = (BroadcastChosenTransfersEffectsAndQuestions*)((char*)processor->cache + sizeof(RequestResponseHeader));
-                    if (requestHeader->size <= sizeof(RequestResponseHeader) + sizeof(chosenTransfersEffectsAndQuestionsBytes[0])
+                    if (requestHeader->size <= sizeof(RequestResponseHeader) + sizeof(chosenTransfersEffectsAndQuestionBytes[0])
                         && request->chosenTransfersEffectsAndQuestions.computorIndex < NUMBER_OF_COMPUTORS
                         && request->chosenTransfersEffectsAndQuestions.numberOfTransfers <= MAX_NUMBER_OF_TRANSFERS_PER_TICK
                         && request->chosenTransfersEffectsAndQuestions.numberOfEffects <= MAX_NUMBER_OF_EFFECTS_PER_TICK
@@ -4389,7 +4403,7 @@ static void requestProcessor(void* ProcedureArgument)
                                         responseSize = requestHeader->size;
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
-                                        bs->CopyMem(&chosenTransfersEffectsAndQuestionsBytes, &request->chosenTransfersEffectsAndQuestions, requestHeader->size - sizeof(RequestResponseHeader));
+                                        bs->CopyMem(&chosenTransfersEffectsAndQuestionBytes[request->chosenTransfersEffectsAndQuestions.computorIndex], &request->chosenTransfersEffectsAndQuestions, chosenTransfersEffectsAndQuestionSizes[request->chosenTransfersEffectsAndQuestions.computorIndex] = requestHeader->size - sizeof(RequestResponseHeader));
 #endif
                                     }
                                 }
@@ -5096,6 +5110,31 @@ static void saveLedger()
         _InterlockedCompareExchange8(&entitiesLock, 0, 1);
     }
 }
+
+static void saveTick(unsigned int tick, char* data)
+{
+    CHAR16 path[256];
+    setText(path, TICK_DATA_FILE_NAME_PREFIX);
+    appendNumber(path, tick, FALSE);
+    appendText(path, TICK_DATA_FILE_NAME_POSTFIX);
+
+    EFI_FILE_PROTOCOL* dataFile;
+    EFI_STATUS status;
+    if (status = root->Open(root, (void**)&dataFile, path, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, EFI_FILE_ARCHIVE))
+    {
+        logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status);
+    }
+    else
+    {
+        unsigned long long size = sizeof(Tick);
+        status = dataFile->Write(dataFile, &size, data);
+        dataFile->Close(dataFile);
+        if (status)
+        {
+            logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status);
+        }
+    }
+}
 #endif
 
 #if NUMBER_OF_MINING_PROCESSORS
@@ -5190,7 +5229,7 @@ static BOOLEAN initialize()
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
         bs->SetMem(numberOfBufferedTransfers, sizeof(numberOfBufferedTransfers), 0);
-        bs->SetMem(chosenTransfersEffectsAndQuestionsBytes, sizeof(chosenTransfersEffectsAndQuestionsBytes), 0);
+        bs->SetMem(chosenTransfersEffectsAndQuestionSizes, sizeof(chosenTransfersEffectsAndQuestionSizes), 0);
 
         if (status = bs->AllocatePool(EfiRuntimeServicesData, 0x1000000 * sizeof(Entity), (void**)&entities))
         {
@@ -5218,13 +5257,6 @@ static BOOLEAN initialize()
             }
             else
             {
-                /*if (size < sizeof(system) && size)
-                {
-                    log(L"System data file is too small!");
-
-                    return FALSE;
-                }*/
-
                 if (system.epoch < 13)
                 {
                     bs->SetMem(&system.tickCounters, sizeof(system.tickCounters), 0);
@@ -5237,12 +5269,14 @@ static BOOLEAN initialize()
 
                 if (system.computors.epoch == system.epoch)
                 {
+                    bs->CopyMem(&computors, &system.computors, sizeof(Computors));
+
                     numberOfOwnComputorIndices = 0;
                     for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
                     {
                         for (unsigned int j = 0; j < sizeof(ownSeeds) / sizeof(ownSeeds[0]); j++)
                         {
-                            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)computors.publicKeys[i]), *((__m256i*)ownPublicKeys[j]))) == 0xFFFFFFFF)
+                            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)system.computors.publicKeys[i]), *((__m256i*)ownPublicKeys[j]))) == 0xFFFFFFFF)
                             {
                                 ownComputorIndices[numberOfOwnComputorIndices++] = i;
 
@@ -5828,22 +5862,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 const CHAR16 alphabet[26][2] = { L"A", L"B", L"C", L"D", L"E", L"F", L"G", L"H", L"I", L"J", L"K", L"L", L"M", L"N", L"O", L"P", L"Q", L"R", L"S", L"T", L"U", L"V", L"W", L"X", L"Y", L"Z" };
                                                 appendText(message, alphabet[ownComputorIndices[i] / 26]);
                                                 appendText(message, alphabet[ownComputorIndices[i] % 26]);
-                                                if (!i)
-                                                {
-                                                    appendText(message, L"[in ");
-                                                    appendNumber(message, ((ownComputorIndices[i] + NUMBER_OF_COMPUTORS) - system.tick % NUMBER_OF_COMPUTORS) % NUMBER_OF_COMPUTORS, FALSE);
-                                                    appendText(message, L" ticks/");
-                                                    appendNumber(message, numberOfBufferedTransfers[i], TRUE);
-                                                    appendText(message, L" transfers]");
-                                                }
-                                                else
-                                                {
-                                                    appendText(message, L"[");
-                                                    appendNumber(message, ((ownComputorIndices[i] + NUMBER_OF_COMPUTORS) - system.tick % NUMBER_OF_COMPUTORS) % NUMBER_OF_COMPUTORS, FALSE);
-                                                    appendText(message, L"/");
-                                                    appendNumber(message, numberOfBufferedTransfers[i], TRUE);
-                                                    appendText(message, L"]");
-                                                }
+                                                appendText(message, i ? L"[" : L"[in ");
+                                                appendNumber(message, ((ownComputorIndices[i] + NUMBER_OF_COMPUTORS) - system.tick % NUMBER_OF_COMPUTORS) % NUMBER_OF_COMPUTORS, FALSE);
+                                                appendText(message, i ? L"/" : L" ticks/");
+                                                appendNumber(message, numberOfBufferedTransfers[i], TRUE);
+                                                appendText(message, i ? L"]" : L" transfers]");
                                                 appendText(message, i < (unsigned int)(numberOfOwnComputorIndices - 1) ? L"+" : L".");
                                             }
                                         }
@@ -5889,16 +5912,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 tick.broadcastTick.tick.day = 0;// time.Day;
                                                 tick.broadcastTick.tick.month = 0;// time.Month;
                                                 tick.broadcastTick.tick.year = 0;// time.Year - 2000;
-                                                tick.broadcastTick.tick.prevMillisecond = 0;
-                                                tick.broadcastTick.tick.prevSecond = 0;
-                                                tick.broadcastTick.tick.prevMinute = 0;
-                                                tick.broadcastTick.tick.prevHour = 0;
-                                                tick.broadcastTick.tick.prevDay = 0;
-                                                tick.broadcastTick.tick.prevMonth = 0;
-                                                tick.broadcastTick.tick.prevYear = 0;
 
-                                                bs->SetMem(&tick.broadcastTick.tick.saltedStateDigest, sizeof(tick.broadcastTick.tick.saltedStateDigest), 0);
-                                                bs->SetMem(&tick.broadcastTick.tick.prevStateDigest, sizeof(tick.broadcastTick.tick.prevStateDigest), 0);
+                                                bs->SetMem(tick.broadcastTick.tick.saltedStateDigest, sizeof(tick.broadcastTick.tick.saltedStateDigest), 0);
+                                                bs->SetMem(tick.broadcastTick.tick.prevStateDigest, sizeof(tick.broadcastTick.tick.prevStateDigest), 0);
+                                                *((__m256i*)tick.broadcastTick.tick.nextTickChosenTransfersEffectsAndQuestionsDigest) = ZERO;
 
                                                 for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
                                                 {
@@ -5951,9 +5968,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if (actualTicks[j].epoch == cachedSystem.epoch
                                                 && actualTicks[j].tick == cachedSystem.tick + 1
                                                 && *((unsigned long long*) & actualTicks[j].millisecond) == *((unsigned long long*) & actualTicks[ownComputorIndices[0]].millisecond)
-                                                && *((unsigned long long*) & actualTicks[j].prevMillisecond) == *((unsigned long long*) & actualTicks[ownComputorIndices[0]].prevMillisecond)
                                                 && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].saltedStateDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].saltedStateDigest))) == 0xFFFFFFFF
-                                                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].prevStateDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].prevStateDigest))) == 0xFFFFFFFF)
+                                                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].prevStateDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].prevStateDigest))) == 0xFFFFFFFF
+                                                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].nextTickChosenTransfersEffectsAndQuestionsDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].nextTickChosenTransfersEffectsAndQuestionsDigest))) == 0xFFFFFFFF)
                                             {
                                                 tickNumberOfComputors++;
 
@@ -5976,19 +5993,32 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                             const unsigned int tick = ++system.tick;
 
-                                            for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
+                                            for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
                                             {
-                                                system.tickCounters[j] += counters[j];
+                                                system.tickCounters[i] += counters[i];
                                             }
 
                                             _InterlockedCompareExchange8(&systemLock, 0, 1);
 
-                                            for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
+                                            saveTick(tick - 1, (char*)&actualTicks[ownComputorIndices[0]]);
+
+                                            for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
                                             {
-                                                if (latestTicks[j].tick == tick + 1)
+                                                if (latestTicks[i].tick == tick + 1)
                                                 {
-                                                    bs->CopyMem(&actualTicks[j], &latestTicks[j], sizeof(Tick));
-                                                    bs->CopyMem(&actualTickSignatures[j], &latestTickSignatures[j], SIGNATURE_SIZE);
+                                                    bs->CopyMem(&actualTicks[i], &latestTicks[i], sizeof(Tick));
+                                                    bs->CopyMem(&actualTickSignatures[i], &latestTickSignatures[i], SIGNATURE_SIZE);
+                                                }
+                                            }
+
+                                            for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
+                                            {
+                                                if (numberOfBufferedTransfers[i])
+                                                {
+                                                    if (((Transfer*)bufferedTransferBytes[i][0])->tick <= tick)
+                                                    {
+                                                        numberOfBufferedTransfers[i] = 0;
+                                                    }
                                                 }
                                             }
                                         }
