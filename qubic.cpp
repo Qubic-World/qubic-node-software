@@ -23,8 +23,6 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 #define COMPUTOR "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 #define SYSTEM_DATA_FILE_NAME L"system.data"
 #define LEDGER_DATA_FILE_NAME L"ledger.data"
-#define TICK_DATA_FILE_NAME_PREFIX L"tick"
-#define TICK_DATA_FILE_NAME_POSTFIX L".data"
 #define MINING_DATA_FILE_NAME L"mining.data"
 #define SOLUTION_DATA_FILE_NAME L"solution.data"
 
@@ -34,7 +32,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 20
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
 
@@ -42,7 +40,7 @@ static const unsigned char knownPublicPeers[][4] = {
     { 88, 99, 67, 51 },
 };
 
-#define TICK 2502524
+#define TICK 2502277
 
 
 
@@ -5110,31 +5108,6 @@ static void saveLedger()
         _InterlockedCompareExchange8(&entitiesLock, 0, 1);
     }
 }
-
-static void saveTick(unsigned int tick, char* data)
-{
-    CHAR16 path[256];
-    setText(path, TICK_DATA_FILE_NAME_PREFIX);
-    appendNumber(path, tick, FALSE);
-    appendText(path, TICK_DATA_FILE_NAME_POSTFIX);
-
-    EFI_FILE_PROTOCOL* dataFile;
-    EFI_STATUS status;
-    if (status = root->Open(root, (void**)&dataFile, path, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, EFI_FILE_ARCHIVE))
-    {
-        logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status);
-    }
-    else
-    {
-        unsigned long long size = sizeof(Tick);
-        status = dataFile->Write(dataFile, &size, data);
-        dataFile->Close(dataFile);
-        if (status)
-        {
-            logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status);
-        }
-    }
-}
 #endif
 
 #if NUMBER_OF_MINING_PROCESSORS
@@ -6000,8 +5973,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                             _InterlockedCompareExchange8(&systemLock, 0, 1);
 
-                                            saveTick(tick - 1, (char*)&actualTicks[ownComputorIndices[0]]);
-
                                             for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
                                             {
                                                 if (latestTicks[i].tick == tick + 1)
@@ -6021,6 +5992,48 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     }
                                                 }
                                             }
+                                        }
+                                        else
+                                        {
+                                            unsigned short numberOfTicks = 0;
+                                            unsigned int ticks[NUMBER_OF_COMPUTORS];
+                                            unsigned short tickQuantities[NUMBER_OF_COMPUTORS];
+                                            for (unsigned short i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                                            {
+                                                unsigned short j;
+                                                for (j = 0; j < numberOfTicks; j++)
+                                                {
+                                                    if (latestTicks[i].tick == ticks[j])
+                                                    {
+                                                        tickQuantities[j]++;
+
+                                                        break;
+                                                    }
+                                                }
+                                                if (j == numberOfTicks)
+                                                {
+                                                    ticks[numberOfTicks] = latestTicks[i].tick;
+                                                    tickQuantities[numberOfTicks++] = 1;
+                                                }
+                                            }
+
+                                            _InterlockedCompareExchange8(&ticksLock, 0, 1);
+
+                                            unsigned short bestTickIndex = 0;
+
+                                            for (unsigned short i = 1; i < numberOfTicks; i++)
+                                            {
+                                                if (tickQuantities[i] > tickQuantities[bestTickIndex])
+                                                {
+                                                    bestTickIndex = i;
+                                                }
+                                            }
+
+                                            setNumber(message, tickQuantities[bestTickIndex], FALSE);
+                                            appendText(message, L" computors are at tick ");
+                                            appendNumber(message, ticks[bestTickIndex], TRUE);
+                                            appendText(message, L".");
+                                            log(message);
                                         }
                                         _InterlockedCompareExchange8(&ticksLock, 0, 1);
 
