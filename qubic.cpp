@@ -32,7 +32,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 20
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
 
@@ -6029,11 +6029,13 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 }
                                             }
 
-                                            setNumber(message, tickQuantities[bestTickIndex], FALSE);
-                                            appendText(message, L" computors are at tick ");
-                                            appendNumber(message, ticks[bestTickIndex], TRUE);
-                                            appendText(message, L".");
-                                            log(message);
+                                            if (ticks[bestTickIndex] > cachedSystem.tick + 2)
+                                            {
+                                                system.tick++;
+                                                latestTickPublicationTick = 0;
+
+                                                bs->SetMem(numberOfBufferedTransfers, sizeof(numberOfBufferedTransfers), 0);
+                                            }
                                         }
                                         _InterlockedCompareExchange8(&ticksLock, 0, 1);
 
@@ -7247,26 +7249,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         }
                                     }
                                     break;
-
-#if NUMBER_OF_COMPUTING_PROCESSORS
-                                    case 0x0F:
-                                    {
-                                        system.tick--;
-                                        latestTickPublicationTick = 0;
-
-                                        bs->SetMem(numberOfBufferedTransfers, sizeof(numberOfBufferedTransfers), 0);
-                                    }
-                                    break;
-
-                                    case 0x10:
-                                    {
-                                        system.tick++;
-                                        latestTickPublicationTick = 0;
-
-                                        bs->SetMem(numberOfBufferedTransfers, sizeof(numberOfBufferedTransfers), 0);
-                                    }
-                                    break;
-#endif
 
                                     case 0x16:
                                     {
