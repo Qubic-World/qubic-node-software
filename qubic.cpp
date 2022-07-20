@@ -31,8 +31,8 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 20
-#define VERSION_C 2
+#define VERSION_B 21
+#define VERSION_C 0
 
 #define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
 
@@ -40,7 +40,7 @@ static const unsigned char knownPublicPeers[][4] = {
     { 88, 99, 67, 51 },
 };
 
-#define TICK 2502277
+#define TICK 2503262
 
 
 
@@ -3354,6 +3354,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define MAX_EFFECT_SIZE 1024
 #define MAX_ENERGY_AMOUNT (ISSUANCE_RATE * 1000)
 #define MAX_MESSAGE_SIZE 1024
+#define MAX_NUMBER_OF_DECIMATIONS 28
 #define MAX_NUMBER_OF_PROCESSORS 1024
 #define MAX_NUMBER_OF_PUBLIC_PEERS 256
 #define MAX_NUMBER_OF_EFFECTS_PER_TICK 0
@@ -3367,7 +3368,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define NUMBER_OF_OUTGOING_CONNECTIONS 4
 #define NUMBER_OF_INCOMING_CONNECTIONS 12
 #define NUMBER_OF_CLIENT_CONNECTIONS 100
-#define NUMBER_OF_NEURONS 4000
+#define NUMBER_OF_NEURONS 3000
 #define PEER_REFRESHING_PERIOD 15
 #define PORT 21841
 #define QUORUM (NUMBER_OF_COMPUTORS * 2 / 3 + 1)
@@ -3375,7 +3376,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define REVENUE_PUBLICATION_PERIOD 60
 #define SIGNATURE_SIZE 64
 #define SYSTEM_DATA_SAVING_PERIOD 60
-#define TICK_PUBLICATION_PERIOD 5
+#define TICK_PUBLICATION_PERIOD 15
 
 static __m256i ZERO;
 
@@ -3672,8 +3673,9 @@ static struct System
     short version;
     unsigned short epoch;
     unsigned int tick;
-    unsigned int tickCounters[NUMBER_OF_COMPUTORS];
     Computors computors;
+    unsigned int tickCounters[NUMBER_OF_COMPUTORS];
+    unsigned short decimationCounters[NUMBER_OF_COMPUTORS];
 } system, systemToSave, cachedSystem;
 static unsigned int tickNumberOfComputors = 0;
 static unsigned long long latestTickPublicationTick = 0, latestRevenuePublicationTick = 0;
@@ -4198,6 +4200,33 @@ static void requestProcessor(void* ProcedureArgument)
                                             bs->CopyMem(&latestTickSignatures[request->tick.computorIndex], (unsigned char*)processor->cache + requestHeader->size - SIGNATURE_SIZE - 8, SIGNATURE_SIZE);
                                         }
 #if NUMBER_OF_COMPUTING_PROCESSORS
+                                        else
+                                        {
+                                            if (request->tick.tick == latestTicks[request->tick.computorIndex].tick)
+                                            {
+                                                if (!_InterlockedCompareExchange8(&systemLock, 1, 0))
+                                                {
+                                                    if (system.decimationCounters[request->tick.computorIndex] < MAX_NUMBER_OF_DECIMATIONS)
+                                                    {
+                                                        bool isIdentical = true;
+                                                        unsigned char* oldTickBytes = (unsigned char*)&latestTicks[request->tick.computorIndex];
+                                                        unsigned char* newTickBytes = (unsigned char*)&request->tick;
+                                                        for (unsigned int i = 0; i < sizeof(Tick); i++)
+                                                        {
+                                                            if (newTickBytes[i] != oldTickBytes[i])
+                                                            {
+                                                                system.decimationCounters[request->tick.computorIndex]++;
+
+                                                                break;
+                                                            }
+                                                        }
+                                                    }
+
+                                                    _InterlockedCompareExchange8(&systemLock, 0, 1);
+                                                }
+                                            }
+                                        }
+
                                         if (!_InterlockedCompareExchange8(&systemLock, 1, 0))
                                         {
                                             if (request->tick.tick == system.tick + 1)
@@ -5230,11 +5259,12 @@ static BOOLEAN initialize()
             }
             else
             {
-                if (system.epoch < 13)
+                if (system.epoch < 14)
                 {
                     bs->SetMem(&system.tickCounters, sizeof(system.tickCounters), 0);
+                    bs->SetMem(&system.decimationCounters, sizeof(system.decimationCounters), 0);
                 }
-                system.epoch = 13;
+                system.epoch = 14;
                 if (system.tick < TICK)
                 {
                     system.tick = TICK;
@@ -5358,7 +5388,7 @@ static BOOLEAN initialize()
                     return FALSE;
                 }
 
-                miningData[0] ^= 442998;
+                miningData[0] ^= 941282;
 
                 unsigned char* miningDataBytes = (unsigned char*)miningData;
                 for (unsigned int i = 0; i < sizeof(computorPublicKey); i++)
@@ -5815,7 +5845,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         appendNumber(message, NUMBER_OF_MINING_PROCESSORS, TRUE);
                                         appendText(message, L"+");
                                         appendNumber(message, numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS), TRUE);
-                                        appendText(message, L" | Local score = ");
+                                        appendText(message, L" | Score = ");
                                         appendNumber(message, bestMiningScore, TRUE);
                                         appendText(message, L" (");
                                         appendNumber(message, (numberOfMiningIterations - prevNumberOfMiningIterations) * frequency / (curTimeTick - prevMiningPerformanceTick), TRUE);
@@ -6029,7 +6059,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 }
                                             }
 
-                                            if (ticks[bestTickIndex] > cachedSystem.tick + 2)
+                                            if (ticks[bestTickIndex] >= cachedSystem.tick + 2)
                                             {
                                                 system.tick++;
                                                 latestTickPublicationTick = 0;
@@ -6065,6 +6095,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
                                                 {
                                                     revenues.broadcastRevenues.revenues.revenuePercents[j] = (cachedSystem.tickCounters[j] >= maxCounter || !maxCounter) ? 100 : (unsigned char)(cachedSystem.tickCounters[j] * 100UL / maxCounter);
+                                                    for (unsigned int k = 0; k < cachedSystem.decimationCounters[j] && revenues.broadcastRevenues.revenues.revenuePercents[j]; k++)
+                                                    {
+                                                        revenues.broadcastRevenues.revenues.revenuePercents[j] = revenues.broadcastRevenues.revenues.revenuePercents[j] * 9 / 10;
+                                                    }
                                                 }
 
                                                 unsigned char digest[32];
@@ -7274,6 +7308,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
                             saveSystem();
+#endif
+#if NUMBER_OF_MINING_PROCESSORS
+                            saveSolution();
 #endif
 
                             setText(message, L"Qubic ");
