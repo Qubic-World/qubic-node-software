@@ -32,7 +32,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 21
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
 
@@ -4952,17 +4952,24 @@ static void minerProcessor(void* ProcedureArgument)
     {
         for (unsigned int iteration = 0; iteration < 1000; iteration++)
         {
-            unsigned int changedNeuronIndex;
+            unsigned int changedNeuronIndex, changedNeuronIndex2;
             _rdrand32_step(&changedNeuronIndex);
+            _rdrand32_step(&changedNeuronIndex2);
             changedNeuronIndex %= NUMBER_OF_NEURONS;
-            unsigned int changedInputIndex;
+            changedNeuronIndex2 %= NUMBER_OF_NEURONS;
+            unsigned int changedInputIndex, changedInputIndex2;
             _rdrand32_step(&changedInputIndex);
+            _rdrand32_step(&changedInputIndex2);
             changedInputIndex &= 1;
+            changedInputIndex2 &= 1;
             unsigned int prevNeuronLink = neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex];
+            unsigned int prevNeuronLink2 = neuronLinks[miningProcessorIndex][changedNeuronIndex2][changedInputIndex2];
             if (miningScore)
             {
                 _rdrand32_step(&neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex]);
+                _rdrand32_step(&neuronLinks[miningProcessorIndex][changedNeuronIndex2][changedInputIndex2]);
                 neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex] %= NUMBER_OF_NEURONS;
+                neuronLinks[miningProcessorIndex][changedNeuronIndex2][changedInputIndex2] %= NUMBER_OF_NEURONS;
             }
 
             unsigned char neuronValues[NUMBER_OF_NEURONS];
@@ -5015,6 +5022,7 @@ static void minerProcessor(void* ProcedureArgument)
             if (outputLength < miningScore)
             {
                 neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex] = prevNeuronLink;
+                neuronLinks[miningProcessorIndex][changedNeuronIndex2][changedInputIndex2] = prevNeuronLink2;
             }
             else
             {
