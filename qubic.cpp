@@ -31,8 +31,8 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 21
-#define VERSION_C 1
+#define VERSION_B 22
+#define VERSION_C 0
 
 #define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
 
@@ -40,7 +40,7 @@ static const unsigned char knownPublicPeers[][4] = {
     { 88, 99, 67, 51 },
 };
 
-#define TICK 2503262
+#define TICK 2504090
 
 
 
@@ -4952,24 +4952,17 @@ static void minerProcessor(void* ProcedureArgument)
     {
         for (unsigned int iteration = 0; iteration < 1000; iteration++)
         {
-            unsigned int changedNeuronIndex, changedNeuronIndex2;
+            unsigned int changedNeuronIndex;
             _rdrand32_step(&changedNeuronIndex);
-            _rdrand32_step(&changedNeuronIndex2);
             changedNeuronIndex %= NUMBER_OF_NEURONS;
-            changedNeuronIndex2 %= NUMBER_OF_NEURONS;
-            unsigned int changedInputIndex, changedInputIndex2;
+            unsigned int changedInputIndex;
             _rdrand32_step(&changedInputIndex);
-            _rdrand32_step(&changedInputIndex2);
             changedInputIndex &= 1;
-            changedInputIndex2 &= 1;
             unsigned int prevNeuronLink = neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex];
-            unsigned int prevNeuronLink2 = neuronLinks[miningProcessorIndex][changedNeuronIndex2][changedInputIndex2];
             if (miningScore)
             {
                 _rdrand32_step(&neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex]);
-                _rdrand32_step(&neuronLinks[miningProcessorIndex][changedNeuronIndex2][changedInputIndex2]);
                 neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex] %= NUMBER_OF_NEURONS;
-                neuronLinks[miningProcessorIndex][changedNeuronIndex2][changedInputIndex2] %= NUMBER_OF_NEURONS;
             }
 
             unsigned char neuronValues[NUMBER_OF_NEURONS];
@@ -5022,7 +5015,6 @@ static void minerProcessor(void* ProcedureArgument)
             if (outputLength < miningScore)
             {
                 neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex] = prevNeuronLink;
-                neuronLinks[miningProcessorIndex][changedNeuronIndex2][changedInputIndex2] = prevNeuronLink2;
             }
             else
             {
@@ -5267,12 +5259,12 @@ static BOOLEAN initialize()
             }
             else
             {
-                if (system.epoch < 14)
+                if (system.epoch < 15)
                 {
                     bs->SetMem(&system.tickCounters, sizeof(system.tickCounters), 0);
                     bs->SetMem(&system.decimationCounters, sizeof(system.decimationCounters), 0);
                 }
-                system.epoch = 14;
+                system.epoch = 15;
                 if (system.tick < TICK)
                 {
                     system.tick = TICK;
@@ -5396,7 +5388,7 @@ static BOOLEAN initialize()
                     return FALSE;
                 }
 
-                miningData[0] ^= 941282;
+                miningData[0] ^= 779376;
 
                 unsigned char* miningDataBytes = (unsigned char*)miningData;
                 for (unsigned int i = 0; i < sizeof(computorPublicKey); i++)
@@ -5992,7 +5984,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 counters[j] = 0;
                                             }
                                         }
-                                        if (tickNumberOfComputors >= QUORUM)
+                                        if (tickNumberOfComputors >= NUMBER_OF_COMPUTORS + 1/*QUORUM*/)
                                         {
                                             tickNumberOfComputors = 0;
                                             latestTickPublicationTick = 0;
