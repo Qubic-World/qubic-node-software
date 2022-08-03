@@ -31,16 +31,15 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 22
+#define VERSION_B 23
 #define VERSION_C 0
 
-#define ADMIN "LGBPOLGKLJIKFJCEEDBLIBCCANAHFAFLGEFPEABCHFNAKMKOOBBKGHNDFFKINEGLBBMMIH"
+#define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
 static const unsigned char knownPublicPeers[][4] = {
-    { 88, 99, 67, 51 },
 };
 
-#define TICK 2504090
+#define TICK 2504091
 
 
 
@@ -3368,8 +3367,8 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define NUMBER_OF_OUTGOING_CONNECTIONS 4
 #define NUMBER_OF_INCOMING_CONNECTIONS 12
 #define NUMBER_OF_CLIENT_CONNECTIONS 100
-#define NUMBER_OF_NEURONS 3000
-#define PEER_REFRESHING_PERIOD 15
+#define NUMBER_OF_NEURONS 10000
+#define PEER_REFRESHING_PERIOD 60
 #define PORT 21841
 #define QUORUM (NUMBER_OF_COMPUTORS * 2 / 3 + 1)
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 60
@@ -3739,7 +3738,7 @@ static unsigned int knownMiningScore = 0;
 static long long prevNumberOfMiningIterations = 0;
 static unsigned long long prevMiningPerformanceTick = 0;
 #if NUMBER_OF_MINING_PROCESSORS
-static unsigned long long miningData[15625000];
+static unsigned long long miningData[65536];
 static unsigned int bestNeuronLinks[NUMBER_OF_NEURONS][2];
 static volatile char neuronNetworkLock = 0;
 static EFI_EVENT minerEvents[NUMBER_OF_MINING_PROCESSORS];
@@ -5259,12 +5258,12 @@ static BOOLEAN initialize()
             }
             else
             {
-                if (system.epoch < 15)
+                if (system.epoch < 16)
                 {
                     bs->SetMem(&system.tickCounters, sizeof(system.tickCounters), 0);
                     bs->SetMem(&system.decimationCounters, sizeof(system.decimationCounters), 0);
                 }
-                system.epoch = 15;
+                system.epoch = 16;
                 if (system.tick < TICK)
                 {
                     system.tick = TICK;
@@ -5388,7 +5387,7 @@ static BOOLEAN initialize()
                     return FALSE;
                 }
 
-                miningData[0] ^= 779376;
+                miningData[0] ^= 492754;
 
                 unsigned char* miningDataBytes = (unsigned char*)miningData;
                 for (unsigned int i = 0; i < sizeof(computorPublicKey); i++)
@@ -5984,7 +5983,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 counters[j] = 0;
                                             }
                                         }
-                                        if (tickNumberOfComputors >= NUMBER_OF_COMPUTORS + 1/*QUORUM*/)
+                                        if (tickNumberOfComputors >= QUORUM)
                                         {
                                             tickNumberOfComputors = 0;
                                             latestTickPublicationTick = 0;
