@@ -32,13 +32,14 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 23
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
 static const unsigned char knownPublicPeers[][4] = {
 };
 
+#define EPOCH 16
 #define TICK 2504091
 
 
@@ -4946,21 +4947,19 @@ static void minerProcessor(void* ProcedureArgument)
 
     bs->CopyMem(neuronLinks[miningProcessorIndex], bestNeuronLinks, sizeof(bestNeuronLinks));
 
-    unsigned int step;
-    _rdrand32_step(&step);
-    step %= (NUMBER_OF_NEURONS * NUMBER_OF_NEURONS * 2);
+    unsigned int step = miningProcessorIndex * (NUMBER_OF_NEURONS * NUMBER_OF_NEURONS * 2) / NUMBER_OF_MINING_PROCESSORS;
 
     unsigned int miningScore = 0;
     while (!state)
     {
         for (unsigned int iteration = 0; iteration < 1000; iteration++)
         {
-            if (++step == NUMBER_OF_NEURONS * NUMBER_OF_NEURONS * 2)
+            if (++step == (miningProcessorIndex + 1) * (NUMBER_OF_NEURONS * NUMBER_OF_NEURONS * 2) / NUMBER_OF_MINING_PROCESSORS)
             {
-                step = 0;
+                step = miningProcessorIndex * (NUMBER_OF_NEURONS * NUMBER_OF_NEURONS * 2) / NUMBER_OF_MINING_PROCESSORS;
             }
 
-            unsigned int changedNeuronIndex = (step % (NUMBER_OF_NEURONS * 2)) / 2;
+            unsigned int changedNeuronIndex = (step % (NUMBER_OF_NEURONS * 2)) >> 1;
             //_rdrand32_step(&changedNeuronIndex);
             //changedNeuronIndex %= NUMBER_OF_NEURONS;
             unsigned int changedInputIndex = step & 1;
@@ -5268,12 +5267,12 @@ static BOOLEAN initialize()
             }
             else
             {
-                if (system.epoch < 16)
+                if (system.epoch < EPOCH)
                 {
                     bs->SetMem(&system.tickCounters, sizeof(system.tickCounters), 0);
                     bs->SetMem(&system.decimationCounters, sizeof(system.decimationCounters), 0);
                 }
-                system.epoch = 16;
+                system.epoch = EPOCH;
                 if (system.tick < TICK)
                 {
                     system.tick = TICK;
