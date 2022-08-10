@@ -23,7 +23,6 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 #define COMPUTOR "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 #define SYSTEM_DATA_FILE_NAME L"system.data"
 #define LEDGER_DATA_FILE_NAME L"ledger.data"
-#define MINING_DATA_FILE_NAME L"mining.data"
 #define SOLUTION_DATA_FILE_NAME L"solution.data"
 
 
@@ -31,16 +30,16 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 23
-#define VERSION_C 1
+#define VERSION_B 24
+#define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
 static const unsigned char knownPublicPeers[][4] = {
 };
 
-#define EPOCH 16
-#define TICK 2504091
+#define EPOCH 17
+#define TICK 2504581
 
 
 
@@ -3368,7 +3367,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define NUMBER_OF_OUTGOING_CONNECTIONS 4
 #define NUMBER_OF_INCOMING_CONNECTIONS 12
 #define NUMBER_OF_CLIENT_CONNECTIONS 100
-#define NUMBER_OF_NEURONS 10000
+#define NUMBER_OF_NEURONS 1000
 #define PEER_REFRESHING_PERIOD 60
 #define PORT 21841
 #define QUORUM (NUMBER_OF_COMPUTORS * 2 / 3 + 1)
@@ -5370,40 +5369,17 @@ static BOOLEAN initialize()
 #endif
 
 #if NUMBER_OF_MINING_PROCESSORS
-        if (status = root->Open(root, (void**)&dataFile, (CHAR16*)MINING_DATA_FILE_NAME, EFI_FILE_MODE_READ, 0))
+
+        miningData[0] = 'Q';
+        miningData[1] = 'u';
+        miningData[2] = 'b';
+        miningData[3] = 'i';
+        miningData[4] = 'c';
+        KangarooTwelve((unsigned char*)miningData, 5 * sizeof(unsigned long long), (unsigned char*)miningData, sizeof(miningData));
+        unsigned char* miningDataBytes = (unsigned char*)miningData;
+        for (unsigned int i = 0; i < sizeof(computorPublicKey); i++)
         {
-            logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status);
-
-            return FALSE;
-        }
-        else
-        {
-            unsigned long long size = sizeof(miningData);
-            status = dataFile->Read(dataFile, &size, &miningData);
-            dataFile->Close(dataFile);
-            if (status)
-            {
-                logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status);
-
-                return FALSE;
-            }
-            else
-            {
-                if (size < sizeof(miningData))
-                {
-                    log(L"Mining data file is too small!");
-
-                    return FALSE;
-                }
-
-                miningData[0] ^= 492754;
-
-                unsigned char* miningDataBytes = (unsigned char*)miningData;
-                for (unsigned int i = 0; i < sizeof(computorPublicKey); i++)
-                {
-                    miningDataBytes[i] ^= computorPublicKey[i];
-                }
-            }
+            miningDataBytes[i] ^= computorPublicKey[i];
         }
 
         if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SOLUTION_DATA_FILE_NAME, EFI_FILE_MODE_READ, 0))
