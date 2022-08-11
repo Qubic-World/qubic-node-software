@@ -9,7 +9,7 @@
 
 // Do NOT share the data of "Private Settings" section with anybody!!!
 static unsigned char ownSeeds[][55 + 1] = {
-    "<seed1>"
+    "seed1"
 };
 
 static const unsigned char ownAddress[4] = { 0, 0, 0, 0 };
@@ -31,7 +31,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 24
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -4956,6 +4956,34 @@ static void minerProcessor(void* ProcedureArgument)
             if (++step == (miningProcessorIndex + 1) * (NUMBER_OF_NEURONS * NUMBER_OF_NEURONS * 2) / NUMBER_OF_MINING_PROCESSORS)
             {
                 step = miningProcessorIndex * (NUMBER_OF_NEURONS * NUMBER_OF_NEURONS * 2) / NUMBER_OF_MINING_PROCESSORS;
+
+                while (_InterlockedCompareExchange8(&neuronNetworkLock, 1, 0))
+                {
+                    _mm_pause();
+                }
+                bs->CopyMem(neuronLinks[miningProcessorIndex], bestNeuronLinks, sizeof(bestNeuronLinks));
+                _InterlockedCompareExchange8(&neuronNetworkLock, 0, 1);
+
+                unsigned int random;
+                _rdrand32_step(&random);
+                if (random & 1)
+                {
+/*                    unsigned int changedNeuronIndex;
+                    _rdrand32_step(&changedNeuronIndex);
+                    changedNeuronIndex %= NUMBER_OF_NEURONS;
+                    unsigned int changedInputIndex;
+                    _rdrand32_step(&changedInputIndex);
+                    changedInputIndex &= 1;
+                    _rdrand32_step(&neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex]);
+                    neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex] %= NUMBER_OF_NEURONS;*/
+                    for (unsigned int i = 0; i < NUMBER_OF_NEURONS; i++)
+                    {
+                        _rdrand32_step(&neuronLinks[miningProcessorIndex][i][0]);
+                        _rdrand32_step(&neuronLinks[miningProcessorIndex][i][1]);
+                        neuronLinks[miningProcessorIndex][i][0] %= NUMBER_OF_NEURONS;
+                        neuronLinks[miningProcessorIndex][i][1] %= NUMBER_OF_NEURONS;
+                    }
+                }
             }
 
             unsigned int changedNeuronIndex = (step % (NUMBER_OF_NEURONS * 2)) >> 1;
@@ -5821,7 +5849,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 #if NUMBER_OF_MINING_PROCESSORS
                                     unsigned long long random;
                                     _rdrand64_step(&random);
-                                    if (bestMiningScore >= 0 && !(random % 5))
+                                    if (bestMiningScore >= 0 /*&& !(random % 5)*/)
                                     {
                                         setText(message, L"1+");
                                         appendNumber(message, NUMBER_OF_COMPUTING_PROCESSORS, TRUE);
