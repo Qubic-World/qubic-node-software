@@ -4947,11 +4947,12 @@ static void minerProcessor(void* ProcedureArgument)
     bs->CopyMem(neuronLinks[miningProcessorIndex], bestNeuronLinks, sizeof(bestNeuronLinks));
 
     unsigned int step = miningProcessorIndex * (NUMBER_OF_NEURONS * NUMBER_OF_NEURONS * 2) / NUMBER_OF_MINING_PROCESSORS;
+    unsigned int step2 = 0;
 
     unsigned int miningScore = 0;
     while (!state)
     {
-        for (unsigned int iteration = 0; iteration < 1000; iteration++)
+        for (unsigned int iteration = 0; iteration < 10000; iteration++)
         {
             if (++step == (miningProcessorIndex + 1) * (NUMBER_OF_NEURONS * NUMBER_OF_NEURONS * 2) / NUMBER_OF_MINING_PROCESSORS)
             {
@@ -4964,26 +4965,13 @@ static void minerProcessor(void* ProcedureArgument)
                 bs->CopyMem(neuronLinks[miningProcessorIndex], bestNeuronLinks, sizeof(bestNeuronLinks));
                 _InterlockedCompareExchange8(&neuronNetworkLock, 0, 1);
 
-                unsigned int random;
-                _rdrand32_step(&random);
-                if (random & 1)
+                if (++step2 == (NUMBER_OF_NEURONS * NUMBER_OF_NEURONS * 2))
                 {
-/*                    unsigned int changedNeuronIndex;
-                    _rdrand32_step(&changedNeuronIndex);
-                    changedNeuronIndex %= NUMBER_OF_NEURONS;
-                    unsigned int changedInputIndex;
-                    _rdrand32_step(&changedInputIndex);
-                    changedInputIndex &= 1;
-                    _rdrand32_step(&neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex]);
-                    neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex] %= NUMBER_OF_NEURONS;*/
-                    for (unsigned int i = 0; i < NUMBER_OF_NEURONS; i++)
-                    {
-                        _rdrand32_step(&neuronLinks[miningProcessorIndex][i][0]);
-                        _rdrand32_step(&neuronLinks[miningProcessorIndex][i][1]);
-                        neuronLinks[miningProcessorIndex][i][0] %= NUMBER_OF_NEURONS;
-                        neuronLinks[miningProcessorIndex][i][1] %= NUMBER_OF_NEURONS;
-                    }
+                    step2 = 0;
                 }
+                unsigned int changedNeuronIndex = (step2 % (NUMBER_OF_NEURONS * 2)) >> 1;
+                unsigned int changedInputIndex = step2 & 1;
+                neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex] = step2 / (NUMBER_OF_NEURONS * 2);
             }
 
             unsigned int changedNeuronIndex = (step % (NUMBER_OF_NEURONS * 2)) >> 1;
