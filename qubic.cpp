@@ -9,7 +9,7 @@
 
 // Do NOT share the data of "Private Settings" section with anybody!!!
 static unsigned char ownSeeds[][55 + 1] = {
-    "seed1"
+    "<seed1>"
 };
 
 static const unsigned char ownAddress[4] = { 0, 0, 0, 0 };
@@ -31,7 +31,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 24
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -3346,7 +3346,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 
 ////////// Qubic \\\\\\\\\\
 
-#define BUFFER_SIZE 4194304
+#define BUFFER_SIZE 1048576
 #define DEJAVU_SWAP_LIMIT 2621440 // False duplicate chance < 2%
 #define ISSUANCE_RATE 1000000000000
 #define MAX_ANSWER_SIZE 1024
@@ -3364,8 +3364,8 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define MIN_ENERGY_AMOUNT 1000000
 #define NUMBER_OF_COMPUTORS (26 * 26)
 #define NUMBER_OF_EXCHANGED_PEERS 4
-#define NUMBER_OF_OUTGOING_CONNECTIONS 4
-#define NUMBER_OF_INCOMING_CONNECTIONS 12
+#define NUMBER_OF_OUTGOING_CONNECTIONS 16
+#define NUMBER_OF_INCOMING_CONNECTIONS 48
 #define NUMBER_OF_CLIENT_CONNECTIONS 100
 #define NUMBER_OF_NEURONS 1000
 #define PEER_REFRESHING_PERIOD 60
@@ -4057,15 +4057,18 @@ inline long long ms(unsigned short year, unsigned char month, unsigned char day,
 
 static void push(Peer* peer, RequestResponseHeader* requestResponseHeader)
 {
-    if (peer->dataToTransmitSize + requestResponseHeader->size > BUFFER_SIZE)
+    if (!peer->dataToTransmitSize)
     {
-        peer->dataToTransmitSize = 0;
+        if (peer->dataToTransmitSize + requestResponseHeader->size > BUFFER_SIZE)
+        {
+            peer->dataToTransmitSize = 0;
+        }
+
+        bs->CopyMem(&peer->dataToTransmit[peer->dataToTransmitSize], requestResponseHeader, requestResponseHeader->size);
+        peer->dataToTransmitSize += requestResponseHeader->size;
+
+        _InterlockedIncrement64(&numberOfDisseminatedRequests);
     }
-
-    bs->CopyMem(&peer->dataToTransmit[peer->dataToTransmitSize], requestResponseHeader, requestResponseHeader->size);
-    peer->dataToTransmitSize += requestResponseHeader->size;
-
-    _InterlockedIncrement64(&numberOfDisseminatedRequests);
 }
 
 static void pushToAll(RequestResponseHeader* requestResponseHeader)
@@ -4974,18 +4977,18 @@ static void minerProcessor(void* ProcedureArgument)
                 neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex] = step2 / (NUMBER_OF_NEURONS * 2);
             }
 
-            unsigned int changedNeuronIndex = (step % (NUMBER_OF_NEURONS * 2)) >> 1;
-            //_rdrand32_step(&changedNeuronIndex);
-            //changedNeuronIndex %= NUMBER_OF_NEURONS;
-            unsigned int changedInputIndex = step & 1;
-            //_rdrand32_step(&changedInputIndex);
-            //changedInputIndex &= 1;
+            unsigned int changedNeuronIndex/* = (step % (NUMBER_OF_NEURONS * 2)) >> 1*/;
+            _rdrand32_step(&changedNeuronIndex);
+            changedNeuronIndex %= NUMBER_OF_NEURONS;
+            unsigned int changedInputIndex/* = step & 1*/;
+            _rdrand32_step(&changedInputIndex);
+            changedInputIndex &= 1;
             unsigned int prevNeuronLink = neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex];
             if (miningScore)
             {
-                neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex] = step / (NUMBER_OF_NEURONS * 2);
-                //_rdrand32_step(&neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex]);
-                //neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex] %= NUMBER_OF_NEURONS;
+                //neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex] = step / (NUMBER_OF_NEURONS * 2);
+                _rdrand32_step(&neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex]);
+                neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex] %= NUMBER_OF_NEURONS;
             }
 
             unsigned char neuronValues[NUMBER_OF_NEURONS];
