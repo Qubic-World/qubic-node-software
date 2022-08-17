@@ -20,26 +20,27 @@ static const unsigned char defaultRouteGateway[4] = { 0, 0, 0, 0 };
 static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define OPERATOR "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-#define COMPUTOR "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+#define COMPUTOR "EEHHKLAELFGOMOEILMMPEAMGBHPNHJBKEAIINBIJDKGFPCABKGJEKLMGANFADFMJFCDFAL"
+//#define COMPUTOR "JCCLBNJPHMJAMNHGIHFNOELGHLNAPHCFNIKPEEJDJFJAGMPDKHHLLMKGDDAAGFMBFEEKBB"
+//#define COMPUTOR "BHPHBBGDAFALKKNLPFJMLBOMJKFCBBBICFEPAKPDIPOBGLOFJNJIPJIGNANELFCNFAOCFF"
 #define SYSTEM_DATA_FILE_NAME L"system.data"
 #define LEDGER_DATA_FILE_NAME L"ledger.data"
-#define SOLUTION_DATA_FILE_NAME L"solution.data"
 
 
 
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 24
-#define VERSION_C 2
+#define VERSION_B 25
+#define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
 static const unsigned char knownPublicPeers[][4] = {
 };
 
-#define EPOCH 17
-#define TICK 2504581
+#define EPOCH 18
+#define TICK 2504661
 
 
 
@@ -3367,13 +3368,15 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define NUMBER_OF_OUTGOING_CONNECTIONS 16
 #define NUMBER_OF_INCOMING_CONNECTIONS 48
 #define NUMBER_OF_CLIENT_CONNECTIONS 100
-#define NUMBER_OF_NEURONS 1000
+#define NUMBER_OF_NEURONS 100000
 #define PEER_REFRESHING_PERIOD 60
 #define PORT 21841
 #define QUORUM (NUMBER_OF_COMPUTORS * 2 / 3 + 1)
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 60
 #define REVENUE_PUBLICATION_PERIOD 60
 #define SIGNATURE_SIZE 64
+#define SOLUTION_DURATION 10000
+#define SOLUTION_THRESHOLD 100
 #define SYSTEM_DATA_SAVING_PERIOD 60
 #define TICK_PUBLICATION_PERIOD 15
 
@@ -3733,16 +3736,15 @@ static unsigned long long totalRatingOfPublicPeers = 0;
 static EFI_EVENT computorEvents[NUMBER_OF_COMPUTING_PROCESSORS];
 #endif
 
-static volatile unsigned int bestMiningScore = 0;
-static unsigned int knownMiningScore = 0;
+static volatile char solutionFlag = 0;
+static unsigned char solutionNonce[32];
 static long long prevNumberOfMiningIterations = 0;
 static unsigned long long prevMiningPerformanceTick = 0;
 #if NUMBER_OF_MINING_PROCESSORS
 static unsigned long long miningData[65536];
-static unsigned int bestNeuronLinks[NUMBER_OF_NEURONS][2];
-static volatile char neuronNetworkLock = 0;
 static EFI_EVENT minerEvents[NUMBER_OF_MINING_PROCESSORS];
 static unsigned int neuronLinks[NUMBER_OF_MINING_PROCESSORS][NUMBER_OF_NEURONS][2];
+static unsigned char neuronValues[NUMBER_OF_MINING_PROCESSORS][NUMBER_OF_NEURONS];
 static volatile long long numberOfMiningIterations = 0;
 
 static struct
@@ -4947,132 +4949,14 @@ static void minerProcessor(void* ProcedureArgument)
 
     const unsigned int miningProcessorIndex = (unsigned int)((unsigned long long)ProcedureArgument);
 
-    bs->CopyMem(neuronLinks[miningProcessorIndex], bestNeuronLinks, sizeof(bestNeuronLinks));
-
-    unsigned int step = miningProcessorIndex * (NUMBER_OF_NEURONS * NUMBER_OF_NEURONS * 2) / NUMBER_OF_MINING_PROCESSORS;
-    unsigned int step2 = 0;
-
-    unsigned int miningScore = 0;
-    while (!state)
+    unsigned char extendedNonce[64];
+    bs->CopyMem(&extendedNonce[32], computorPublicKey, sizeof(computorPublicKey));
+    while (state)
     {
-        for (unsigned int iteration = 0; iteration < 10000; iteration++)
-        {
-            if (++step == (miningProcessorIndex + 1) * (NUMBER_OF_NEURONS * NUMBER_OF_NEURONS * 2) / NUMBER_OF_MINING_PROCESSORS)
-            {
-                step = miningProcessorIndex * (NUMBER_OF_NEURONS * NUMBER_OF_NEURONS * 2) / NUMBER_OF_MINING_PROCESSORS;
-
-                while (_InterlockedCompareExchange8(&neuronNetworkLock, 1, 0))
-                {
-                    _mm_pause();
-                }
-                bs->CopyMem(neuronLinks[miningProcessorIndex], bestNeuronLinks, sizeof(bestNeuronLinks));
-                _InterlockedCompareExchange8(&neuronNetworkLock, 0, 1);
-
-                if (++step2 == (NUMBER_OF_NEURONS * NUMBER_OF_NEURONS * 2))
-                {
-                    step2 = 0;
-                }
-                unsigned int changedNeuronIndex = (step2 % (NUMBER_OF_NEURONS * 2)) >> 1;
-                unsigned int changedInputIndex = step2 & 1;
-                neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex] = step2 / (NUMBER_OF_NEURONS * 2);
-            }
-
-            unsigned int changedNeuronIndex/* = (step % (NUMBER_OF_NEURONS * 2)) >> 1*/;
-            _rdrand32_step(&changedNeuronIndex);
-            changedNeuronIndex %= NUMBER_OF_NEURONS;
-            unsigned int changedInputIndex/* = step & 1*/;
-            _rdrand32_step(&changedInputIndex);
-            changedInputIndex &= 1;
-            unsigned int prevNeuronLink = neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex];
-            if (miningScore)
-            {
-                //neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex] = step / (NUMBER_OF_NEURONS * 2);
-                _rdrand32_step(&neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex]);
-                neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex] %= NUMBER_OF_NEURONS;
-            }
-
-            unsigned char neuronValues[NUMBER_OF_NEURONS];
-            bs->SetMem(neuronValues, sizeof(neuronValues), 0xFF);
-
-            unsigned int limiter = 1000;
-            unsigned int outputLength = 0;
-            while (true)
-            {
-                const unsigned int prevValue0 = neuronValues[NUMBER_OF_NEURONS - 1];
-                const unsigned int prevValue1 = neuronValues[NUMBER_OF_NEURONS - 2];
-
-                for (unsigned int i = 0; i < NUMBER_OF_NEURONS; i++)
-                {
-                    neuronValues[i] = ~(neuronValues[neuronLinks[miningProcessorIndex][i][0]] & neuronValues[neuronLinks[miningProcessorIndex][i][1]]);
-                }
-
-                if (neuronValues[NUMBER_OF_NEURONS - 1] != prevValue0
-                    && neuronValues[NUMBER_OF_NEURONS - 2] == prevValue1)
-                {
-                    if ((miningData[outputLength >> 6] >> (outputLength & 63)) & 1)
-                    {
-                        break;
-                    }
-
-                    outputLength++;
-                }
-                else
-                {
-                    if (neuronValues[NUMBER_OF_NEURONS - 2] != prevValue1
-                        && neuronValues[NUMBER_OF_NEURONS - 1] == prevValue0)
-                    {
-                        if (!((miningData[outputLength >> 6] >> (outputLength & 63)) & 1))
-                        {
-                            break;
-                        }
-
-                        outputLength++;
-                    }
-                    else
-                    {
-                        if (!(--limiter))
-                        {
-                            break;
-                        }
-                    }
-                }
-            }
-
-            if (outputLength < miningScore)
-            {
-                neuronLinks[miningProcessorIndex][changedNeuronIndex][changedInputIndex] = prevNeuronLink;
-            }
-            else
-            {
-                miningScore = outputLength;
-            }
-
-            _InterlockedIncrement64(&numberOfMiningIterations);
-        }
-
-        if (miningScore > bestMiningScore)
-        {
-            while (_InterlockedCompareExchange8(&neuronNetworkLock, 1, 0))
-            {
-                _mm_pause();
-            }
-            bestMiningScore = miningScore;
-            bs->CopyMem(bestNeuronLinks, neuronLinks[miningProcessorIndex], sizeof(bestNeuronLinks));
-            _InterlockedCompareExchange8(&neuronNetworkLock, 0, 1);
-        }
-        else
-        {
-            if (!miningScore)
-            {
-                for (unsigned int i = 0; i < NUMBER_OF_NEURONS; i++)
-                {
-                    _rdrand32_step(&neuronLinks[miningProcessorIndex][i][0]);
-                    _rdrand32_step(&neuronLinks[miningProcessorIndex][i][1]);
-                    neuronLinks[miningProcessorIndex][i][0] %= NUMBER_OF_NEURONS;
-                    neuronLinks[miningProcessorIndex][i][1] %= NUMBER_OF_NEURONS;
-                }
-            }
-        }
+        _rdrand64_step((unsigned long long*)&extendedNonce[0]);
+        _rdrand64_step((unsigned long long*)&extendedNonce[8]);
+        _rdrand64_step((unsigned long long*)&extendedNonce[16]);
+        _rdrand64_step((unsigned long long*)&extendedNonce[24]);
     }
 }
 
@@ -5161,33 +5045,6 @@ static void saveLedger()
         dataFile->Close(dataFile);
 
         _InterlockedCompareExchange8(&entitiesLock, 0, 1);
-    }
-}
-#endif
-
-#if NUMBER_OF_MINING_PROCESSORS
-static void saveSolution()
-{
-    EFI_FILE_PROTOCOL* dataFile;
-    EFI_STATUS status;
-    if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SOLUTION_DATA_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0))
-    {
-        logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status);
-    }
-    else
-    {
-        unsigned long long size = sizeof(bestNeuronLinks);
-        while (_InterlockedCompareExchange8(&neuronNetworkLock, 1, 0))
-        {
-            _mm_pause();
-        }
-        status = dataFile->Write(dataFile, &size, &bestNeuronLinks);
-        _InterlockedCompareExchange8(&neuronNetworkLock, 0, 1);
-        dataFile->Close(dataFile);
-        if (status)
-        {
-            logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status);
-        }
     }
 }
 #endif
@@ -5388,59 +5245,12 @@ static BOOLEAN initialize()
 #endif
 
 #if NUMBER_OF_MINING_PROCESSORS
-
         miningData[0] = 'Q';
         miningData[1] = 'u';
         miningData[2] = 'b';
         miningData[3] = 'i';
         miningData[4] = 'c';
         KangarooTwelve((unsigned char*)miningData, 5 * sizeof(unsigned long long), (unsigned char*)miningData, sizeof(miningData));
-        unsigned char* miningDataBytes = (unsigned char*)miningData;
-        for (unsigned int i = 0; i < sizeof(computorPublicKey); i++)
-        {
-            miningDataBytes[i] ^= computorPublicKey[i];
-        }
-
-        if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SOLUTION_DATA_FILE_NAME, EFI_FILE_MODE_READ, 0))
-        {
-            logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status);
-
-            return FALSE;
-        }
-        else
-        {
-            unsigned long long size = sizeof(bestNeuronLinks);
-            status = dataFile->Read(dataFile, &size, &bestNeuronLinks);
-            dataFile->Close(dataFile);
-            if (status)
-            {
-                logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status);
-
-                return FALSE;
-            }
-            else
-            {
-                if (size < sizeof(bestNeuronLinks))
-                {
-                    if (!size)
-                    {
-                        for (unsigned int i = 0; i < NUMBER_OF_NEURONS; i++)
-                        {
-                            _rdrand32_step(&bestNeuronLinks[i][0]);
-                            _rdrand32_step(&bestNeuronLinks[i][1]);
-                            bestNeuronLinks[i][0] %= NUMBER_OF_NEURONS;
-                            bestNeuronLinks[i][1] %= NUMBER_OF_NEURONS;
-                        }
-                    }
-                    else
-                    {
-                        log(L"Solution data file is too small!");
-
-                        return FALSE;
-                    }
-                }
-            }
-        }
 #endif
     }
 #endif
@@ -5837,10 +5647,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         }
                                     }
 
-#if NUMBER_OF_MINING_PROCESSORS
+//#if NUMBER_OF_MINING_PROCESSORS
                                     unsigned long long random;
                                     _rdrand64_step(&random);
-                                    if (bestMiningScore >= 0 /*&& !(random % 5)*/)
+                                    if (true /*&& !(random % 5)*/)
                                     {
                                         setText(message, L"1+");
                                         appendNumber(message, NUMBER_OF_COMPUTING_PROCESSORS, TRUE);
@@ -5849,11 +5659,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         appendText(message, L"+");
                                         appendNumber(message, numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS), TRUE);
                                         appendText(message, L" | Score = ");
-                                        appendNumber(message, bestMiningScore, TRUE);
+                                        appendNumber(message, 0, TRUE);
                                         appendText(message, L" (");
-                                        appendNumber(message, (numberOfMiningIterations - prevNumberOfMiningIterations) * frequency / (curTimeTick - prevMiningPerformanceTick), TRUE);
+                                        appendNumber(message, /*(numberOfMiningIterations - prevNumberOfMiningIterations)* frequency / (curTimeTick - prevMiningPerformanceTick)*/0, TRUE);
                                         prevMiningPerformanceTick = curTimeTick;
-                                        prevNumberOfMiningIterations = numberOfMiningIterations;
+                                        //prevNumberOfMiningIterations = numberOfMiningIterations;
                                         appendText(message, L" it/s);");
 #if NUMBER_OF_COMPUTING_PROCESSORS
                                         appendText(message, L" computor index = ");
@@ -5879,7 +5689,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 #endif
                                         log(message);
                                     }
-#endif
+//#endif
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
                                     while (_InterlockedCompareExchange8(&computorsLock, 1, 0))
