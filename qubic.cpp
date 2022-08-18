@@ -32,7 +32,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 25
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -4057,9 +4057,9 @@ inline long long ms(unsigned short year, unsigned char month, unsigned char day,
     return (((((long long)dayIndex(year, month, day)) * 24 + hour) * 60 + minute) * 60 + second) * 1000 + millisecond;
 }
 
-static void push(Peer* peer, RequestResponseHeader* requestResponseHeader)
+static void push(Peer* peer, RequestResponseHeader* requestResponseHeader, bool isEnforced)
 {
-    if (!peer->dataToTransmitSize)
+    if (isEnforced || !peer->dataToTransmitSize)
     {
         if (peer->dataToTransmitSize + requestResponseHeader->size > BUFFER_SIZE)
         {
@@ -4073,13 +4073,13 @@ static void push(Peer* peer, RequestResponseHeader* requestResponseHeader)
     }
 }
 
-static void pushToAll(RequestResponseHeader* requestResponseHeader)
+static void pushToAll(RequestResponseHeader* requestResponseHeader, bool isEnforced)
 {
     for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
     {
         if (peers[i].tcp4Protocol && peers[i].isConnectedAccepted && peers[i].exchangedPublicPeers && !peers[i].isClosing)
         {
-            push(&peers[i], requestResponseHeader);
+            push(&peers[i], requestResponseHeader, isEnforced);
         }
     }
 }
@@ -4614,7 +4614,7 @@ static void requestProcessor(void* ProcedureArgument)
                                 //log(L"Receives a message for self.");
                             }*/
 
-                            pushToAll(responseHeader);
+                            pushToAll(responseHeader, false);
                         }
                     }
                 }
@@ -4633,7 +4633,7 @@ static void requestProcessor(void* ProcedureArgument)
                         request->transfer.sourcePublicKey[0] ^= BROADCAST_TRANSFER;
                         if (verify(request->transfer.sourcePublicKey, digest, ((const unsigned char*)processor->cache + requestHeader->size - SIGNATURE_SIZE)))
                         {
-                            pushToAll(responseHeader);
+                            pushToAll(responseHeader, false);
                         }
                     }
                 }
@@ -4650,7 +4650,7 @@ static void requestProcessor(void* ProcedureArgument)
                         request->effect.sourcePublicKey[0] ^= BROADCAST_EFFECT;
                         if (verify(request->effect.sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastEffect) + request->effect.effectSize)))
                         {
-                            pushToAll(responseHeader);
+                            pushToAll(responseHeader, false);
                         }
                     }
                 }
@@ -4667,7 +4667,7 @@ static void requestProcessor(void* ProcedureArgument)
                         request->question.sourcePublicKey[0] ^= BROADCAST_QUESTION;
                         if (verify(request->question.sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastQuestion) + request->question.questionSize)))
                         {
-                            pushToAll(responseHeader);
+                            pushToAll(responseHeader, false);
                         }
                     }
                 }
@@ -4689,19 +4689,19 @@ static void requestProcessor(void* ProcedureArgument)
                                 request->answer.computorIndex ^= BROADCAST_ANSWER;
                                 if (verify(computors.publicKeys[request->answer.computorIndex], digest, ((const unsigned char*)request + sizeof(BroadcastAnswer) + request->answer.answerSize)))
                                 {
-                                    pushToAll(responseHeader);
+                                    pushToAll(responseHeader, false);
                                 }
                             }
                             else
                             {
-                                pushToAll(responseHeader);
+                                pushToAll(responseHeader, false);
                             }
 
                             _InterlockedCompareExchange8(&computorsLock, 0, 1);
                         }
                         else
                         {
-                            pushToAll(responseHeader);
+                            pushToAll(responseHeader, false);
                         }
                     }
                 }
@@ -5766,7 +5766,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     {
                                                         if (peers[j].tcp4Protocol && peers[j].isConnectedAccepted && peers[j].exchangedPublicPeers && !peers[j].isClosing)
                                                         {
-                                                            push(&peers[j], &tick.header);
+                                                            push(&peers[j], &tick.header, true);
                                                         }
                                                     }
                                                 }
@@ -5932,7 +5932,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 {
                                                     if (peers[j].tcp4Protocol && peers[j].isConnectedAccepted && peers[j].exchangedPublicPeers && !peers[j].isClosing)
                                                     {
-                                                        push(&peers[j], &revenues.header);
+                                                        push(&peers[j], &revenues.header, true);
                                                     }
                                                 }
                                             }
@@ -6214,7 +6214,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                         if (peers[j].tcp4Protocol && peers[j].isConnectedAccepted && peers[j].exchangedPublicPeers && !peers[j].isClosing
                                                                             && j != i)
                                                                         {
-                                                                            push(&peers[j], requestResponseHeader);
+                                                                            push(&peers[j], requestResponseHeader, false);
                                                                         }
                                                                     }
 
@@ -7057,7 +7057,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     if (peers[j].tcp4Protocol && peers[j].isConnectedAccepted && peers[j].exchangedPublicPeers && !peers[j].isClosing
                                                         && peers[j].id != processor->responsePeer->id)
                                                     {
-                                                        push(&peers[j], responseHeader);
+                                                        push(&peers[j], responseHeader, true);
                                                     }
                                                 }
                                             }
