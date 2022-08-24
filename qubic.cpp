@@ -20,9 +20,7 @@ static const unsigned char defaultRouteGateway[4] = { 0, 0, 0, 0 };
 static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define OPERATOR "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-#define COMPUTOR "EEHHKLAELFGOMOEILMMPEAMGBHPNHJBKEAIINBIJDKGFPCABKGJEKLMGANFADFMJFCDFAL"
-//#define COMPUTOR "JCCLBNJPHMJAMNHGIHFNOELGHLNAPHCFNIKPEEJDJFJAGMPDKHHLLMKGDDAAGFMBFEEKBB"
-//#define COMPUTOR "BHPHBBGDAFALKKNLPFJMLBOMJKFCBBBICFEPAKPDIPOBGLOFJNJIPJIGNANELFCNFAOCFF"
+#define COMPUTOR "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 #define SYSTEM_DATA_FILE_NAME L"system.data"
 #define LEDGER_DATA_FILE_NAME L"ledger.data"
 
@@ -31,7 +29,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 26
+#define VERSION_B 27
 #define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
@@ -39,8 +37,8 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 static const unsigned char knownPublicPeers[][4] = {
 };
 
-#define EPOCH 18
-#define TICK 2504661
+#define EPOCH 19
+#define TICK 2544116
 
 
 
@@ -3368,15 +3366,13 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define NUMBER_OF_OUTGOING_CONNECTIONS 16
 #define NUMBER_OF_INCOMING_CONNECTIONS 48
 #define NUMBER_OF_CLIENT_CONNECTIONS 100
-#define NUMBER_OF_NEURONS 100000
+#define NUMBER_OF_NEURONS 20000
 #define PEER_REFRESHING_PERIOD 60
 #define PORT 21841
 #define QUORUM (NUMBER_OF_COMPUTORS * 2 / 3 + 1)
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 60
 #define REVENUE_PUBLICATION_PERIOD 60
 #define SIGNATURE_SIZE 64
-#define SOLUTION_DURATION 10000
-#define SOLUTION_THRESHOLD 100
 #define SYSTEM_DATA_SAVING_PERIOD 60
 #define TICK_PUBLICATION_PERIOD 15
 
@@ -3479,7 +3475,7 @@ typedef struct
 {
     unsigned char computorPublicKey[32];
     unsigned int score;
-    unsigned int neuronLinks[NUMBER_OF_NEURONS][2];
+    unsigned char nonce[32];
 } ResourceTestingSolution;
 
 typedef struct
@@ -3737,8 +3733,8 @@ static unsigned long long totalRatingOfPublicPeers = 0;
 static EFI_EVENT computorEvents[NUMBER_OF_COMPUTING_PROCESSORS];
 #endif
 
-static volatile char solutionFlag = 0;
-static unsigned char solutionNonce[32];
+static unsigned int bestSolutionScore = 0;
+static unsigned char bestSolutionNonce[32];
 static long long prevNumberOfMiningIterations = 0;
 static unsigned long long prevMiningPerformanceTick = 0;
 #if NUMBER_OF_MINING_PROCESSORS
@@ -4191,9 +4187,9 @@ static void requestProcessor(void* ProcedureArgument)
                                 {
                                     unsigned char digest[32];
                                     request->tick.computorIndex ^= BROADCAST_TICK;
-                                    KangarooTwelve((unsigned char*)&request->tick, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE - 8, digest, sizeof(digest));
+                                    KangarooTwelve((unsigned char*)&request->tick, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
                                     request->tick.computorIndex ^= BROADCAST_TICK;
-                                    if (verify(computors.publicKeys[request->tick.computorIndex], digest, ((const unsigned char*)processor->cache + requestHeader->size - SIGNATURE_SIZE - 8)))
+                                    if (verify(computors.publicKeys[request->tick.computorIndex], digest, ((const unsigned char*)processor->cache + requestHeader->size - SIGNATURE_SIZE)))
                                     {
                                         responseSize = requestHeader->size;
 
@@ -4951,12 +4947,73 @@ static void minerProcessor(void* ProcedureArgument)
 
     unsigned char extendedNonce[64];
     bs->CopyMem(&extendedNonce[32], computorPublicKey, sizeof(computorPublicKey));
-    while (state)
+    while (!state)
     {
         _rdrand64_step((unsigned long long*)&extendedNonce[0]);
         _rdrand64_step((unsigned long long*)&extendedNonce[8]);
         _rdrand64_step((unsigned long long*)&extendedNonce[16]);
         _rdrand64_step((unsigned long long*)&extendedNonce[24]);
+
+        KangarooTwelve(extendedNonce, sizeof(extendedNonce), (unsigned char*)&neuronLinks[miningProcessorIndex], sizeof(neuronLinks[0]));
+        for (unsigned int i = 0; i < NUMBER_OF_NEURONS; i++)
+        {
+            neuronLinks[miningProcessorIndex][i][0] %= NUMBER_OF_NEURONS;
+            neuronLinks[miningProcessorIndex][i][1] %= NUMBER_OF_NEURONS;
+        }
+
+        bs->SetMem(neuronValues[miningProcessorIndex], sizeof(neuronValues[0]), 0xFF);
+
+        unsigned int limiter = 10000;
+        unsigned int score = 0;
+        while (true)
+        {
+            const unsigned int prevValue0 = neuronValues[miningProcessorIndex][NUMBER_OF_NEURONS - 1];
+            const unsigned int prevValue1 = neuronValues[miningProcessorIndex][NUMBER_OF_NEURONS - 2];
+
+            for (unsigned int j = 0; j < NUMBER_OF_NEURONS; j++)
+            {
+                neuronValues[miningProcessorIndex][j] = ~(neuronValues[miningProcessorIndex][neuronLinks[miningProcessorIndex][j][0]] & neuronValues[miningProcessorIndex][neuronLinks[miningProcessorIndex][j][1]]);
+            }
+
+            if (neuronValues[miningProcessorIndex][NUMBER_OF_NEURONS - 1] != prevValue0
+                && neuronValues[miningProcessorIndex][NUMBER_OF_NEURONS - 2] == prevValue1)
+            {
+                if (!((miningData[score >> 6] >> (score & 63)) & 1))
+                {
+                    break;
+                }
+
+                score++;
+            }
+            else
+            {
+                if (neuronValues[miningProcessorIndex][NUMBER_OF_NEURONS - 2] != prevValue1
+                    && neuronValues[miningProcessorIndex][NUMBER_OF_NEURONS - 1] == prevValue0)
+                {
+                    if ((miningData[score >> 6] >> (score & 63)) & 1)
+                    {
+                        break;
+                    }
+
+                    score++;
+                }
+                else
+                {
+                    if (!(--limiter))
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (score > bestSolutionScore)
+        {
+            *((__m256i*)bestSolutionNonce) = *((__m256i*)extendedNonce);
+            bestSolutionScore = score;
+        }
+
+        _InterlockedIncrement64(&numberOfMiningIterations);
     }
 }
 
@@ -5243,11 +5300,11 @@ static BOOLEAN initialize()
 #endif
 
 #if NUMBER_OF_MINING_PROCESSORS
-        miningData[0] = 'Q';
-        miningData[1] = 'u';
-        miningData[2] = 'b';
-        miningData[3] = 'i';
-        miningData[4] = 'c';
+        miningData[0] = 95;
+        miningData[1] = 477;
+        miningData[2] = 855;
+        miningData[3] = 828;
+        miningData[4] = 63;
         KangarooTwelve((unsigned char*)miningData, 5 * sizeof(unsigned long long), (unsigned char*)miningData, sizeof(miningData));
 #endif
     }
@@ -5646,9 +5703,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     }
 
 //#if NUMBER_OF_MINING_PROCESSORS
-                                    unsigned long long random;
-                                    _rdrand64_step(&random);
-                                    if (true /*&& !(random % 5)*/)
+                                    if (true)
                                     {
                                         setText(message, L"1+");
                                         appendNumber(message, NUMBER_OF_COMPUTING_PROCESSORS, TRUE);
@@ -5657,11 +5712,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         appendText(message, L"+");
                                         appendNumber(message, numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS), TRUE);
                                         appendText(message, L" | Score = ");
-                                        appendNumber(message, 0, TRUE);
+                                        appendNumber(message, bestSolutionScore, TRUE);
                                         appendText(message, L" (");
-                                        appendNumber(message, /*(numberOfMiningIterations - prevNumberOfMiningIterations)* frequency / (curTimeTick - prevMiningPerformanceTick)*/0, TRUE);
+                                        appendNumber(message, (numberOfMiningIterations - prevNumberOfMiningIterations) * frequency / (curTimeTick - prevMiningPerformanceTick), TRUE);
                                         prevMiningPerformanceTick = curTimeTick;
-                                        //prevNumberOfMiningIterations = numberOfMiningIterations;
+                                        prevNumberOfMiningIterations = numberOfMiningIterations;
                                         appendText(message, L" it/s);");
 #if NUMBER_OF_COMPUTING_PROCESSORS
                                         appendText(message, L" computor index = ");
@@ -5736,7 +5791,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     tick.broadcastTick.tick.computorIndex = ownComputorIndices[i] ^ BROADCAST_TICK;
 
                                                     unsigned char digest[32];
-                                                    KangarooTwelve((unsigned char*)&tick.broadcastTick.tick, tick.header.size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE - 8, digest, sizeof(digest));
+                                                    KangarooTwelve((unsigned char*)&tick.broadcastTick.tick, tick.header.size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
                                                     tick.broadcastTick.tick.computorIndex ^= BROADCAST_TICK;
                                                     for (unsigned int j = 0; j < sizeof(ownSeeds) / sizeof(ownSeeds[0]); j++)
                                                     {
@@ -6210,71 +6265,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                             push(&peers[j], requestResponseHeader, false);
                                                                         }
                                                                     }
-
-#if NUMBER_OF_MINING_PROCESSORS
-                                                                    BroadcastResourceTestingSolution* broadcastResourceTestingSolution = (BroadcastResourceTestingSolution*)(((char*)peers[i].receiveBuffer) + sizeof(RequestResponseHeader));
-                                                                    if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)broadcastResourceTestingSolution->resourceTestingSolution.computorPublicKey), *((__m256i*)computorPublicKey))) == 0xFFFFFFFF
-                                                                        && broadcastResourceTestingSolution->resourceTestingSolution.score > bestMiningScore)
-                                                                    {
-                                                                        unsigned char neuronValues[NUMBER_OF_NEURONS];
-                                                                        bs->SetMem(neuronValues, sizeof(neuronValues), 0xFF);
-
-                                                                        unsigned int limiter = 1000;
-                                                                        unsigned int outputLength = 0;
-                                                                        while (true)
-                                                                        {
-                                                                            const unsigned int prevValue0 = neuronValues[NUMBER_OF_NEURONS - 1];
-                                                                            const unsigned int prevValue1 = neuronValues[NUMBER_OF_NEURONS - 2];
-
-                                                                            for (unsigned int j = 0; j < NUMBER_OF_NEURONS; j++)
-                                                                            {
-                                                                                neuronValues[j] = ~(neuronValues[broadcastResourceTestingSolution->resourceTestingSolution.neuronLinks[j][0] % NUMBER_OF_NEURONS] & neuronValues[broadcastResourceTestingSolution->resourceTestingSolution.neuronLinks[j][1] % NUMBER_OF_NEURONS]);
-                                                                            }
-
-                                                                            if (neuronValues[NUMBER_OF_NEURONS - 1] != prevValue0
-                                                                                && neuronValues[NUMBER_OF_NEURONS - 2] == prevValue1)
-                                                                            {
-                                                                                if ((miningData[outputLength >> 6] >> (outputLength & 63)) & 1)
-                                                                                {
-                                                                                    break;
-                                                                                }
-
-                                                                                outputLength++;
-                                                                            }
-                                                                            else
-                                                                            {
-                                                                                if (neuronValues[NUMBER_OF_NEURONS - 2] != prevValue1
-                                                                                    && neuronValues[NUMBER_OF_NEURONS - 1] == prevValue0)
-                                                                                {
-                                                                                    if (!((miningData[outputLength >> 6] >> (outputLength & 63)) & 1))
-                                                                                    {
-                                                                                        break;
-                                                                                    }
-
-                                                                                    outputLength++;
-                                                                                }
-                                                                                else
-                                                                                {
-                                                                                    if (!(--limiter))
-                                                                                    {
-                                                                                        break;
-                                                                                    }
-                                                                                }
-                                                                            }
-                                                                        }
-
-                                                                        if (outputLength == broadcastResourceTestingSolution->resourceTestingSolution.score && outputLength > bestMiningScore)
-                                                                        {
-                                                                            while (_InterlockedCompareExchange8(&neuronNetworkLock, 1, 0))
-                                                                            {
-                                                                                _mm_pause();
-                                                                            }
-                                                                            bestMiningScore = broadcastResourceTestingSolution->resourceTestingSolution.score;
-                                                                            bs->CopyMem(bestNeuronLinks, broadcastResourceTestingSolution->resourceTestingSolution.neuronLinks, sizeof(bestNeuronLinks));
-                                                                            _InterlockedCompareExchange8(&neuronNetworkLock, 0, 1);
-                                                                        }
-                                                                    }
-#endif
 
                                                                     _InterlockedIncrement64(&numberOfProcessedRequests);
                                                                 }
@@ -7005,29 +6995,23 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 }
 
 #if NUMBER_OF_MINING_PROCESSORS
-                                if (curTimeTick - resourceTestingSolutionPublicationTick >= RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD * frequency)
+                                if (curTimeTick - resourceTestingSolutionPublicationTick >= RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD * frequency
+                                    && bestSolutionScore)
                                 {
                                     resourceTestingSolutionPublicationTick = curTimeTick;
-
-                                    if (bestMiningScore > knownMiningScore)
-                                    {
-                                        knownMiningScore = bestMiningScore;
-
-                                        saveSolution();
-                                    }
 
                                     solution.header.size = sizeof(solution);
                                     solution.header.protocol = VERSION_B;
                                     solution.header.type = BROADCAST_RESOURCE_TESTING_SOLUTION;
                                     bs->CopyMem(solution.broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey, computorPublicKey, 32);
-                                    solution.broadcastResourceTestingSolution.resourceTestingSolution.score = knownMiningScore;
-                                    bs->CopyMem(solution.broadcastResourceTestingSolution.resourceTestingSolution.neuronLinks, bestNeuronLinks, sizeof(solution.broadcastResourceTestingSolution.resourceTestingSolution.neuronLinks));
+                                    solution.broadcastResourceTestingSolution.resourceTestingSolution.score = bestSolutionScore;
+                                    *((__m256i*)solution.broadcastResourceTestingSolution.resourceTestingSolution.nonce) = *((__m256i*)bestSolutionNonce);
 
                                     for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
                                     {
                                         if (peers[i].tcp4Protocol && peers[i].isConnectedAccepted && peers[i].exchangedPublicPeers && !peers[i].isClosing)
                                         {
-                                            push(&peers[i], &solution.header);
+                                            push(&peers[i], &solution.header, true);
                                         }
                                     }
                                 }
@@ -7114,9 +7098,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
                             saveSystem();
-#endif
-#if NUMBER_OF_MINING_PROCESSORS
-                            saveSolution();
 #endif
 
                             setText(message, L"Qubic ");
