@@ -23,13 +23,14 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 #define COMPUTOR "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 #define SYSTEM_DATA_FILE_NAME L"system.data"
 #define LEDGER_DATA_FILE_NAME L"ledger.data"
+#define SOLUTION_DATA_FILE_NAME L"solution.data"
 
 
 
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 27
+#define VERSION_B 28
 #define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
@@ -38,7 +39,7 @@ static const unsigned char knownPublicPeers[][4] = {
 };
 
 #define EPOCH 19
-#define TICK 2544116
+#define TICK 2544120
 
 
 
@@ -3367,12 +3368,14 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define NUMBER_OF_INCOMING_CONNECTIONS 48
 #define NUMBER_OF_CLIENT_CONNECTIONS 100
 #define NUMBER_OF_NEURONS 20000
+#define NUMBER_OF_SOLUTION_NONCES 1000
 #define PEER_REFRESHING_PERIOD 60
 #define PORT 21841
 #define QUORUM (NUMBER_OF_COMPUTORS * 2 / 3 + 1)
-#define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 60
-#define REVENUE_PUBLICATION_PERIOD 60
+#define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 300
+#define REVENUE_PUBLICATION_PERIOD 300
 #define SIGNATURE_SIZE 64
+#define SOLUTION_THRESHOLD 25
 #define SYSTEM_DATA_SAVING_PERIOD 60
 #define TICK_PUBLICATION_PERIOD 15
 
@@ -3474,8 +3477,7 @@ typedef struct
 typedef struct
 {
     unsigned char computorPublicKey[32];
-    unsigned int score;
-    unsigned char nonce[32];
+    unsigned char nonces[NUMBER_OF_SOLUTION_NONCES][32];
 } ResourceTestingSolution;
 
 typedef struct
@@ -3733,8 +3735,6 @@ static unsigned long long totalRatingOfPublicPeers = 0;
 static EFI_EVENT computorEvents[NUMBER_OF_COMPUTING_PROCESSORS];
 #endif
 
-static unsigned int bestSolutionScore = 0;
-static unsigned char bestSolutionNonce[32];
 static long long prevNumberOfMiningIterations = 0;
 static unsigned long long prevMiningPerformanceTick = 0;
 #if NUMBER_OF_MINING_PROCESSORS
@@ -5007,10 +5007,17 @@ static void minerProcessor(void* ProcedureArgument)
             }
         }
 
-        if (score > bestSolutionScore)
+        if (score >= SOLUTION_THRESHOLD)
         {
-            *((__m256i*)bestSolutionNonce) = *((__m256i*)extendedNonce);
-            bestSolutionScore = score;
+            for (unsigned int i = 0; i < NUMBER_OF_SOLUTION_NONCES; i++)
+            {
+                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)solution.broadcastResourceTestingSolution.resourceTestingSolution.nonces[i]), ZERO)) == 0xFFFFFFFF)
+                {
+                    *((__m256i*)solution.broadcastResourceTestingSolution.resourceTestingSolution.nonces[i]) = *((__m256i*)&extendedNonce[0]);
+
+                    break;
+                }
+            }
         }
 
         _InterlockedIncrement64(&numberOfMiningIterations);
@@ -5102,6 +5109,28 @@ static void saveLedger()
         dataFile->Close(dataFile);
 
         _InterlockedCompareExchange8(&entitiesLock, 0, 1);
+    }
+}
+#endif
+
+#if NUMBER_OF_MINING_PROCESSORS
+static void saveSolution()
+{
+    EFI_FILE_PROTOCOL* dataFile;
+    EFI_STATUS status;
+    if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SOLUTION_DATA_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0))
+    {
+        logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status);
+    }
+    else
+    {
+        unsigned long long size = sizeof(solution.broadcastResourceTestingSolution.resourceTestingSolution);
+        status = dataFile->Write(dataFile, &size, &solution.broadcastResourceTestingSolution.resourceTestingSolution);
+        dataFile->Close(dataFile);
+        if (status)
+        {
+            logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status);
+        }
     }
 }
 #endif
@@ -5306,6 +5335,46 @@ static BOOLEAN initialize()
         miningData[3] = 828;
         miningData[4] = 63;
         KangarooTwelve((unsigned char*)miningData, 5 * sizeof(unsigned long long), (unsigned char*)miningData, sizeof(miningData));
+
+        if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SOLUTION_DATA_FILE_NAME, EFI_FILE_MODE_READ, 0))
+        {
+            logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status);
+
+            return FALSE;
+        }
+        else
+        {
+            solution.header.size = sizeof(solution);
+            solution.header.protocol = VERSION_B;
+            solution.header.type = BROADCAST_RESOURCE_TESTING_SOLUTION;
+
+            unsigned long long size = sizeof(solution.broadcastResourceTestingSolution.resourceTestingSolution);
+            status = dataFile->Read(dataFile, &size, &solution.broadcastResourceTestingSolution.resourceTestingSolution);
+            dataFile->Close(dataFile);
+            if (status)
+            {
+                logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status);
+
+                return FALSE;
+            }
+            else
+            {
+                if (size < sizeof(solution.broadcastResourceTestingSolution.resourceTestingSolution))
+                {
+                    if (!size)
+                    {
+                        *((__m256i*)solution.broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey) = *((__m256i*)computorPublicKey);
+                        bs->SetMem(&solution.broadcastResourceTestingSolution.resourceTestingSolution.nonces, sizeof(solution.broadcastResourceTestingSolution.resourceTestingSolution.nonces), 0);
+                    }
+                    else
+                    {
+                        log(L"Solution data file is too small!");
+
+                        return FALSE;
+                    }
+                }
+            }
+        }
 #endif
     }
 #endif
@@ -5702,7 +5771,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         }
                                     }
 
-//#if NUMBER_OF_MINING_PROCESSORS
+#if NUMBER_OF_MINING_PROCESSORS
                                     if (true)
                                     {
                                         setText(message, L"1+");
@@ -5712,7 +5781,15 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         appendText(message, L"+");
                                         appendNumber(message, numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS), TRUE);
                                         appendText(message, L" | Score = ");
-                                        appendNumber(message, bestSolutionScore, TRUE);
+                                        int score = 0;
+                                        for (unsigned int i = 0; i < NUMBER_OF_SOLUTION_NONCES; i++)
+                                        {
+                                            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)solution.broadcastResourceTestingSolution.resourceTestingSolution.nonces[i]), ZERO)) != 0xFFFFFFFF)
+                                            {
+                                                score++;
+                                            }
+                                        }
+                                        appendNumber(message, score, TRUE);
                                         appendText(message, L" (");
                                         appendNumber(message, (numberOfMiningIterations - prevNumberOfMiningIterations) * frequency / (curTimeTick - prevMiningPerformanceTick), TRUE);
                                         prevMiningPerformanceTick = curTimeTick;
@@ -5742,7 +5819,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 #endif
                                         log(message);
                                     }
-//#endif
+#endif
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
                                     while (_InterlockedCompareExchange8(&computorsLock, 1, 0))
@@ -6995,17 +7072,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 }
 
 #if NUMBER_OF_MINING_PROCESSORS
-                                if (curTimeTick - resourceTestingSolutionPublicationTick >= RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD * frequency
-                                    && bestSolutionScore)
+                                if (curTimeTick - resourceTestingSolutionPublicationTick >= RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD * frequency)
                                 {
                                     resourceTestingSolutionPublicationTick = curTimeTick;
-
-                                    solution.header.size = sizeof(solution);
-                                    solution.header.protocol = VERSION_B;
-                                    solution.header.type = BROADCAST_RESOURCE_TESTING_SOLUTION;
-                                    bs->CopyMem(solution.broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey, computorPublicKey, 32);
-                                    solution.broadcastResourceTestingSolution.resourceTestingSolution.score = bestSolutionScore;
-                                    *((__m256i*)solution.broadcastResourceTestingSolution.resourceTestingSolution.nonce) = *((__m256i*)bestSolutionNonce);
 
                                     for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
                                     {
@@ -7014,6 +7083,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             push(&peers[i], &solution.header, true);
                                         }
                                     }
+
+                                    saveSolution();
                                 }
 #endif
 
@@ -7098,6 +7169,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
                             saveSystem();
+#endif
+#if NUMBER_OF_MINING_PROCESSORS
+                            saveSolution();
 #endif
 
                             setText(message, L"Qubic ");
