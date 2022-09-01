@@ -9,7 +9,7 @@
 
 // Do NOT share the data of "Private Settings" section with anybody!!!
 static unsigned char ownSeeds[][55 + 1] = {
-    "<seed>"
+    "<seed1>"
 };
 
 static const unsigned char ownAddress[4] = { 0, 0, 0, 0 };
@@ -30,7 +30,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 29
+#define VERSION_B 30
 #define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
@@ -39,7 +39,7 @@ static const unsigned char knownPublicPeers[][4] = {
 };
 
 #define EPOCH 20
-#define TICK 2544123
+#define TICK 2544125
 
 
 
@@ -3377,7 +3377,6 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define SIGNATURE_SIZE 64
 #define SOLUTION_THRESHOLD 26
 #define SYSTEM_DATA_SAVING_PERIOD 60
-#define TICK_PUBLICATION_PERIOD 15
 
 static __m256i ZERO;
 
@@ -3506,35 +3505,6 @@ typedef struct
     Computors computors;
 } BroadcastComputors;
 
-#define DEPRECATED_BROADCAST_TICK 3
-
-typedef struct
-{
-    unsigned short computorIndex;
-
-    unsigned short epoch;
-    unsigned int tick;
-
-    unsigned short millisecond;
-    unsigned char second;
-    unsigned char minute;
-    unsigned char hour;
-    unsigned char day;
-    unsigned char month;
-    unsigned char year;
-
-    unsigned char saltedStateDigest[32];
-    unsigned char prevStateDigest[32];
-    unsigned char nextTickChosenTransfersEffectsAndQuestionsDigest[32];
-
-    unsigned char signature[SIGNATURE_SIZE];
-} DeprecatedTick;
-
-typedef struct
-{
-    DeprecatedTick tick;
-} DeprecatedBroadcastTick;
-
 #define BROADCAST_TICK 11
 
 typedef struct
@@ -3544,7 +3514,8 @@ typedef struct
     unsigned short epoch;
     unsigned int tick;
 
-    unsigned short millisecond;
+    char tickFlags[NUMBER_OF_COMPUTORS / 2];
+
     unsigned char second;
     unsigned char minute;
     unsigned char hour;
@@ -3552,7 +3523,7 @@ typedef struct
     unsigned char month;
     unsigned char year;
 
-    unsigned char saltedStateDigest[32];
+    unsigned char stateDigest[32];
     unsigned char prevStateDigest[32];
     unsigned char nextTickChosenTransfersEffectsAndQuestionsDigest[32];
 
@@ -3711,7 +3682,7 @@ static struct System
     unsigned short decimationCounters[NUMBER_OF_COMPUTORS];
 } system, systemToSave, cachedSystem;
 static unsigned int tickNumberOfComputors = 0;
-static unsigned long long latestTickPublicationTick = 0, latestRevenuePublicationTick = 0;
+static unsigned long long latestRevenuePublicationTick = 0;
 static unsigned short numberOfOwnComputorIndices = 0;
 static short ownComputorIndices[NUMBER_OF_COMPUTORS];
 
@@ -3719,7 +3690,6 @@ static unsigned int numberOfBufferedTransfers[sizeof(ownSeeds) / sizeof(ownSeeds
 static unsigned char bufferedTransferBytes[sizeof(ownSeeds) / sizeof(ownSeeds[0])][MAX_NUMBER_OF_TRANSFERS_PER_TICK][sizeof(Transfer) + MAX_TRANSFER_DESCRIPTION_SIZE + SIGNATURE_SIZE];
 static unsigned int chosenTransfersEffectsAndQuestionSizes[NUMBER_OF_COMPUTORS];
 
-static DeprecatedTick epochOpeningTick;
 static StoredEntity storedEntities[1024];
 static volatile char entitiesLock = 0;
 static Entity* entities = NULL;
@@ -3727,7 +3697,8 @@ static Entity* entities = NULL;
 static char chosenTransfersEffectsAndQuestionBytes[NUMBER_OF_COMPUTORS][sizeof(BroadcastChosenTransfersEffectsAndQuestions) + (sizeof(Transfer) + MAX_TRANSFER_DESCRIPTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_TRANSFERS_PER_TICK + (sizeof(Effect) + MAX_EFFECT_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_EFFECTS_PER_TICK + (sizeof(Question) + MAX_QUESTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_QUESTIONS_PER_TICK + SIGNATURE_SIZE];
 
 static volatile char ticksLock = 0;
-static DeprecatedTick latestTicks[NUMBER_OF_COMPUTORS], actualTicks[NUMBER_OF_COMPUTORS];
+static Tick latestTicks[NUMBER_OF_COMPUTORS], actualTicks[NUMBER_OF_COMPUTORS];
+static char tickFlags[NUMBER_OF_COMPUTORS / 2], prevTickFlags[NUMBER_OF_COMPUTORS / 2];
 
 static unsigned long long* dejavu0 = NULL;
 static unsigned long long* dejavu1 = NULL;
@@ -3785,7 +3756,7 @@ static struct
 static struct
 {
     RequestResponseHeader header;
-    DeprecatedBroadcastTick broadcastTick;
+    BroadcastTick broadcastTick;
 } tick;
 
 static struct
@@ -4197,18 +4168,17 @@ static void requestProcessor(void* ProcedureArgument)
                 }
                 break;
 
-                case DEPRECATED_BROADCAST_TICK:
+                case BROADCAST_TICK:
                 {
                     if (requestHeader->size == sizeof(tick))
                     {
-                        DeprecatedBroadcastTick* request = (DeprecatedBroadcastTick*)((char*)processor->cache + sizeof(RequestResponseHeader));
+                        BroadcastTick* request = (BroadcastTick*)((char*)processor->cache + sizeof(RequestResponseHeader));
                         if (request->tick.computorIndex < NUMBER_OF_COMPUTORS
                             //&& request->tick.month >= 1 && request->tick.month <= 12
                             //&& request->tick.day >= 1 && request->tick.day <= 31
                             && request->tick.hour <= 23
                             && request->tick.minute <= 59
                             && request->tick.second <= 59
-                            && request->tick.millisecond <= 999
                             /*&& ms(request->tick.year, request->tick.month, request->tick.day, request->tick.hour, request->tick.minute, request->tick.second, request->tick.millisecond) >= ms(request->tick.prevYear, request->tick.prevMonth, request->tick.prevDay, request->tick.prevHour, request->tick.prevMinute, request->tick.prevSecond, request->tick.prevMillisecond)*/ // TODO
                             )
                         {
@@ -4217,9 +4187,9 @@ static void requestProcessor(void* ProcedureArgument)
                                 if (request->tick.epoch == computors.epoch)
                                 {
                                     unsigned char digest[32];
-                                    request->tick.computorIndex ^= DEPRECATED_BROADCAST_TICK;
+                                    request->tick.computorIndex ^= BROADCAST_TICK;
                                     KangarooTwelve((unsigned char*)&request->tick, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
-                                    request->tick.computorIndex ^= DEPRECATED_BROADCAST_TICK;
+                                    request->tick.computorIndex ^= BROADCAST_TICK;
                                     if (verify(computors.publicKeys[request->tick.computorIndex], digest, ((const unsigned char*)processor->cache + requestHeader->size - SIGNATURE_SIZE)))
                                     {
                                         responseSize = requestHeader->size;
@@ -4228,14 +4198,14 @@ static void requestProcessor(void* ProcedureArgument)
                                         {
                                             if (request->tick.tick > latestTicks[request->tick.computorIndex].tick)
                                             {
-                                                bs->CopyMem(&latestTicks[request->tick.computorIndex], &request->tick, sizeof(DeprecatedTick));
+                                                bs->CopyMem(&latestTicks[request->tick.computorIndex], &request->tick, sizeof(Tick));
                                             }
 #if NUMBER_OF_COMPUTING_PROCESSORS
                                             else
                                             {
                                                 if (request->tick.tick == latestTicks[request->tick.computorIndex].tick)
                                                 {
-                                                    if (!_InterlockedCompareExchange8(&systemLock, 1, 0))
+                                                    /*if (!_InterlockedCompareExchange8(&systemLock, 1, 0))
                                                     {
                                                         if (system.decimationCounters[request->tick.computorIndex] < MAX_NUMBER_OF_DECIMATIONS)
                                                         {
@@ -4254,7 +4224,7 @@ static void requestProcessor(void* ProcedureArgument)
                                                         }
 
                                                         _InterlockedCompareExchange8(&systemLock, 0, 1);
-                                                    }
+                                                    }*/
                                                 }
                                             }
 
@@ -4262,7 +4232,9 @@ static void requestProcessor(void* ProcedureArgument)
                                             {
                                                 if (request->tick.tick == system.tick + 1)
                                                 {
-                                                    bs->CopyMem(&actualTicks[request->tick.computorIndex], &request->tick, sizeof(DeprecatedTick));
+                                                    bs->CopyMem(&actualTicks[request->tick.computorIndex], &request->tick, sizeof(Tick));
+
+                                                    tickFlags[request->tick.computorIndex >> 1] |= (1 << (4 * (request->tick.computorIndex & 1)));
                                                 }
 
                                                 _InterlockedCompareExchange8(&systemLock, 0, 1);
@@ -4286,12 +4258,6 @@ static void requestProcessor(void* ProcedureArgument)
                             }
                         }
                     }
-                }
-                break;
-
-                case BROADCAST_TICK:
-                {
-                    responseSize = requestHeader->size;
                 }
                 break;
 
@@ -5202,6 +5168,8 @@ static BOOLEAN initialize()
 
     bs->SetMem(&latestTicks, sizeof(latestTicks), 0);
     bs->SetMem(&actualTicks, sizeof(actualTicks), 0);
+    bs->SetMem(&tickFlags, sizeof(tickFlags), 0);
+    bs->SetMem(&prevTickFlags, sizeof(prevTickFlags), 0xFF);
     bs->SetMem(&tick, sizeof(tick), 0);
 
     bs->SetMem(processors, sizeof(processors), 0);
@@ -5875,62 +5843,69 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                     if (numberOfOwnComputorIndices)
                                     {
-                                        if (curTimeTick - latestTickPublicationTick >= TICK_PUBLICATION_PERIOD * frequency)
+                                        for (unsigned int i = 0; i < sizeof(tickFlags); i++)
                                         {
-                                            latestTickPublicationTick = curTimeTick;
-
-                                            tick.header.size = sizeof(tick);
-                                            tick.header.protocol = VERSION_B;
-                                            tick.header.type = DEPRECATED_BROADCAST_TICK;
-
-                                            tick.broadcastTick.tick.epoch = cachedSystem.epoch;
-                                            tick.broadcastTick.tick.tick = cachedSystem.tick + 1;
-
-                                            rs->GetTime(&time, NULL);
-                                            tick.broadcastTick.tick.millisecond = 0;// time.Nanosecond / 1000000;
-                                            tick.broadcastTick.tick.second = 0;// time.Second;
-                                            tick.broadcastTick.tick.minute = 0;// time.Minute;
-                                            tick.broadcastTick.tick.hour = 0;// time.Hour;
-                                            tick.broadcastTick.tick.day = 0;// time.Day;
-                                            tick.broadcastTick.tick.month = 0;// time.Month;
-                                            tick.broadcastTick.tick.year = 0;// time.Year - 2000;
-
-                                            bs->SetMem(tick.broadcastTick.tick.saltedStateDigest, sizeof(tick.broadcastTick.tick.saltedStateDigest), 0);
-                                            bs->SetMem(tick.broadcastTick.tick.prevStateDigest, sizeof(tick.broadcastTick.tick.prevStateDigest), 0);
-                                            *((__m256i*)tick.broadcastTick.tick.nextTickChosenTransfersEffectsAndQuestionsDigest) = ZERO;
-
-                                            for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
+                                            if (tickFlags[i] != prevTickFlags[i])
                                             {
-                                                tick.broadcastTick.tick.computorIndex = ownComputorIndices[i] ^ DEPRECATED_BROADCAST_TICK;
+                                                tick.header.size = sizeof(tick);
+                                                tick.header.protocol = VERSION_B;
+                                                tick.header.type = BROADCAST_TICK;
 
-                                                unsigned char digest[32];
-                                                KangarooTwelve((unsigned char*)&tick.broadcastTick.tick, tick.header.size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
-                                                tick.broadcastTick.tick.computorIndex ^= DEPRECATED_BROADCAST_TICK;
-                                                for (unsigned int j = 0; j < sizeof(ownSeeds) / sizeof(ownSeeds[0]); j++)
+                                                tick.broadcastTick.tick.epoch = cachedSystem.epoch;
+                                                tick.broadcastTick.tick.tick = cachedSystem.tick + 1;
+
+                                                bs->CopyMem(tick.broadcastTick.tick.tickFlags, &tickFlags, sizeof(tickFlags));
+
+                                                rs->GetTime(&time, NULL);
+                                                tick.broadcastTick.tick.second = 0;// time.Second;
+                                                tick.broadcastTick.tick.minute = 0;// time.Minute;
+                                                tick.broadcastTick.tick.hour = 0;// time.Hour;
+                                                tick.broadcastTick.tick.day = 0;// time.Day;
+                                                tick.broadcastTick.tick.month = 0;// time.Month;
+                                                tick.broadcastTick.tick.year = 0;// time.Year - 2000;
+
+                                                bs->SetMem(tick.broadcastTick.tick.stateDigest, sizeof(tick.broadcastTick.tick.stateDigest), 0);
+                                                bs->SetMem(tick.broadcastTick.tick.prevStateDigest, sizeof(tick.broadcastTick.tick.prevStateDigest), 0);
+                                                *((__m256i*)tick.broadcastTick.tick.nextTickChosenTransfersEffectsAndQuestionsDigest) = ZERO;
+
+                                                for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
                                                 {
-                                                    if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)cachedComputors.publicKeys[ownComputorIndices[i]]), *((__m256i*)ownPublicKeys[j]))) == 0xFFFFFFFF)
-                                                    {
-                                                        sign(ownSubseeds[j], ownPublicKeys[j], digest, tick.broadcastTick.tick.signature);
+                                                    tick.broadcastTick.tick.computorIndex = ownComputorIndices[i] ^ BROADCAST_TICK;
 
-                                                        break;
+                                                    unsigned char digest[32];
+                                                    KangarooTwelve((unsigned char*)&tick.broadcastTick.tick, tick.header.size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
+                                                    tick.broadcastTick.tick.computorIndex ^= BROADCAST_TICK;
+                                                    for (unsigned int j = 0; j < sizeof(ownSeeds) / sizeof(ownSeeds[0]); j++)
+                                                    {
+                                                        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)cachedComputors.publicKeys[ownComputorIndices[i]]), *((__m256i*)ownPublicKeys[j]))) == 0xFFFFFFFF)
+                                                        {
+                                                            sign(ownSubseeds[j], ownPublicKeys[j], digest, tick.broadcastTick.tick.signature);
+
+                                                            break;
+                                                        }
+                                                    }
+
+                                                    while (_InterlockedCompareExchange8(&ticksLock, 1, 0))
+                                                    {
+                                                        _mm_pause();
+                                                    }
+                                                    bs->CopyMem(&latestTicks[ownComputorIndices[i]], &tick.broadcastTick.tick, sizeof(Tick));
+                                                    bs->CopyMem(&actualTicks[ownComputorIndices[i]], &tick.broadcastTick.tick, sizeof(Tick));
+                                                    tickFlags[ownComputorIndices[i] >> 1] |= (1 << (4 * (ownComputorIndices[i] & 1)));
+                                                    _InterlockedCompareExchange8(&ticksLock, 0, 1);
+
+                                                    for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
+                                                    {
+                                                        if (peers[j].tcp4Protocol && peers[j].isConnectedAccepted && peers[j].exchangedPublicPeers && !peers[j].isClosing)
+                                                        {
+                                                            push(&peers[j], &tick.header, true);
+                                                        }
                                                     }
                                                 }
 
-                                                while (_InterlockedCompareExchange8(&ticksLock, 1, 0))
-                                                {
-                                                    _mm_pause();
-                                                }
-                                                bs->CopyMem(&latestTicks[ownComputorIndices[i]], &tick.broadcastTick.tick, sizeof(DeprecatedTick));
-                                                bs->CopyMem(&actualTicks[ownComputorIndices[i]], &tick.broadcastTick.tick, sizeof(DeprecatedTick));
-                                                _InterlockedCompareExchange8(&ticksLock, 0, 1);
+                                                bs->CopyMem(prevTickFlags, tickFlags, sizeof(tickFlags));
 
-                                                for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
-                                                {
-                                                    if (peers[j].tcp4Protocol && peers[j].isConnectedAccepted && peers[j].exchangedPublicPeers && !peers[j].isClosing)
-                                                    {
-                                                        push(&peers[j], &tick.header, true);
-                                                    }
-                                                }
+                                                break;
                                             }
                                         }
 
@@ -5944,8 +5919,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         {
                                             if (actualTicks[j].epoch == cachedSystem.epoch
                                                 && actualTicks[j].tick == cachedSystem.tick + 1
-                                                && *((unsigned long long*) & actualTicks[j].millisecond) == *((unsigned long long*) & actualTicks[ownComputorIndices[0]].millisecond)
-                                                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].saltedStateDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].saltedStateDigest))) == 0xFFFFFFFF
+                                                // TODO: && *((unsigned long long*) & actualTicks[j].millisecond) == *((unsigned long long*) & actualTicks[ownComputorIndices[0]].millisecond)
+                                                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].stateDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].stateDigest))) == 0xFFFFFFFF // TODO
                                                 && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].prevStateDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].prevStateDigest))) == 0xFFFFFFFF
                                                 && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].nextTickChosenTransfersEffectsAndQuestionsDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].nextTickChosenTransfersEffectsAndQuestionsDigest))) == 0xFFFFFFFF)
                                             {
@@ -5961,7 +5936,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         if (tickNumberOfComputors >= QUORUM)
                                         {
                                             tickNumberOfComputors = 0;
-                                            latestTickPublicationTick = 0;
 
                                             while (_InterlockedCompareExchange8(&systemLock, 1, 0))
                                             {
@@ -5981,9 +5955,12 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             {
                                                 if (latestTicks[i].tick == tick + 1)
                                                 {
-                                                    bs->CopyMem(&actualTicks[i], &latestTicks[i], sizeof(DeprecatedTick));
+                                                    bs->CopyMem(&actualTicks[i], &latestTicks[i], sizeof(Tick));
                                                 }
                                             }
+
+                                            bs->SetMem(&tickFlags, sizeof(tickFlags), 0);
+                                            bs->SetMem(&prevTickFlags, sizeof(prevTickFlags), 0xFF);
 
                                             for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
                                             {
@@ -6035,7 +6012,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if (ticks[bestTickIndex] >= cachedSystem.tick + 2)
                                             {
                                                 system.tick++;
-                                                latestTickPublicationTick = 0;
+
+                                                bs->SetMem(&tickFlags, sizeof(tickFlags), 0);
+                                                bs->SetMem(&prevTickFlags, sizeof(prevTickFlags), 0xFF);
 
                                                 bs->SetMem(numberOfBufferedTransfers, sizeof(numberOfBufferedTransfers), 0);
                                             }
