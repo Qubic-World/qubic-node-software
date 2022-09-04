@@ -4,8 +4,8 @@
 
 ////////// Private Settings \\\\\\\\\\
 
-#define NUMBER_OF_COMPUTING_PROCESSORS 0
-#define NUMBER_OF_MINING_PROCESSORS 0
+#define NUMBER_OF_COMPUTING_PROCESSORS 1
+#define NUMBER_OF_MINING_PROCESSORS 13
 
 // Do NOT share the data of "Private Settings" section with anybody!!!
 static unsigned char ownSeeds[][55 + 1] = {
@@ -31,7 +31,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define VERSION_A 1
 #define VERSION_B 30
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -2543,7 +2543,7 @@ static void ecc_mul_fixed(unsigned long long* k, point_t Q)
     table_lookup_fixed_base(((point_precomp_t*)&FIXED_BASE_TABLE), S, (((((digits[209] << 1) + digits[159]) << 1) + digits[109]) << 1) + digits[59], digits[9]);
     eccmadd(S, R);
 
-    for (unsigned int i = 9; i-- > 0; )
+    for (unsigned int i = 9; i--; )
     {
         eccdouble(R);
         for (unsigned int j = 0; j < 5; j++)
@@ -2863,7 +2863,7 @@ static BOOLEAN ecc_mul_double(unsigned long long* k, unsigned long long* l, poin
     T->y[0][0] = 1; T->y[0][1] = 0; T->y[1][0] = 0; T->y[1][1] = 0;
     T->z[0][0] = 1; T->z[0][1] = 0; T->z[1][0] = 0; T->z[1][1] = 0;
 
-    for (unsigned int i = 65; i-- > 0; )
+    for (unsigned int i = 65; i--; )
     {
         eccdouble(T);
 
@@ -3063,7 +3063,7 @@ static BOOLEAN ecc_mul(point_t P, unsigned long long* k, point_t Q)
     }
     R2_to_R4(Table[1][scalars[1] + (scalars[2] << 1) + (scalars[3] << 2)], R);
 
-    for (unsigned int i = 64; i-- > 0; )
+    for (unsigned int i = 64; i--; )
     {
         eccdouble(R);                                         // P = 2*P using representations (X,Y,Z,Ta,Tb) <- 2*(X,Y,Z)
         eccadd(Table[sign_masks[i]][digits[i]], R);           // P = P+S using representations (X,Y,Z,Ta,Tb) <- (X,Y,Z,Ta,Tb) + (X+Y,Y-X,2Z,2dT)
@@ -4552,6 +4552,7 @@ static void requestProcessor(void* ProcedureArgument)
                         unsigned short numberOfTicks = 0;
                         unsigned int ticks[NUMBER_OF_COMPUTORS];
                         unsigned short tickQuantities[NUMBER_OF_COMPUTORS];
+
                         for (unsigned short i = 0; i < NUMBER_OF_COMPUTORS; i++)
                         {
                             unsigned short j;
@@ -4573,17 +4574,26 @@ static void requestProcessor(void* ProcedureArgument)
 
                         _InterlockedCompareExchange8(&ticksLock, 0, 1);
 
-                        unsigned short bestTickIndex = 0;
-
-                        for (unsigned short i = 1; i < numberOfTicks; i++)
+                        for (unsigned int i = numberOfTicks; i--; )
                         {
-                            if (tickQuantities[i] > tickQuantities[bestTickIndex])
+                            for (unsigned int j = 0; j < i; j++)
                             {
-                                bestTickIndex = i;
+                                if (tickQuantities[j] < tickQuantities[j + 1])
+                                {
+                                    const unsigned short tickQuantity = tickQuantities[j];
+                                    tickQuantities[j] = tickQuantities[j + 1];
+                                    tickQuantities[j + 1] = tickQuantity;
+                                }
                             }
                         }
 
-                        computerState->tick = (tickQuantities[bestTickIndex] >= QUORUM ? ticks[bestTickIndex] : 0);
+                        unsigned int tickIndex = 0;
+                        unsigned int numberOfComputors = 0;
+                        while ((numberOfComputors += tickQuantities[tickIndex]) < QUORUM)
+                        {
+                            tickIndex++;
+                        }
+                        computerState->tick = ticks[tickIndex];
                     }
                     else
                     {
