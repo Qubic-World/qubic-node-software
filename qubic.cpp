@@ -26,9 +26,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 #define SOLUTION_DATA_FILE_NAME L"solution.data"
 
 static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][71] = {
-    "EEHHKLAELFGOMOEILMMPEAMGBHPNHJBKEAIINBIJDKGFPCABKGJEKLMGANFADFMJFCDFAL",
-    "JCCLBNJPHMJAMNHGIHFNOELGHLNAPHCFNIKPEEJDJFJAGMPDKHHLLMKGDDAAGFMBFEEKBB",
-    "BHPHBBGDAFALKKNLPFJMLBOMJKFCBBBICFEPAKPDIPOBGLOFJNJIPJIGNANELFCNFAOCFF"
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 };
 
 
@@ -36,16 +34,16 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][71] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 30
-#define VERSION_C 4
+#define VERSION_B 31
+#define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
 static const unsigned char knownPublicPeers[][4] = {
 };
 
-#define EPOCH 20
-#define TICK 2544123
+#define EPOCH 21
+#define TICK 2591517
 
 
 
@@ -3381,7 +3379,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 300
 #define REVENUE_PUBLICATION_PERIOD 300
 #define SIGNATURE_SIZE 64
-#define SOLUTION_THRESHOLD 26
+#define SOLUTION_THRESHOLD 30
 #define SYSTEM_DATA_SAVING_PERIOD 60
 
 static __m256i ZERO;
@@ -5380,7 +5378,7 @@ static BOOLEAN initialize()
         miningData[1] = 477;
         miningData[2] = 826;
         miningData[3] = 96;
-        miningData[4] = 63;
+        miningData[4] = 53;
         KangarooTwelve((unsigned char*)miningData, 5 * sizeof(unsigned long long), (unsigned char*)miningData, sizeof(miningData));
 
         if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SOLUTION_DATA_FILE_NAME, EFI_FILE_MODE_READ, 0))
@@ -5826,7 +5824,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         }
                                     }
 
-#if NUMBER_OF_MINING_PROCESSORS
                                     if (true)
                                     {
                                         setText(message, L"1+");
@@ -5841,6 +5838,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         appendNumber(message, tickDuration / frequency, FALSE);
                                         appendText(message, L".");
                                         appendNumber(message, (tickDuration% frequency) * 10 / frequency, FALSE);
+#if NUMBER_OF_MINING_PROCESSORS
                                         appendText(message, L" s | Score = ");
                                         int score = 0;
                                         for (unsigned int i = 0; i < NUMBER_OF_SOLUTION_NONCES; i++)
@@ -5856,6 +5854,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         prevMiningPerformanceTick = curTimeTick;
                                         prevNumberOfMiningIterations = numberOfMiningIterations;
                                         appendText(message, L" it/s);");
+#else
+                                        appendText(message, L" s |");
+#endif
 #if NUMBER_OF_COMPUTING_PROCESSORS
                                         appendText(message, L" computor index = ");
                                         if (!numberOfOwnComputorIndices)
@@ -5880,7 +5881,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 #endif
                                         log(message);
                                     }
-#endif
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
                                     while (_InterlockedCompareExchange8(&computorsLock, 1, 0))
@@ -6416,29 +6416,32 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                                 case BROADCAST_RESOURCE_TESTING_SOLUTION:
                                                                 {
-                                                                    bool shouldBeBroadcasted = !(dayIndex(time.Year - 2000, time.Month, time.Day) % 7);
-                                                                    if (!shouldBeBroadcasted)
+                                                                    BroadcastResourceTestingSolution* request = (BroadcastResourceTestingSolution*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader));
+                                                                    if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->resourceTestingSolution.computorPublicKey), ZERO)) != 0xFFFFFFFF)
                                                                     {
-                                                                        BroadcastResourceTestingSolution* request = (BroadcastResourceTestingSolution*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader));
-                                                                        for (unsigned int i = 0; i < sizeof(resourceTestingSolutionIdentitiesToBroadcast) / sizeof(resourceTestingSolutionIdentitiesToBroadcast[0]); i++)
+                                                                        bool shouldBeBroadcasted = !(dayIndex(time.Year - 2000, time.Month, time.Day) % 7);
+                                                                        if (!shouldBeBroadcasted)
                                                                         {
-                                                                            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->resourceTestingSolution.computorPublicKey), *((__m256i*)resourceTestingSolutionIdentitiesToBroadcast[i]))) == 0xFFFFFFFF)
+                                                                            for (unsigned int j = 0; j < sizeof(resourceTestingSolutionIdentitiesToBroadcast) / sizeof(resourceTestingSolutionIdentitiesToBroadcast[0]); j++)
                                                                             {
-                                                                                shouldBeBroadcasted = true;
+                                                                                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->resourceTestingSolution.computorPublicKey), *((__m256i*)resourceTestingSolutionIdentitiesToBroadcast[j]))) == 0xFFFFFFFF)
+                                                                                {
+                                                                                    shouldBeBroadcasted = true;
 
-                                                                                break;
+                                                                                    break;
+                                                                                }
                                                                             }
                                                                         }
-                                                                    }
 
-                                                                    if (shouldBeBroadcasted)
-                                                                    {
-                                                                        for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
+                                                                        if (shouldBeBroadcasted)
                                                                         {
-                                                                            if (peers[j].tcp4Protocol && peers[j].isConnectedAccepted && peers[j].exchangedPublicPeers && !peers[j].isClosing
-                                                                                && j != i)
+                                                                            for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
                                                                             {
-                                                                                push(&peers[j], requestResponseHeader, false);
+                                                                                if (peers[j].tcp4Protocol && peers[j].isConnectedAccepted && peers[j].exchangedPublicPeers && !peers[j].isClosing
+                                                                                    && j != i)
+                                                                                {
+                                                                                    push(&peers[j], requestResponseHeader, false);
+                                                                                }
                                                                             }
                                                                         }
                                                                     }
