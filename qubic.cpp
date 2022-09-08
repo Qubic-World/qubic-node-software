@@ -35,7 +35,7 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][71] = {
 
 #define VERSION_A 1
 #define VERSION_B 31
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -3415,7 +3415,7 @@ typedef struct
     BOOLEAN isReceiving, isTransmitting;
     BOOLEAN exchangedPublicPeers;
     BOOLEAN isClosing;
-    unsigned short protocol;
+    unsigned int latestTickIndices[NUMBER_OF_COMPUTORS];
 } Peer;
 
 typedef struct
@@ -3671,6 +3671,7 @@ static volatile char computorsLock = 0;
 static Computors computors, cachedComputors;
 
 static EFI_TIME time;
+static CHAR16 message[16384], timestampedMessage[16384];
 
 static EFI_FILE_PROTOCOL* root = NULL;
 
@@ -3701,8 +3702,10 @@ static Entity* entities = NULL;
 static char chosenTransfersEffectsAndQuestionBytes[NUMBER_OF_COMPUTORS][sizeof(BroadcastChosenTransfersEffectsAndQuestions) + (sizeof(Transfer) + MAX_TRANSFER_DESCRIPTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_TRANSFERS_PER_TICK + (sizeof(Effect) + MAX_EFFECT_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_EFFECTS_PER_TICK + (sizeof(Question) + MAX_QUESTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_QUESTIONS_PER_TICK + SIGNATURE_SIZE];
 
 static volatile char ticksLock = 0;
-static Tick latestTicks[NUMBER_OF_COMPUTORS], actualTicks[NUMBER_OF_COMPUTORS];
-static char tickFlags[NUMBER_OF_COMPUTORS / 2], prevTickFlags[NUMBER_OF_COMPUTORS / 2];
+static Tick latestTicks[NUMBER_OF_COMPUTORS];
+#if NUMBER_OF_COMPUTING_PROCESSORS
+static Tick actualTicks[NUMBER_OF_COMPUTORS];
+#endif
 static unsigned long long tickTicks[11];
 
 static unsigned long long* dejavu0 = NULL;
@@ -3886,9 +3889,11 @@ static void appendErrorStatus(CHAR16* dst, const EFI_STATUS status)
 
 static void log(const CHAR16* message)
 {
-    CHAR16 timestampedMessage[2048];
-
-    rs->GetTime(&time, NULL);
+    EFI_TIME newTime;
+    if (!rs->GetTime(&newTime, NULL))
+    {
+        bs->CopyMem(&time, &newTime, sizeof(time));
+    }
     timestampedMessage[0] = (time.Year %= 100) / 10 + L'0';
     timestampedMessage[1] = time.Year % 10 + L'0';
     timestampedMessage[2] = time.Month / 10 + L'0';
@@ -3921,12 +3926,11 @@ static void log(const CHAR16* message)
 
 static void logStatus(const CHAR16* message, const EFI_STATUS status)
 {
-    CHAR16 extendedMessage[256];
-    setText(extendedMessage, message);
-    appendText(extendedMessage, L" (");
-    appendErrorStatus(extendedMessage, status);
-    appendText(extendedMessage, L")!");
-    log(extendedMessage);
+    setText(::message, message);
+    appendText(::message, L" (");
+    appendErrorStatus(::message, status);
+    appendText(::message, L")!");
+    log(::message);
 }
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
@@ -4181,12 +4185,20 @@ static void requestProcessor(void* ProcedureArgument)
                         if (request->tick.computorIndex < NUMBER_OF_COMPUTORS)
                         {
                             bool canBeDiscarded = false;
-                            if (tickFlags[request->tick.computorIndex >> 1] & (1 << ((request->tick.computorIndex & 1) << 2)))
+                            if (latestTicks[request->tick.computorIndex].tick == request->tick.tick
+#if NUMBER_OF_COMPUTING_PROCESSORS
+                                || actualTicks[request->tick.computorIndex].tick == request->tick.tick
+#endif
+                                )
                             {
                                 canBeDiscarded = true;
-                                for (unsigned int i = 0; i < sizeof(tickFlags); i++)
+                            }
+                            if (canBeDiscarded)
+                            {
+                                for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
                                 {
-                                    if ((tickFlags[i] | request->tick.tickFlags[i]) != tickFlags[i])
+                                    if (peers[i].tcp4Protocol && peers[i].isConnectedAccepted
+                                        && peers[i].latestTickIndices[request->tick.computorIndex] < request->tick.tick)
                                     {
                                         canBeDiscarded = false;
 
@@ -4255,13 +4267,20 @@ static void requestProcessor(void* ProcedureArgument)
                                                         if (request->tick.tick == system.tick + 1)
                                                         {
                                                             bs->CopyMem(&actualTicks[request->tick.computorIndex], &request->tick, sizeof(Tick));
-
-                                                            tickFlags[request->tick.computorIndex >> 1] |= (1 << ((request->tick.computorIndex & 1) << 2));
                                                         }
 
                                                         _InterlockedCompareExchange8(&systemLock, 0, 1);
                                                     }
 #endif
+
+                                                    for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
+                                                    {
+                                                        if (peers[i].tcp4Protocol && peers[i].isConnectedAccepted
+                                                            && peers[i].latestTickIndices[request->tick.computorIndex] < request->tick.tick)
+                                                        {
+                                                            peers[i].latestTickIndices[request->tick.computorIndex] = request->tick.tick;
+                                                        }
+                                                    }
 
                                                     _InterlockedCompareExchange8(&ticksLock, 0, 1);
                                                 }
@@ -4869,8 +4888,6 @@ static EFI_HANDLE getTcp4Protocol(const unsigned char* remoteAddress, const unsi
                     {
                         if (!remoteAddress)
                         {
-                            CHAR16 message[256];
-
                             setText(message, L"Local address = ");
                             appendIPv4Address(message, configData.AccessPoint.StationAddress);
                             appendText(message, L":");
@@ -5098,7 +5115,6 @@ static void saveSystem()
         }
         else
         {
-            CHAR16 message[256];
             setNumber(message, size, TRUE);
             appendText(message, L" bytes of system data are saved.");
             log(message);
@@ -5199,16 +5215,15 @@ static BOOLEAN initialize()
     frequency = __rdtsc();
     bs->Stall(1000000);
     frequency = __rdtsc() - frequency;
-    CHAR16 message[256];
     setText(message, L"TSC frequency = ");
     appendNumber(message, frequency, TRUE);
     appendText(message, L" Hz.");
     log(message);
 
     bs->SetMem(&latestTicks, sizeof(latestTicks), 0);
+#if NUMBER_OF_COMPUTING_PROCESSORS
     bs->SetMem(&actualTicks, sizeof(actualTicks), 0);
-    bs->SetMem(&tickFlags, sizeof(tickFlags), 0);
-    bs->SetMem(&prevTickFlags, sizeof(prevTickFlags), 0xFF);
+#endif
     bs->SetMem(&tickTicks, sizeof(tickTicks), 0);
     bs->SetMem(&tick, sizeof(tick), 0);
 
@@ -5596,8 +5611,13 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
+    bs->SetMem(&time, sizeof(time), 0);
+    time.Year = 2022;
+    time.Month = 4;
+    time.Day = 13;
+    time.Hour = 12;
+
     st->ConOut->ClearScreen(st->ConOut);
-    CHAR16 message[2048];
     setText(message, L"Qubic ");
     appendNumber(message, VERSION_A, FALSE);
     appendText(message, L".");
@@ -5719,7 +5739,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             {
                                 const unsigned long long curTimeTick = __rdtsc();
 
-                                if (curTimeTick - loggingTick >= frequency)
+                                if (curTimeTick - loggingTick >= frequency / 2)
                                 {
                                     loggingTick = curTimeTick;
 
@@ -5899,69 +5919,55 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                     if (numberOfOwnComputorIndices)
                                     {
-                                        for (unsigned int i = 0; i < sizeof(tickFlags); i++)
+                                        tick.header.size = sizeof(tick);
+                                        tick.header.protocol = VERSION_B;
+                                        tick.header.type = BROADCAST_TICK;
+
+                                        tick.broadcastTick.tick.epoch = cachedSystem.epoch;
+                                        tick.broadcastTick.tick.tick = cachedSystem.tick + 1;
+
+                                        tick.broadcastTick.tick.second = 0;// time.Second;
+                                        tick.broadcastTick.tick.minute = 0;// time.Minute;
+                                        tick.broadcastTick.tick.hour = 0;// time.Hour;
+                                        tick.broadcastTick.tick.day = 0;// time.Day;
+                                        tick.broadcastTick.tick.month = 0;// time.Month;
+                                        tick.broadcastTick.tick.year = 0;// time.Year - 2000;
+
+                                        bs->SetMem(tick.broadcastTick.tick.stateDigest, sizeof(tick.broadcastTick.tick.stateDigest), 0);
+                                        bs->SetMem(tick.broadcastTick.tick.prevStateDigest, sizeof(tick.broadcastTick.tick.prevStateDigest), 0);
+                                        *((__m256i*)tick.broadcastTick.tick.nextTickChosenTransfersEffectsAndQuestionsDigest) = ZERO;
+
+                                        for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
                                         {
-                                            if (tickFlags[i] != prevTickFlags[i])
+                                            tick.broadcastTick.tick.computorIndex = ownComputorIndices[i] ^ BROADCAST_TICK;
+
+                                            unsigned char digest[32];
+                                            KangarooTwelve((unsigned char*)&tick.broadcastTick.tick, tick.header.size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
+                                            tick.broadcastTick.tick.computorIndex ^= BROADCAST_TICK;
+                                            for (unsigned int j = 0; j < sizeof(ownSeeds) / sizeof(ownSeeds[0]); j++)
                                             {
-                                                tick.header.size = sizeof(tick);
-                                                tick.header.protocol = VERSION_B;
-                                                tick.header.type = BROADCAST_TICK;
-
-                                                tick.broadcastTick.tick.epoch = cachedSystem.epoch;
-                                                tick.broadcastTick.tick.tick = cachedSystem.tick + 1;
-
-                                                bs->CopyMem(tick.broadcastTick.tick.tickFlags, &tickFlags, sizeof(tickFlags));
-
-                                                rs->GetTime(&time, NULL);
-                                                tick.broadcastTick.tick.second = 0;// time.Second;
-                                                tick.broadcastTick.tick.minute = 0;// time.Minute;
-                                                tick.broadcastTick.tick.hour = 0;// time.Hour;
-                                                tick.broadcastTick.tick.day = 0;// time.Day;
-                                                tick.broadcastTick.tick.month = 0;// time.Month;
-                                                tick.broadcastTick.tick.year = 0;// time.Year - 2000;
-
-                                                bs->SetMem(tick.broadcastTick.tick.stateDigest, sizeof(tick.broadcastTick.tick.stateDigest), 0);
-                                                bs->SetMem(tick.broadcastTick.tick.prevStateDigest, sizeof(tick.broadcastTick.tick.prevStateDigest), 0);
-                                                *((__m256i*)tick.broadcastTick.tick.nextTickChosenTransfersEffectsAndQuestionsDigest) = ZERO;
-
-                                                for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
+                                                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)cachedComputors.publicKeys[ownComputorIndices[i]]), *((__m256i*)ownPublicKeys[j]))) == 0xFFFFFFFF)
                                                 {
-                                                    tick.broadcastTick.tick.computorIndex = ownComputorIndices[i] ^ BROADCAST_TICK;
+                                                    sign(ownSubseeds[j], ownPublicKeys[j], digest, tick.broadcastTick.tick.signature);
 
-                                                    unsigned char digest[32];
-                                                    KangarooTwelve((unsigned char*)&tick.broadcastTick.tick, tick.header.size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
-                                                    tick.broadcastTick.tick.computorIndex ^= BROADCAST_TICK;
-                                                    for (unsigned int j = 0; j < sizeof(ownSeeds) / sizeof(ownSeeds[0]); j++)
-                                                    {
-                                                        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)cachedComputors.publicKeys[ownComputorIndices[i]]), *((__m256i*)ownPublicKeys[j]))) == 0xFFFFFFFF)
-                                                        {
-                                                            sign(ownSubseeds[j], ownPublicKeys[j], digest, tick.broadcastTick.tick.signature);
-
-                                                            break;
-                                                        }
-                                                    }
-
-                                                    while (_InterlockedCompareExchange8(&ticksLock, 1, 0))
-                                                    {
-                                                        _mm_pause();
-                                                    }
-                                                    bs->CopyMem(&latestTicks[ownComputorIndices[i]], &tick.broadcastTick.tick, sizeof(Tick));
-                                                    bs->CopyMem(&actualTicks[ownComputorIndices[i]], &tick.broadcastTick.tick, sizeof(Tick));
-                                                    tickFlags[ownComputorIndices[i] >> 1] |= (1 << (4 * (ownComputorIndices[i] & 1)));
-                                                    _InterlockedCompareExchange8(&ticksLock, 0, 1);
-
-                                                    for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
-                                                    {
-                                                        if (peers[j].tcp4Protocol && peers[j].isConnectedAccepted && peers[j].exchangedPublicPeers && !peers[j].isClosing)
-                                                        {
-                                                            push(&peers[j], &tick.header, true);
-
-                                                            bs->CopyMem(prevTickFlags, tickFlags, sizeof(tickFlags));
-                                                        }
-                                                    }
+                                                    break;
                                                 }
+                                            }
 
-                                                break;
+                                            while (_InterlockedCompareExchange8(&ticksLock, 1, 0))
+                                            {
+                                                _mm_pause();
+                                            }
+                                            bs->CopyMem(&latestTicks[ownComputorIndices[i]], &tick.broadcastTick.tick, sizeof(Tick));
+                                            bs->CopyMem(&actualTicks[ownComputorIndices[i]], &tick.broadcastTick.tick, sizeof(Tick));
+                                            _InterlockedCompareExchange8(&ticksLock, 0, 1);
+
+                                            for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
+                                            {
+                                                if (peers[j].tcp4Protocol && peers[j].isConnectedAccepted && peers[j].exchangedPublicPeers && !peers[j].isClosing)
+                                                {
+                                                    push(&peers[j], &tick.header, true);
+                                                }
                                             }
                                         }
 
@@ -6015,8 +6021,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 }
                                             }
 
-                                            bs->SetMem(&tickFlags, sizeof(tickFlags), 0);
-                                            bs->SetMem(&prevTickFlags, sizeof(prevTickFlags), 0xFF);
                                             for (unsigned int i = 0; i < sizeof(tickTicks) / sizeof(tickTicks[0]) - 1; i++)
                                             {
                                                 tickTicks[i] = tickTicks[i + 1];
@@ -6074,8 +6078,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             {
                                                 system.tick++;
 
-                                                bs->SetMem(&tickFlags, sizeof(tickFlags), 0);
-                                                bs->SetMem(&prevTickFlags, sizeof(prevTickFlags), 0xFF);
                                                 for (unsigned int i = 0; i < sizeof(tickTicks) / sizeof(tickTicks[0]) - 1; i++)
                                                 {
                                                     tickTicks[i] = tickTicks[i + 1];
@@ -6172,6 +6174,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 else
                                                 {
                                                     peers[i].isConnectedAccepted = TRUE;
+                                                    bs->SetMem(peers[i].latestTickIndices, sizeof(peers[0].latestTickIndices), 0);
 
                                                     ExchangePublicPeers* request = (ExchangePublicPeers*)&peers[i].dataToTransmit[sizeof(RequestResponseHeader)];
                                                     unsigned int j;
@@ -6271,6 +6274,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     else
                                                     {
                                                         peers[i].isConnectedAccepted = TRUE;
+                                                        bs->SetMem(peers[i].latestTickIndices, sizeof(peers[0].latestTickIndices), 0);
                                                     }
                                                 }
                                             }
@@ -6316,8 +6320,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                         }
                                                         else
                                                         {
-                                                            peers[i].protocol = requestResponseHeader->protocol;
-
                                                             if (receivedDataSize >= requestResponseHeader->size)
                                                             {
                                                                 switch (requestResponseHeader->type)
@@ -7181,11 +7183,28 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 {
                                     resourceTestingSolutionPublicationTick = curTimeTick;
 
-                                    for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
+                                    bool shouldBeBroadcasted = !(dayIndex(time.Year - 2000, time.Month, time.Day) % 7);
+                                    if (!shouldBeBroadcasted)
                                     {
-                                        if (peers[i].tcp4Protocol && peers[i].isConnectedAccepted && peers[i].exchangedPublicPeers && !peers[i].isClosing)
+                                        for (unsigned int i = 0; i < sizeof(resourceTestingSolutionIdentitiesToBroadcast) / sizeof(resourceTestingSolutionIdentitiesToBroadcast[0]); i++)
                                         {
-                                            push(&peers[i], &solution.header, true);
+                                            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)solution.broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey), *((__m256i*)resourceTestingSolutionIdentitiesToBroadcast[i]))) == 0xFFFFFFFF)
+                                            {
+                                                shouldBeBroadcasted = true;
+
+                                                break;
+                                            }
+                                        }
+                                    }
+
+                                    if (shouldBeBroadcasted)
+                                    {
+                                        for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
+                                        {
+                                            if (peers[i].tcp4Protocol && peers[i].isConnectedAccepted && peers[i].exchangedPublicPeers && !peers[i].isClosing)
+                                            {
+                                                push(&peers[i], &solution.header, true);
+                                            }
                                         }
                                     }
 
