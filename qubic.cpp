@@ -35,7 +35,7 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][71] = {
 
 #define VERSION_A 1
 #define VERSION_B 31
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -3415,7 +3415,6 @@ typedef struct
     BOOLEAN isReceiving, isTransmitting;
     BOOLEAN exchangedPublicPeers;
     BOOLEAN isClosing;
-    unsigned int latestTickIndices[NUMBER_OF_COMPUTORS];
 } Peer;
 
 typedef struct
@@ -3711,6 +3710,7 @@ static unsigned long long tickTicks[11];
 static unsigned long long* dejavu0 = NULL;
 static unsigned long long* dejavu1 = NULL;
 static unsigned int dejavuSwapCounter = DEJAVU_SWAP_LIMIT;
+static unsigned long long latestTickTimestamps[NUMBER_OF_COMPUTORS];
 
 static EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* simpleFileSystemProtocol;
 
@@ -4179,125 +4179,92 @@ static void requestProcessor(void* ProcedureArgument)
 
                 case BROADCAST_TICK:
                 {
-                    if (requestHeader->size == sizeof(tick))
-                    {
-                        BroadcastTick* request = (BroadcastTick*)((char*)processor->cache + sizeof(RequestResponseHeader));
-                        if (request->tick.computorIndex < NUMBER_OF_COMPUTORS)
-                        {
-                            bool canBeDiscarded = false;
-                            if (latestTicks[request->tick.computorIndex].tick == request->tick.tick
+                    BroadcastTick* request = (BroadcastTick*)((char*)processor->cache + sizeof(RequestResponseHeader));
+                    if (latestTicks[request->tick.computorIndex].tick != request->tick.tick
 #if NUMBER_OF_COMPUTING_PROCESSORS
-                                || actualTicks[request->tick.computorIndex].tick == request->tick.tick
+                        && actualTicks[request->tick.computorIndex].tick != request->tick.tick
 #endif
-                                )
+                        )
+                    {
+                        if (//&& request->tick.month >= 1 && request->tick.month <= 12
+                            //&& request->tick.day >= 1 && request->tick.day <= 31
+                            request->tick.hour <= 23
+                            && request->tick.minute <= 59
+                            && request->tick.second <= 59
+                            /*&& ms(request->tick.year, request->tick.month, request->tick.day, request->tick.hour, request->tick.minute, request->tick.second, request->tick.millisecond) >= ms(request->tick.prevYear, request->tick.prevMonth, request->tick.prevDay, request->tick.prevHour, request->tick.prevMinute, request->tick.prevSecond, request->tick.prevMillisecond)*/ // TODO
+                            )
+                        {
+                            if (computors.index && !_InterlockedCompareExchange8(&computorsLock, 1, 0))
                             {
-                                canBeDiscarded = true;
-                            }
-                            if (canBeDiscarded)
-                            {
-                                for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
+                                if (request->tick.epoch == computors.epoch)
                                 {
-                                    if (peers[i].tcp4Protocol && peers[i].isConnectedAccepted
-                                        && peers[i].latestTickIndices[request->tick.computorIndex] < request->tick.tick)
+                                    unsigned char digest[32];
+                                    request->tick.computorIndex ^= BROADCAST_TICK;
+                                    KangarooTwelve((unsigned char*)&request->tick, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
+                                    request->tick.computorIndex ^= BROADCAST_TICK;
+                                    if (verify(computors.publicKeys[request->tick.computorIndex], digest, ((const unsigned char*)processor->cache + requestHeader->size - SIGNATURE_SIZE)))
                                     {
-                                        canBeDiscarded = false;
+                                        responseSize = requestHeader->size;
 
-                                        break;
-                                    }
-                                }
-                            }
-                            if (!canBeDiscarded)
-                            {
-                                if (//&& request->tick.month >= 1 && request->tick.month <= 12
-                                    //&& request->tick.day >= 1 && request->tick.day <= 31
-                                    request->tick.hour <= 23
-                                    && request->tick.minute <= 59
-                                    && request->tick.second <= 59
-                                    /*&& ms(request->tick.year, request->tick.month, request->tick.day, request->tick.hour, request->tick.minute, request->tick.second, request->tick.millisecond) >= ms(request->tick.prevYear, request->tick.prevMonth, request->tick.prevDay, request->tick.prevHour, request->tick.prevMinute, request->tick.prevSecond, request->tick.prevMillisecond)*/ // TODO
-                                    )
-                                {
-                                    if (computors.index && !_InterlockedCompareExchange8(&computorsLock, 1, 0))
-                                    {
-                                        if (request->tick.epoch == computors.epoch)
+                                        if (!_InterlockedCompareExchange8(&ticksLock, 1, 0))
                                         {
-                                            unsigned char digest[32];
-                                            request->tick.computorIndex ^= BROADCAST_TICK;
-                                            KangarooTwelve((unsigned char*)&request->tick, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
-                                            request->tick.computorIndex ^= BROADCAST_TICK;
-                                            if (verify(computors.publicKeys[request->tick.computorIndex], digest, ((const unsigned char*)processor->cache + requestHeader->size - SIGNATURE_SIZE)))
+                                            if (request->tick.tick > latestTicks[request->tick.computorIndex].tick)
                                             {
-                                                responseSize = requestHeader->size;
-
-                                                if (!_InterlockedCompareExchange8(&ticksLock, 1, 0))
-                                                {
-                                                    if (request->tick.tick > latestTicks[request->tick.computorIndex].tick)
-                                                    {
-                                                        bs->CopyMem(&latestTicks[request->tick.computorIndex], &request->tick, sizeof(Tick));
-                                                    }
+                                                bs->CopyMem(&latestTicks[request->tick.computorIndex], &request->tick, sizeof(Tick));
+                                            }
 #if NUMBER_OF_COMPUTING_PROCESSORS
-                                                    else
+                                            else
+                                            {
+                                                if (request->tick.tick == latestTicks[request->tick.computorIndex].tick)
+                                                {
+                                                    /*if (!_InterlockedCompareExchange8(&systemLock, 1, 0))
                                                     {
-                                                        if (request->tick.tick == latestTicks[request->tick.computorIndex].tick)
+                                                        if (system.decimationCounters[request->tick.computorIndex] < MAX_NUMBER_OF_DECIMATIONS)
                                                         {
-                                                            /*if (!_InterlockedCompareExchange8(&systemLock, 1, 0))
+                                                            bool isIdentical = true;
+                                                            unsigned char* oldTickBytes = (unsigned char*)&latestTicks[request->tick.computorIndex];
+                                                            unsigned char* newTickBytes = (unsigned char*)&request->tick;
+                                                            for (unsigned int i = 0; i < sizeof(DeprecatedTick); i++)
                                                             {
-                                                                if (system.decimationCounters[request->tick.computorIndex] < MAX_NUMBER_OF_DECIMATIONS)
+                                                                if (newTickBytes[i] != oldTickBytes[i])
                                                                 {
-                                                                    bool isIdentical = true;
-                                                                    unsigned char* oldTickBytes = (unsigned char*)&latestTicks[request->tick.computorIndex];
-                                                                    unsigned char* newTickBytes = (unsigned char*)&request->tick;
-                                                                    for (unsigned int i = 0; i < sizeof(DeprecatedTick); i++)
-                                                                    {
-                                                                        if (newTickBytes[i] != oldTickBytes[i])
-                                                                        {
-                                                                            system.decimationCounters[request->tick.computorIndex]++;
+                                                                    system.decimationCounters[request->tick.computorIndex]++;
 
-                                                                            break;
-                                                                        }
-                                                                    }
+                                                                    break;
                                                                 }
-
-                                                                _InterlockedCompareExchange8(&systemLock, 0, 1);
-                                                            }*/
-                                                        }
-                                                    }
-
-                                                    if (!_InterlockedCompareExchange8(&systemLock, 1, 0))
-                                                    {
-                                                        if (request->tick.tick == system.tick + 1)
-                                                        {
-                                                            bs->CopyMem(&actualTicks[request->tick.computorIndex], &request->tick, sizeof(Tick));
+                                                            }
                                                         }
 
                                                         _InterlockedCompareExchange8(&systemLock, 0, 1);
-                                                    }
-#endif
-
-                                                    for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
-                                                    {
-                                                        if (peers[i].tcp4Protocol && peers[i].isConnectedAccepted
-                                                            && peers[i].latestTickIndices[request->tick.computorIndex] < request->tick.tick)
-                                                        {
-                                                            peers[i].latestTickIndices[request->tick.computorIndex] = request->tick.tick;
-                                                        }
-                                                    }
-
-                                                    _InterlockedCompareExchange8(&ticksLock, 0, 1);
+                                                    }*/
                                                 }
                                             }
-                                        }
-                                        else
-                                        {
-                                            responseSize = requestHeader->size;
-                                        }
 
-                                        _InterlockedCompareExchange8(&computorsLock, 0, 1);
-                                    }
-                                    else
-                                    {
-                                        responseSize = requestHeader->size;
+                                            if (!_InterlockedCompareExchange8(&systemLock, 1, 0))
+                                            {
+                                                if (request->tick.tick == system.tick + 1)
+                                                {
+                                                    bs->CopyMem(&actualTicks[request->tick.computorIndex], &request->tick, sizeof(Tick));
+                                                }
+
+                                                _InterlockedCompareExchange8(&systemLock, 0, 1);
+                                            }
+#endif
+
+                                            _InterlockedCompareExchange8(&ticksLock, 0, 1);
+                                        }
                                     }
                                 }
+                                else
+                                {
+                                    responseSize = requestHeader->size;
+                                }
+
+                                _InterlockedCompareExchange8(&computorsLock, 0, 1);
+                            }
+                            else
+                            {
+                                responseSize = requestHeader->size;
                             }
                         }
                     }
@@ -5448,6 +5415,7 @@ static BOOLEAN initialize()
     }
     bs->SetMem((void*)dejavu0, 536870912, 0);
     bs->SetMem((void*)dejavu1, 536870912, 0);
+    bs->SetMem(&latestTickTimestamps, sizeof(latestTickTimestamps), 0);
 
     for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
     {
@@ -6174,7 +6142,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 else
                                                 {
                                                     peers[i].isConnectedAccepted = TRUE;
-                                                    bs->SetMem(peers[i].latestTickIndices, sizeof(peers[0].latestTickIndices), 0);
 
                                                     ExchangePublicPeers* request = (ExchangePublicPeers*)&peers[i].dataToTransmit[sizeof(RequestResponseHeader)];
                                                     unsigned int j;
@@ -6274,7 +6241,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     else
                                                     {
                                                         peers[i].isConnectedAccepted = TRUE;
-                                                        bs->SetMem(peers[i].latestTickIndices, sizeof(peers[0].latestTickIndices), 0);
                                                     }
                                                 }
                                             }
@@ -6449,6 +6415,37 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     }
 
                                                                     _InterlockedIncrement64(&numberOfProcessedRequests);
+                                                                }
+                                                                break;
+
+                                                                case BROADCAST_TICK:
+                                                                {
+                                                                    BroadcastTick* request = (BroadcastTick*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader));
+                                                                    if (request->tick.computorIndex < NUMBER_OF_COMPUTORS
+                                                                        && __rdtsc() - latestTickTimestamps[request->tick.computorIndex] >= frequency)
+                                                                    {
+                                                                        latestTickTimestamps[request->tick.computorIndex] = __rdtsc();
+
+                                                                        for (unsigned int j = 0; j < numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS); j++)
+                                                                        {
+                                                                            if (!_InterlockedCompareExchange8(&processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + j].inputState, 1, 0))
+                                                                            {
+                                                                                processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + j].requestPeer = &peers[i];
+                                                                                processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + j].requestClient = NULL;
+                                                                                processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + j].requestPeerClientId = peers[i].id;
+                                                                                bs->CopyMem(processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + j].requestBuffer, peers[i].receiveBuffer, requestResponseHeader->size);
+
+                                                                                _InterlockedCompareExchange8(&processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + j].inputState, 2, 1);
+
+                                                                                bs->CopyMem(peers[i].receiveBuffer, ((char*)peers[i].receiveBuffer) + requestResponseHeader->size, receivedDataSize -= requestResponseHeader->size);
+                                                                                peers[i].receiveData.FragmentTable[0].FragmentBuffer = ((char*)peers[i].receiveBuffer) + receivedDataSize;
+
+                                                                                goto iteration;
+                                                                            }
+                                                                        }
+
+                                                                        _InterlockedIncrement64(&numberOfDiscardedRequests);
+                                                                    }
                                                                 }
                                                                 break;
 
