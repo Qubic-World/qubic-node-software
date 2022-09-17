@@ -35,7 +35,7 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 
 #define VERSION_A 1
 #define VERSION_B 33
-#define VERSION_C 2
+#define VERSION_C 3
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -4003,7 +4003,7 @@ static struct System
     unsigned int tickCounters[NUMBER_OF_COMPUTORS];
     unsigned short decimationCounters[NUMBER_OF_COMPUTORS];
 } system, systemToSave, cachedSystem;
-static unsigned int tickNumberOfComputors = 0;
+static unsigned int tickNumberOfComputors = 0, nextTickNumberOfComputors = 0;
 static unsigned long long latestRevenuePublicationTick = 0;
 static unsigned short numberOfOwnComputorIndices = 0;
 static short ownComputorIndices[NUMBER_OF_COMPUTORS / 3];
@@ -4235,7 +4235,9 @@ static void log(const CHAR16* message)
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
     appendNumber(timestampedMessage, tickNumberOfComputors, FALSE);
-    appendText(timestampedMessage, L".");
+    appendText(timestampedMessage, L"(");
+    appendNumber(timestampedMessage, nextTickNumberOfComputors, FALSE);
+    appendText(timestampedMessage, L").");
     appendNumber(timestampedMessage, system.tick, FALSE);
     appendText(timestampedMessage, L".");
     appendNumber(timestampedMessage, system.epoch, FALSE);
@@ -6188,6 +6190,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                         unsigned int counters[NUMBER_OF_COMPUTORS];
                                         tickNumberOfComputors = 0;
+                                        nextTickNumberOfComputors = 0;
                                         while (_InterlockedCompareExchange8(&ticksLock, 1, 0))
                                         {
                                             _mm_pause();
@@ -6198,7 +6201,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             {
                                                 if (actualTicks[j].epoch == cachedSystem.epoch
                                                     && actualTicks[j].tick == cachedSystem.tick + 1
-                                                    && *((unsigned long long*) & actualTicks[j].millisecond) == *((unsigned long long*) & actualTicks[ownComputorIndices[0]].millisecond)
+                                                    && *((unsigned long long*)&actualTicks[j].millisecond) == *((unsigned long long*)&actualTicks[ownComputorIndices[0]].millisecond)
                                                     && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].prevStateDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].prevStateDigest))) == 0xFFFFFFFF
                                                     && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].nextTickChosenTransfersEffectsAndQuestionsDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].nextTickChosenTransfersEffectsAndQuestionsDigest))) == 0xFFFFFFFF)
                                                 {
@@ -6223,10 +6226,16 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     counters[j] = 0;
                                                 }
                                             }
+
+                                            if (latestTicks[j].tick == cachedSystem.tick + 2)
+                                            {
+                                                nextTickNumberOfComputors++;
+                                            }
                                         }
                                         if (tickNumberOfComputors >= QUORUM)
                                         {
                                             tickNumberOfComputors = 0;
+                                            nextTickNumberOfComputors = 0;
 
                                             while (_InterlockedCompareExchange8(&systemLock, 1, 0))
                                             {
