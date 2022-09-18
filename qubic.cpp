@@ -35,7 +35,7 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 
 #define VERSION_A 1
 #define VERSION_B 33
-#define VERSION_C 4
+#define VERSION_C 5
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -3735,7 +3735,6 @@ typedef struct
     EFI_TCP4_IO_TOKEN transmitToken;
     char* dataToTransmit;
     unsigned int dataToTransmitSize;
-    unsigned int id;
     BOOLEAN isConnectingAccepting;
     BOOLEAN isConnectedAccepted;
     BOOLEAN isReceiving, isTransmitting;
@@ -3754,7 +3753,6 @@ typedef struct
     EFI_TCP4_IO_TOKEN transmitToken;
     char* dataToTransmit;
     unsigned int dataToTransmitSize;
-    unsigned int id;
     char type;
     BOOLEAN isAccepting;
     BOOLEAN isAccepted;
@@ -3772,9 +3770,6 @@ typedef struct
 typedef struct
 {
     unsigned int number;
-    unsigned int requestPeerClientId;
-    unsigned int responsePeerClientId;
-    unsigned int cachePeerClientId;
     EFI_EVENT event;
     Peer* requestPeer;
     Peer* responsePeer;
@@ -4046,7 +4041,6 @@ static EFI_SERVICE_BINDING_PROTOCOL* tcp4ServiceBindingProtocol;
 static EFI_GUID tcp4ProtocolGuid = EFI_TCP4_PROTOCOL_GUID;
 static EFI_TCP4_PROTOCOL* peerTcp4Protocol;
 static Peer peers[NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS];
-static unsigned int latestPeerClientId = 0;
 static volatile long long numberOfReceivedBytes = 0, prevNumberOfReceivedBytes = 0;
 static volatile long long numberOfTransmittedBytes = 0, prevNumberOfTransmittedBytes = 0;
 
@@ -4389,42 +4383,45 @@ inline long long ms(unsigned short year, unsigned char month, unsigned char day,
     return (((((long long)dayIndex(year, month, day)) * 24 + hour) * 60 + minute) * 60 + second) * 1000 + millisecond;
 }
 
-static void push(Peer* peer, RequestResponseHeader* requestResponseHeader, bool isEnforced)
+static void push(Peer* peer, RequestResponseHeader* requestResponseHeader, bool isUrgent)
 {
-    if (isEnforced || !peer->dataToTransmitSize)
+    if (peer->tcp4Protocol && peer->isConnectedAccepted && peer->exchangedPublicPeers && !peer->isClosing)
     {
-        if (peer->dataToTransmitSize + requestResponseHeader->size > BUFFER_SIZE)
+        if (isUrgent || !peer->dataToTransmitSize)
         {
-            peer->dataToTransmitSize = 0;
+            if (peer->dataToTransmitSize + requestResponseHeader->size > BUFFER_SIZE)
+            {
+                peer->dataToTransmitSize = 0;
+            }
+
+            bs->CopyMem(&peer->dataToTransmit[peer->dataToTransmitSize], requestResponseHeader, requestResponseHeader->size);
+            peer->dataToTransmitSize += requestResponseHeader->size;
+
+            _InterlockedIncrement64(&numberOfDisseminatedRequests);
         }
-
-        bs->CopyMem(&peer->dataToTransmit[peer->dataToTransmitSize], requestResponseHeader, requestResponseHeader->size);
-        peer->dataToTransmitSize += requestResponseHeader->size;
-
-        _InterlockedIncrement64(&numberOfDisseminatedRequests);
     }
 }
 
-static void pushToAll(RequestResponseHeader* requestResponseHeader, bool isEnforced)
+static void pushToAll(RequestResponseHeader* requestResponseHeader, bool isUrgent)
 {
     for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
     {
-        if (peers[i].tcp4Protocol && peers[i].isConnectedAccepted && peers[i].exchangedPublicPeers && !peers[i].isClosing)
-        {
-            push(&peers[i], requestResponseHeader, isEnforced);
-        }
+        push(&peers[i], requestResponseHeader, isUrgent);
     }
 }
 
 static void push(Client* client, RequestResponseHeader* requestResponseHeader)
 {
-    if (client->dataToTransmitSize + requestResponseHeader->size > BUFFER_SIZE - 10) // Extra 10 bytes for WebSocket
+    if (client->tcp4Protocol && client->isAccepted && !client->isClosing)
     {
-        client->dataToTransmitSize = 0;
-    }
+        if (client->dataToTransmitSize + requestResponseHeader->size > BUFFER_SIZE - 10) // Extra 10 bytes for WebSocket
+        {
+            client->dataToTransmitSize = 0;
+        }
 
-    bs->CopyMem(&client->dataToTransmit[client->dataToTransmitSize], requestResponseHeader, requestResponseHeader->size);
-    client->dataToTransmitSize += requestResponseHeader->size;
+        bs->CopyMem(&client->dataToTransmit[client->dataToTransmitSize], requestResponseHeader, requestResponseHeader->size);
+        client->dataToTransmitSize += requestResponseHeader->size;
+    }
 }
 
 static void requestProcessor(void* ProcedureArgument)
@@ -4444,7 +4441,6 @@ static void requestProcessor(void* ProcedureArgument)
             processor->requestBuffer = processor->cache;
             processor->cachePeer = processor->requestPeer;
             processor->cacheClient = processor->requestClient;
-            processor->cachePeerClientId = processor->requestPeerClientId;
             _InterlockedCompareExchange8(&processor->inputState, 0, 3);
             processor->cache = tmp;
 
@@ -5001,7 +4997,6 @@ static void requestProcessor(void* ProcedureArgument)
                 processor->responseBuffer = processor->cache;
                 processor->responsePeer = processor->cachePeer;
                 processor->responseClient = processor->cacheClient;
-                processor->responsePeerClientId = processor->cachePeerClientId;
                 _InterlockedCompareExchange8(&processor->outputState, 2, 1);
                 processor->cache = tmp;
             }
@@ -6022,14 +6017,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             bs->CopyMem(&actualTicks[ownComputorIndices[i]], &broadcastedTick.broadcastTick.tick, sizeof(Tick));
                                             _InterlockedCompareExchange8(&ticksLock, 0, 1);
 
-                                            for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
-                                            {
-                                                if (peers[j].tcp4Protocol && peers[j].isConnectedAccepted && peers[j].exchangedPublicPeers && !peers[j].isClosing)
-                                                {
-                                                    push(&peers[j], &broadcastedTick.header, true);
-                                                }
-                                            }
-
+                                            pushToAll(&broadcastedTick.header, true);
                                         }
                                     }
 
@@ -6199,13 +6187,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             broadcastedRevenues.broadcastRevenues.revenues.computorIndex ^= BROADCAST_REVENUES;
                                             sign(ownSubseeds[ownComputorIndicesMapping[i]], ownPublicKeys[ownComputorIndicesMapping[i]], digest, broadcastedRevenues.broadcastRevenues.revenues.signature);
 
-                                            for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
-                                            {
-                                                if (peers[j].tcp4Protocol && peers[j].isConnectedAccepted && peers[j].exchangedPublicPeers && !peers[j].isClosing)
-                                                {
-                                                    push(&peers[j], &broadcastedRevenues.header, true);
-                                                }
-                                            }
+                                            pushToAll(&broadcastedRevenues.header, true);
                                         }
                                     }
                                 }
@@ -6252,24 +6234,35 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     appendText(message, L" /");
                                     appendNumber(message, numberOfDisseminatedRequests - prevNumberOfDisseminatedRequests, TRUE);
                                     appendText(message, L"] ");
+
+                                    unsigned int numberOfConnectingSlots = 0, numberOfConnectedSlots = 0, numberOfHandshakedSlots = 0;
                                     for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
                                     {
-                                        if (!peers[i].tcp4Protocol)
-                                        {
-                                            appendText(message, L"_");
-                                        }
-                                        else
+                                        if (peers[i].tcp4Protocol)
                                         {
                                             if (!peers[i].isConnectedAccepted)
                                             {
-                                                appendText(message, L"?");
+                                                numberOfConnectingSlots++;
                                             }
                                             else
                                             {
-                                                appendText(message, peers[i].exchangedPublicPeers ? L"X" : L".");
+                                                if (!peers[i].exchangedPublicPeers)
+                                                {
+                                                    numberOfConnectedSlots++;
+                                                }
+                                                else
+                                                {
+                                                    numberOfHandshakedSlots++;
+                                                }
                                             }
                                         }
                                     }
+                                    appendNumber(message, numberOfConnectingSlots, FALSE);
+                                    appendText(message, L">>");
+                                    appendNumber(message, numberOfConnectedSlots, FALSE);
+                                    appendText(message, L">>");
+                                    appendNumber(message, numberOfHandshakedSlots, FALSE);
+
                                     appendText(message, L" ");
                                     appendNumber(message, numberOfVerifiedPublicPeers, TRUE);
                                     appendText(message, L"/");
@@ -6662,14 +6655,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                                         if (shouldBeBroadcasted)
                                                                         {
-                                                                            for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
-                                                                            {
-                                                                                if (peers[j].tcp4Protocol && peers[j].isConnectedAccepted && peers[j].exchangedPublicPeers && !peers[j].isClosing
-                                                                                    && j != i)
-                                                                                {
-                                                                                    push(&peers[j], requestResponseHeader, false);
-                                                                                }
-                                                                            }
+                                                                            pushToAll(requestResponseHeader, false);
                                                                         }
                                                                     }
 
@@ -6701,7 +6687,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                                                 processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + j].requestPeer = &peers[i];
                                                                                 processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + j].requestClient = NULL;
-                                                                                processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + j].requestPeerClientId = peers[i].id;
                                                                                 bs->CopyMem(processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + j].requestBuffer, peers[i].receiveBuffer, requestResponseHeader->size);
 
                                                                                 _InterlockedCompareExchange8(&processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + j].inputState, 2, 1);
@@ -6826,7 +6811,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 {
                                                     peers[i].receiveData.FragmentTable[0].FragmentBuffer = peers[i].receiveBuffer;
                                                     peers[i].dataToTransmitSize = 0;
-                                                    peers[i].id = ++latestPeerClientId;
                                                     peers[i].isReceiving = FALSE;
                                                     peers[i].isTransmitting = FALSE;
                                                     peers[i].exchangedPublicPeers = FALSE;
@@ -6856,7 +6840,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         {
                                             peers[i].receiveData.FragmentTable[0].FragmentBuffer = peers[i].receiveBuffer;
                                             peers[i].dataToTransmitSize = 0;
-                                            peers[i].id = ++latestPeerClientId;
                                             peers[i].isReceiving = FALSE;
                                             peers[i].isTransmitting = FALSE;
                                             peers[i].exchangedPublicPeers = FALSE;
@@ -7224,7 +7207,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                         {
                                                                             processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + j].requestPeer = NULL;
                                                                             processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + j].requestClient = &clients[i];
-                                                                            processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + j].requestPeerClientId = clients[i].id;
                                                                             bs->CopyMem(processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + j].requestBuffer, &((char*)clients[i].receiveBuffer)[ptr], requestResponseHeader->size);
 
                                                                             _InterlockedCompareExchange8(&processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + j].inputState, 2, 1);
@@ -7363,7 +7345,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     {
                                         clients[i].receiveData.FragmentTable[0].FragmentBuffer = clients[i].receiveBuffer;
                                         clients[i].dataToTransmitSize = 0;
-                                        clients[i].id = ++latestPeerClientId;
                                         clients[i].type = 0;
                                         clients[i].isReceiving = FALSE;
                                         clients[i].isTransmitting = FALSE;
@@ -7410,13 +7391,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                     bs->CopyMem(&broadcastedComputors.broadcastComputors.computors, &computors, sizeof(computors));
 
-                                    for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
-                                    {
-                                        if (peers[i].tcp4Protocol && peers[i].isConnectedAccepted && peers[i].exchangedPublicPeers && !peers[i].isClosing)
-                                        {
-                                            push(&peers[i], &broadcastedComputors.header, true);
-                                        }
-                                    }
+                                    pushToAll(&broadcastedComputors.header, true);
                                 }
 
                                 if (curTimeTick - ticksRebroadcastingTick >= TICKS_REBROADCASTING_PERIOD * frequency)
@@ -7429,13 +7404,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         {
                                             bs->CopyMem(&broadcastedTick.broadcastTick.tick, &latestTicks[i], sizeof(Tick));
 
-                                            for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
-                                            {
-                                                if (peers[j].tcp4Protocol && peers[j].isConnectedAccepted && peers[j].exchangedPublicPeers && !peers[j].isClosing)
-                                                {
-                                                    push(&peers[j], &broadcastedTick.header, true);
-                                                }
-                                            }
+                                            pushToAll(&broadcastedTick.header, false);
                                         }
                                     }
                                 }
@@ -7461,13 +7430,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                     if (shouldBeBroadcasted)
                                     {
-                                        for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
-                                        {
-                                            if (peers[i].tcp4Protocol && peers[i].isConnectedAccepted && peers[i].exchangedPublicPeers && !peers[i].isClosing)
-                                            {
-                                                push(&peers[i], &broadcastedSolution.header, true);
-                                            }
-                                        }
+                                        pushToAll(&broadcastedSolution.header, true);
                                     }
 
                                     saveSolution();
@@ -7486,21 +7449,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                             if (processor->responsePeer)
                                             {
-                                                for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
-                                                {
-                                                    if (peers[j].tcp4Protocol && peers[j].isConnectedAccepted && peers[j].exchangedPublicPeers && !peers[j].isClosing
-                                                        && peers[j].id != processor->responsePeer->id)
-                                                    {
-                                                        push(&peers[j], responseHeader, true);
-                                                    }
-                                                }
+                                                pushToAll(responseHeader, false);
                                             }
                                             else
                                             {
-                                                if (processor->responsePeerClientId == processor->responseClient->id && processor->responseClient->tcp4Protocol && processor->responseClient->isAccepted && !processor->responseClient->isClosing)
-                                                {
-                                                    push(processor->responseClient, responseHeader);
-                                                }
+                                                push(processor->responseClient, responseHeader);
                                             }
                                         }
 
