@@ -35,7 +35,7 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 
 #define VERSION_A 1
 #define VERSION_B 33
-#define VERSION_C 5
+#define VERSION_C 6
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -44,6 +44,10 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define EPOCH 22
 #define TICK 2633058
+
+/*#if NUMBER_OF_COMPUTING_PROCESSORS
+#include "qubics.h"
+#endif*/
 
 
 
@@ -3967,6 +3971,18 @@ typedef struct
     Answer answer;
 } BroadcastAnswer;
 
+#define BROADCAST_LATEST_TICKS 11
+
+typedef struct
+{
+    Tick ticks[NUMBER_OF_COMPUTORS];
+} LatestTicks;
+
+typedef struct
+{
+    LatestTicks latestTicks;
+} BroadcastLatestTicks;
+
 #define GET_COMPUTER_STATE 0
 
 typedef struct
@@ -4090,6 +4106,12 @@ static struct
     RequestResponseHeader header;
     BroadcastRevenues broadcastRevenues;
 } broadcastedRevenues;
+
+static struct
+{
+    RequestResponseHeader header;
+    BroadcastLatestTicks broadcastLatestTicks;
+} broadcastedLatestTicks;
 
 static bool showExtendedLogging = false;
 
@@ -4424,6 +4446,87 @@ static void push(Client* client, RequestResponseHeader* requestResponseHeader)
     }
 }
 
+static bool analyzeTick(Tick* tick)
+{
+    if (tick->computorIndex < NUMBER_OF_COMPUTORS
+        //&& tick->month >= 1 && tick->month <= 12
+        //&& tick->day >= 1 && tick->day <= 31
+        && tick->hour <= 23
+        && tick->minute <= 59
+        && tick->second <= 59
+        && tick->millisecond <= 999
+        /*&& ms(tick->year, tick->month, tick->day, tick->hour, tick->minute, tick->second, tick->millisecond) >= ms(tick->prevYear, tick->prevMonth, tick->prevDay, tick->prevHour, tick->prevMinute, tick->prevSecond, tick->prevMillisecond)*/ // TODO
+        )
+    {
+        if (computors.epoch
+            && tick->epoch == computors.epoch)
+        {
+            unsigned char digest[32];
+            tick->computorIndex ^= BROADCAST_TICK;
+            KangarooTwelve((unsigned char*)tick, sizeof(Tick) - SIGNATURE_SIZE, digest, sizeof(digest));
+            tick->computorIndex ^= BROADCAST_TICK;
+            if (verify(computors.publicKeys[tick->computorIndex], digest, tick->signature))
+            {
+                if (!_InterlockedCompareExchange8(&ticksLock, 1, 0))
+                {
+                    if (tick->tick > latestTicks[tick->computorIndex].tick)
+                    {
+                        bs->CopyMem(&latestTicks[tick->computorIndex], tick, sizeof(Tick));
+                    }
+#if NUMBER_OF_COMPUTING_PROCESSORS
+                    else
+                    {
+                        if (tick->tick == latestTicks[tick->computorIndex].tick)
+                        {
+                            /*if (!_InterlockedCompareExchange8(&systemLock, 1, 0))
+                            {
+                                if (system.decimationCounters[tick->computorIndex] < MAX_NUMBER_OF_DECIMATIONS)
+                                {
+                                    bool isIdentical = true;
+                                    unsigned char* oldTickBytes = (unsigned char*)&latestTicks[tick->computorIndex];
+                                    unsigned char* newTickBytes = (unsigned char*)&request->tick;
+                                    for (unsigned int i = 0; i < sizeof(DeprecatedTick); i++)
+                                    {
+                                        if (newTickBytes[i] != oldTickBytes[i])
+                                        {
+                                            system.decimationCounters[tick->computorIndex]++;
+
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                _InterlockedCompareExchange8(&systemLock, 0, 1);
+                            }*/
+                        }
+                    }
+
+                    if (!_InterlockedCompareExchange8(&systemLock, 1, 0))
+                    {
+                        if (tick->tick == system.tick + 1)
+                        {
+                            bs->CopyMem(&actualTicks[tick->computorIndex], tick, sizeof(Tick));
+                        }
+
+                        _InterlockedCompareExchange8(&systemLock, 0, 1);
+                    }
+#endif
+
+                    _InterlockedCompareExchange8(&ticksLock, 0, 1);
+                }
+
+                return true;
+            }
+        }
+        else
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static void requestProcessor(void* ProcedureArgument)
 {
     enableAVX2();
@@ -4492,81 +4595,9 @@ static void requestProcessor(void* ProcedureArgument)
 
                 case BROADCAST_TICK:
                 {
-                    BroadcastTick* request = (BroadcastTick*)((char*)processor->cache + sizeof(RequestResponseHeader));
-                    if (request->tick.computorIndex < NUMBER_OF_COMPUTORS
-                        //&& request->tick.month >= 1 && request->tick.month <= 12
-                        //&& request->tick.day >= 1 && request->tick.day <= 31
-                        && request->tick.hour <= 23
-                        && request->tick.minute <= 59
-                        && request->tick.second <= 59
-                        && request->tick.millisecond <= 999
-                        /*&& ms(request->tick.year, request->tick.month, request->tick.day, request->tick.hour, request->tick.minute, request->tick.second, request->tick.millisecond) >= ms(request->tick.prevYear, request->tick.prevMonth, request->tick.prevDay, request->tick.prevHour, request->tick.prevMinute, request->tick.prevSecond, request->tick.prevMillisecond)*/ // TODO
-                        )
+                    if (analyzeTick(&((BroadcastTick*)((char*)processor->cache + sizeof(RequestResponseHeader)))->tick))
                     {
-                        if (computors.epoch
-                            && request->tick.epoch == computors.epoch)
-                        {
-                            unsigned char digest[32];
-                            request->tick.computorIndex ^= BROADCAST_TICK;
-                            KangarooTwelve((unsigned char*)&request->tick, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
-                            request->tick.computorIndex ^= BROADCAST_TICK;
-                            if (verify(computors.publicKeys[request->tick.computorIndex], digest, ((const unsigned char*)processor->cache + requestHeader->size - SIGNATURE_SIZE)))
-                            {
-                                if (!_InterlockedCompareExchange8(&ticksLock, 1, 0))
-                                {
-                                    if (request->tick.tick > latestTicks[request->tick.computorIndex].tick)
-                                    {
-                                        bs->CopyMem(&latestTicks[request->tick.computorIndex], &request->tick, sizeof(Tick));
-                                    }
-#if NUMBER_OF_COMPUTING_PROCESSORS
-                                    else
-                                    {
-                                        if (request->tick.tick == latestTicks[request->tick.computorIndex].tick)
-                                        {
-                                            /*if (!_InterlockedCompareExchange8(&systemLock, 1, 0))
-                                            {
-                                                if (system.decimationCounters[request->tick.computorIndex] < MAX_NUMBER_OF_DECIMATIONS)
-                                                {
-                                                    bool isIdentical = true;
-                                                    unsigned char* oldTickBytes = (unsigned char*)&latestTicks[request->tick.computorIndex];
-                                                    unsigned char* newTickBytes = (unsigned char*)&request->tick;
-                                                    for (unsigned int i = 0; i < sizeof(DeprecatedTick); i++)
-                                                    {
-                                                        if (newTickBytes[i] != oldTickBytes[i])
-                                                        {
-                                                            system.decimationCounters[request->tick.computorIndex]++;
-
-                                                            break;
-                                                        }
-                                                    }
-                                                }
-
-                                                _InterlockedCompareExchange8(&systemLock, 0, 1);
-                                            }*/
-                                        }
-                                    }
-
-                                    if (!_InterlockedCompareExchange8(&systemLock, 1, 0))
-                                    {
-                                        if (request->tick.tick == system.tick + 1)
-                                        {
-                                            bs->CopyMem(&actualTicks[request->tick.computorIndex], &request->tick, sizeof(Tick));
-                                        }
-
-                                        _InterlockedCompareExchange8(&systemLock, 0, 1);
-                                    }
-#endif
-
-                                    _InterlockedCompareExchange8(&ticksLock, 0, 1);
-                                }
-
-                                responseSize = requestHeader->size;
-                            }
-                        }
-                        else
-                        {
-                            responseSize = requestHeader->size;
-                        }
+                        responseSize = requestHeader->size;
                     }
                 }
                 break;
@@ -4786,6 +4817,16 @@ static void requestProcessor(void* ProcedureArgument)
                         {
                             responseSize = requestHeader->size;
                         }
+                    }
+                }
+                break;
+
+                case BROADCAST_LATEST_TICKS:
+                {
+                    BroadcastLatestTicks* request = (BroadcastLatestTicks*)((char*)processor->cache + sizeof(RequestResponseHeader));
+                    for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                    {
+                        analyzeTick(&request->latestTicks.ticks[i]);
                     }
                 }
                 break;
@@ -5479,6 +5520,9 @@ static BOOLEAN initialize()
     broadcastedRevenues.header.size = sizeof(broadcastedRevenues);
     broadcastedRevenues.header.protocol = VERSION_B;
     broadcastedRevenues.header.type = BROADCAST_REVENUES;
+    broadcastedLatestTicks.header.size = sizeof(broadcastedLatestTicks);
+    broadcastedLatestTicks.header.protocol = VERSION_B;
+    broadcastedLatestTicks.header.type = BROADCAST_LATEST_TICKS;
 
     EFI_STATUS status;
 
@@ -5999,8 +6043,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         {
                                             broadcastedTick.broadcastTick.tick.computorIndex = ownComputorIndices[i] ^ BROADCAST_TICK;
                                             unsigned char publicKeyAndStateDigest[32 + 32];
-                                            *((__m256i*) & publicKeyAndStateDigest[0]) = *((__m256i*)ownPublicKeys[ownComputorIndicesMapping[i]]);
-                                            *((__m256i*) & publicKeyAndStateDigest[32]) = ZERO;
+                                            *((__m256i*)&publicKeyAndStateDigest[0]) = *((__m256i*)ownPublicKeys[ownComputorIndicesMapping[i]]);
+                                            *((__m256i*)&publicKeyAndStateDigest[32]) = ZERO;
                                             KangarooTwelve(publicKeyAndStateDigest, sizeof(publicKeyAndStateDigest), broadcastedTick.broadcastTick.tick.saltedStateDigest, sizeof(broadcastedTick.broadcastTick.tick.saltedStateDigest));
 
                                             unsigned char digest[32];
@@ -7402,11 +7446,15 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     {
                                         if (latestTicks[i].epoch)
                                         {
-                                            bs->CopyMem(&broadcastedTick.broadcastTick.tick, &latestTicks[i], sizeof(Tick));
-
-                                            pushToAll(&broadcastedTick.header, false);
+                                            bs->CopyMem(&broadcastedLatestTicks.broadcastLatestTicks.latestTicks.ticks[i], &latestTicks[i], sizeof(Tick));
+                                        }
+                                        else
+                                        {
+                                            bs->SetMem(&broadcastedLatestTicks.broadcastLatestTicks.latestTicks.ticks[i], sizeof(Tick), 0);
                                         }
                                     }
+
+                                    pushToAll(&broadcastedLatestTicks.header, true);
                                 }
 
 #if NUMBER_OF_MINING_PROCESSORS
