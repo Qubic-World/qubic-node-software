@@ -34,7 +34,7 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 34
+#define VERSION_B 35
 #define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
@@ -102,6 +102,7 @@ static const unsigned char knownPublicPeers[][4] = {
 #define EFI_CONNECTION_REFUSED (106 | 0x8000000000000000)
 
 #define EFI_DEBUG_SUPPORT_PROTOCOL_GUID {0x2755590C, 0x6F3C, 0x42FA, {0x9E, 0xA4, 0xA3, 0xBA, 0x54, 0x3C, 0xDA, 0x25}}
+#define EFI_FILE_SYSTEM_INFO_ID {0x09576e93, 0x6d3f, 0x11d2, {0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b}}
 #define EFI_MP_SERVICES_PROTOCOL_GUID {0x3fdda605, 0xa76e, 0x4f46, {0xad, 0x29, 0x12, 0xf4, 0x53, 0x1b, 0x3d, 0x08}}
 #define EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID {0x0964e5b22, 0x6459, 0x11d2, {0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b}}
 #define EFI_TCP4_PROTOCOL_GUID {0x65530BC7, 0xA359, 0x410f, {0xB0, 0x10, 0x5A, 0xAD, 0xC7, 0xEC, 0x2B, 0x62}}
@@ -571,6 +572,16 @@ typedef struct
     unsigned long long BufferSize;
     void* Buffer;
 } EFI_FILE_IO_TOKEN;
+
+typedef struct
+{
+    unsigned long long Size;
+    BOOLEAN ReadOnly;
+    unsigned long long VolumeSize;
+    unsigned long long FreeSpace;
+    unsigned int BlockSize;
+    CHAR16 VolumeLabel[12];
+} EFI_FILE_SYSTEM_INFO;
 
 typedef struct
 {
@@ -3683,12 +3694,12 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define DEJAVU_SWAP_LIMIT 2621440 // False duplicate chance < 2%
 #define ISSUANCE_RATE 1000000000000
 #define MAX_ANSWER_SIZE 1024
-#define MAX_EFFECT_SIZE 1024
 #define MAX_ENERGY_AMOUNT (ISSUANCE_RATE * 1000)
+#define MAX_INVOCATION_SIZE 1024
 #define MAX_MESSAGE_SIZE 1024
 #define MAX_NUMBER_OF_PROCESSORS 1024
 #define MAX_NUMBER_OF_PUBLIC_PEERS 256
-#define MAX_NUMBER_OF_EFFECTS_PER_TICK 0
+#define MAX_NUMBER_OF_INVOCATIONS_PER_TICK 0
 #define MAX_NUMBER_OF_QUESTIONS_PER_TICK 0
 #define MAX_NUMBER_OF_TRANSFERS_PER_TICK 100
 #define MAX_QUESTION_SIZE 1024
@@ -3845,7 +3856,7 @@ typedef struct
 
     unsigned char saltedStateDigest[32];
     unsigned char prevStateDigest[32];
-    unsigned char nextTickChosenTransfersEffectsAndQuestionsDigest[32];
+    unsigned char nextTickChosenTransfersInvocationsAndQuestionsDigest[32];
 
     unsigned char signature[SIGNATURE_SIZE];
 } Tick;
@@ -3901,22 +3912,23 @@ typedef struct
     Transfer transfer;
 } BroadcastTransfer;
 
-#define BROADCAST_EFFECT 7
+#define BROADCAST_INVOCATION 7
 
 typedef struct
 {
     unsigned char sourcePublicKey[32];
-    unsigned char destinationEnvironment[32];
+    unsigned char destinationPublicKey[32];
+    long long amount;
     unsigned int tick;
-    unsigned int effectSize;
-} Effect;
+    unsigned int invocationSize;
+} Invocation;
 
 typedef struct
 {
-    Effect effect;
-} BroadcastEffect;
+    Invocation invocation;
+} BroadcastInvocation;
 
-#define BROADCAST_CHOSEN_TRANSFERS_EFFECTS_AND_QUESTIONS 8
+#define BROADCAST_CHOSEN_TRANSFERS_INVOCATIONS_AND_QUESTIONS 8
 
 typedef struct
 {
@@ -3926,16 +3938,16 @@ typedef struct
     unsigned int tick;
 
     unsigned int numberOfTransfers;
-    unsigned int numberOfEffects;
+    unsigned int numberOfInvocations;
     unsigned int numberOfQuestions;
 
     char padding[4];
-} ChosenTransfersEffectsAndQuestions;
+} ChosenTransfersInvocationsAndQuestions;
 
 typedef struct
 {
-    ChosenTransfersEffectsAndQuestions chosenTransfersEffectsAndQuestions;
-} BroadcastChosenTransfersEffectsAndQuestions;
+    ChosenTransfersInvocationsAndQuestions chosenTransfersInvocationsAndQuestions;
+} BroadcastChosenTransfersInvocationsAndQuestions;
 
 #define BROADCAST_QUESTION 9
 
@@ -4007,13 +4019,13 @@ static short ownComputorIndicesMapping[sizeof(ownSeeds) / sizeof(ownSeeds[0])];
 
 static unsigned int numberOfBufferedTransfers[sizeof(ownSeeds) / sizeof(ownSeeds[0])];
 static unsigned char bufferedTransferBytes[sizeof(ownSeeds) / sizeof(ownSeeds[0])][MAX_NUMBER_OF_TRANSFERS_PER_TICK][sizeof(Transfer) + MAX_TRANSFER_DESCRIPTION_SIZE + SIGNATURE_SIZE];
-static unsigned int chosenTransfersEffectsAndQuestionSizes[NUMBER_OF_COMPUTORS];
+static unsigned int chosenTransfersInvocationsAndQuestionSizes[NUMBER_OF_COMPUTORS];
 
 static StoredEntity storedEntities[1024];
 static volatile char entitiesLock = 0;
 static Entity* entities = NULL;
 #endif
-static char chosenTransfersEffectsAndQuestionBytes[NUMBER_OF_COMPUTORS][sizeof(BroadcastChosenTransfersEffectsAndQuestions) + (sizeof(Transfer) + MAX_TRANSFER_DESCRIPTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_TRANSFERS_PER_TICK + (sizeof(Effect) + MAX_EFFECT_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_EFFECTS_PER_TICK + (sizeof(Question) + MAX_QUESTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_QUESTIONS_PER_TICK + SIGNATURE_SIZE];
+static char chosenTransfersInvocationsAndQuestionBytes[NUMBER_OF_COMPUTORS][sizeof(BroadcastChosenTransfersInvocationsAndQuestions) + (sizeof(Transfer) + MAX_TRANSFER_DESCRIPTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_TRANSFERS_PER_TICK + (sizeof(Invocation) + MAX_INVOCATION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_INVOCATIONS_PER_TICK + (sizeof(Question) + MAX_QUESTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_QUESTIONS_PER_TICK + SIGNATURE_SIZE];
 
 static volatile char ticksLock = 0;
 static Tick latestTicks[NUMBER_OF_COMPUTORS];
@@ -4654,16 +4666,17 @@ static void requestProcessor(void* ProcedureArgument)
                 }
                 break;
 
-                case BROADCAST_EFFECT:
+                case BROADCAST_INVOCATION:
                 {
-                    BroadcastEffect* request = (BroadcastEffect*)((char*)processor->cache + sizeof(RequestResponseHeader));
-                    if (request->effect.effectSize <= MAX_EFFECT_SIZE && requestHeader->size == sizeof(RequestResponseHeader) + sizeof(BroadcastEffect) + request->effect.effectSize + SIGNATURE_SIZE)
+                    BroadcastInvocation* request = (BroadcastInvocation*)((char*)processor->cache + sizeof(RequestResponseHeader));
+                    if (request->invocation.amount >= MIN_ENERGY_AMOUNT && request->invocation.amount <= MAX_ENERGY_AMOUNT
+                        && request->invocation.invocationSize <= MAX_INVOCATION_SIZE && requestHeader->size == sizeof(RequestResponseHeader) + sizeof(BroadcastInvocation) + request->invocation.invocationSize + SIGNATURE_SIZE)
                     {
                         unsigned char digest[32];
-                        request->effect.sourcePublicKey[0] ^= BROADCAST_EFFECT;
+                        request->invocation.sourcePublicKey[0] ^= BROADCAST_INVOCATION;
                         KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
-                        request->effect.sourcePublicKey[0] ^= BROADCAST_EFFECT;
-                        if (verify(request->effect.sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastEffect) + request->effect.effectSize)))
+                        request->invocation.sourcePublicKey[0] ^= BROADCAST_INVOCATION;
+                        if (verify(request->invocation.sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastInvocation) + request->invocation.invocationSize)))
                         {
                             responseSize = requestHeader->size;
                         }
@@ -4671,28 +4684,28 @@ static void requestProcessor(void* ProcedureArgument)
                 }
                 break;
 
-                case BROADCAST_CHOSEN_TRANSFERS_EFFECTS_AND_QUESTIONS:
+                case BROADCAST_CHOSEN_TRANSFERS_INVOCATIONS_AND_QUESTIONS:
                 {
-                    BroadcastChosenTransfersEffectsAndQuestions* request = (BroadcastChosenTransfersEffectsAndQuestions*)((char*)processor->cache + sizeof(RequestResponseHeader));
-                    if (requestHeader->size <= sizeof(RequestResponseHeader) + sizeof(chosenTransfersEffectsAndQuestionBytes[0])
-                        && request->chosenTransfersEffectsAndQuestions.computorIndex < NUMBER_OF_COMPUTORS
-                        && request->chosenTransfersEffectsAndQuestions.numberOfTransfers <= MAX_NUMBER_OF_TRANSFERS_PER_TICK
-                        && request->chosenTransfersEffectsAndQuestions.numberOfEffects <= MAX_NUMBER_OF_EFFECTS_PER_TICK
-                        && request->chosenTransfersEffectsAndQuestions.numberOfQuestions <= MAX_NUMBER_OF_QUESTIONS_PER_TICK
-                        && !request->chosenTransfersEffectsAndQuestions.padding[0] && !request->chosenTransfersEffectsAndQuestions.padding[1] && !request->chosenTransfersEffectsAndQuestions.padding[2] && !request->chosenTransfersEffectsAndQuestions.padding[3])
+                    BroadcastChosenTransfersInvocationsAndQuestions* request = (BroadcastChosenTransfersInvocationsAndQuestions*)((char*)processor->cache + sizeof(RequestResponseHeader));
+                    if (requestHeader->size <= sizeof(RequestResponseHeader) + sizeof(chosenTransfersInvocationsAndQuestionBytes[0])
+                        && request->chosenTransfersInvocationsAndQuestions.computorIndex < NUMBER_OF_COMPUTORS
+                        && request->chosenTransfersInvocationsAndQuestions.numberOfTransfers <= MAX_NUMBER_OF_TRANSFERS_PER_TICK
+                        && request->chosenTransfersInvocationsAndQuestions.numberOfInvocations <= MAX_NUMBER_OF_INVOCATIONS_PER_TICK
+                        && request->chosenTransfersInvocationsAndQuestions.numberOfQuestions <= MAX_NUMBER_OF_QUESTIONS_PER_TICK
+                        && !request->chosenTransfersInvocationsAndQuestions.padding[0] && !request->chosenTransfersInvocationsAndQuestions.padding[1] && !request->chosenTransfersInvocationsAndQuestions.padding[2] && !request->chosenTransfersInvocationsAndQuestions.padding[3])
                     {
                         if (computors.epoch
-                            && request->chosenTransfersEffectsAndQuestions.epoch == computors.epoch)
+                            && request->chosenTransfersInvocationsAndQuestions.epoch == computors.epoch)
                         {
                             unsigned char digest[32];
-                            request->chosenTransfersEffectsAndQuestions.computorIndex ^= BROADCAST_CHOSEN_TRANSFERS_EFFECTS_AND_QUESTIONS;
-                            KangarooTwelve((unsigned char*)&request->chosenTransfersEffectsAndQuestions, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
-                            request->chosenTransfersEffectsAndQuestions.computorIndex ^= BROADCAST_CHOSEN_TRANSFERS_EFFECTS_AND_QUESTIONS;
-                            if (verify(computors.publicKeys[request->chosenTransfersEffectsAndQuestions.computorIndex], digest, ((const unsigned char*)processor->cache) + requestHeader->size - SIGNATURE_SIZE))
+                            request->chosenTransfersInvocationsAndQuestions.computorIndex ^= BROADCAST_CHOSEN_TRANSFERS_INVOCATIONS_AND_QUESTIONS;
+                            KangarooTwelve((unsigned char*)&request->chosenTransfersInvocationsAndQuestions, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
+                            request->chosenTransfersInvocationsAndQuestions.computorIndex ^= BROADCAST_CHOSEN_TRANSFERS_INVOCATIONS_AND_QUESTIONS;
+                            if (verify(computors.publicKeys[request->chosenTransfersInvocationsAndQuestions.computorIndex], digest, ((const unsigned char*)processor->cache) + requestHeader->size - SIGNATURE_SIZE))
                             {
-                                char* ptr = ((char*)processor->cache) + sizeof(RequestResponseHeader) + sizeof(BroadcastChosenTransfersEffectsAndQuestions);
+                                char* ptr = ((char*)processor->cache) + sizeof(RequestResponseHeader) + sizeof(BroadcastChosenTransfersInvocationsAndQuestions);
                                 unsigned int i;
-                                for (i = 0; i < request->chosenTransfersEffectsAndQuestions.numberOfTransfers; i++)
+                                for (i = 0; i < request->chosenTransfersInvocationsAndQuestions.numberOfTransfers; i++)
                                 {
                                     Transfer* transfer = (Transfer*)ptr;
                                     if (transfer->amount >= MIN_ENERGY_AMOUNT && transfer->amount <= MAX_ENERGY_AMOUNT
@@ -4714,12 +4727,12 @@ static void requestProcessor(void* ProcedureArgument)
                                         break;
                                     }
                                 }
-                                if (i == request->chosenTransfersEffectsAndQuestions.numberOfTransfers)
+                                if (i == request->chosenTransfersInvocationsAndQuestions.numberOfTransfers)
                                 {
                                     responseSize = requestHeader->size;
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
-                                    bs->CopyMem(&chosenTransfersEffectsAndQuestionBytes[request->chosenTransfersEffectsAndQuestions.computorIndex], &request->chosenTransfersEffectsAndQuestions, chosenTransfersEffectsAndQuestionSizes[request->chosenTransfersEffectsAndQuestions.computorIndex] = requestHeader->size - sizeof(RequestResponseHeader));
+                                    bs->CopyMem(&chosenTransfersInvocationsAndQuestionBytes[request->chosenTransfersInvocationsAndQuestions.computorIndex], &request->chosenTransfersInvocationsAndQuestions, chosenTransfersInvocationsAndQuestionSizes[request->chosenTransfersInvocationsAndQuestions.computorIndex] = requestHeader->size - sizeof(RequestResponseHeader));
 #endif
                                 }
                             }
@@ -4909,16 +4922,16 @@ static void requestProcessor(void* ProcedureArgument)
                 }
                 break;
 
-                case BROADCAST_EFFECT:
+                case BROADCAST_INVOCATION:
                 {
-                    BroadcastEffect* request = (BroadcastEffect*)((char*)processor->cache + sizeof(RequestResponseHeader));
-                    if (request->effect.effectSize <= MAX_EFFECT_SIZE && requestHeader->size == sizeof(RequestResponseHeader) + sizeof(BroadcastEffect) + request->effect.effectSize + SIGNATURE_SIZE)
+                    BroadcastInvocation* request = (BroadcastInvocation*)((char*)processor->cache + sizeof(RequestResponseHeader));
+                    if (request->invocation.invocationSize <= MAX_INVOCATION_SIZE && requestHeader->size == sizeof(RequestResponseHeader) + sizeof(BroadcastInvocation) + request->invocation.invocationSize + SIGNATURE_SIZE)
                     {
                         unsigned char digest[32];
-                        request->effect.sourcePublicKey[0] ^= BROADCAST_EFFECT;
+                        request->invocation.sourcePublicKey[0] ^= BROADCAST_INVOCATION;
                         KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
-                        request->effect.sourcePublicKey[0] ^= BROADCAST_EFFECT;
-                        if (verify(request->effect.sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastEffect) + request->effect.effectSize)))
+                        request->invocation.sourcePublicKey[0] ^= BROADCAST_INVOCATION;
+                        if (verify(request->invocation.sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastInvocation) + request->invocation.invocationSize)))
                         {
                             pushToAll(responseHeader, false);
                         }
@@ -5469,6 +5482,57 @@ static BOOLEAN initialize()
 
 #if NUMBER_OF_COMPUTING_PROCESSORS || NUMBER_OF_MINING_PROCESSORS
     EFI_GUID simpleFileSystemProtocolGuid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+    unsigned long long numberOfHandles;
+    EFI_HANDLE* buffer;
+    if (status = bs->LocateHandleBuffer(ByProtocol, &simpleFileSystemProtocolGuid, NULL, &numberOfHandles, &buffer))
+    {
+        logStatus(L"EFI_BOOT_SERVICES.LocateHandleBuffer() fails", status);
+
+        return FALSE;
+    }
+    else
+    {
+        for (unsigned int i = 0; i < numberOfHandles; i++)
+        {
+            if (status = bs->OpenProtocol(buffer[i], &simpleFileSystemProtocolGuid, (void**)&simpleFileSystemProtocol, ih, NULL, EFI_OPEN_PROTOCOL_GET_PROTOCOL))
+            {
+                logStatus(L"EFI_BOOT_SERVICES.OpenProtocol() fails", status);
+
+                return FALSE;
+            }
+            else
+            {
+                if (status = simpleFileSystemProtocol->OpenVolume(simpleFileSystemProtocol, (void**)&root))
+                {
+                    logStatus(L"EFI_SIMPLE_FILE_SYSTEM_PROTOCOL.OpenVolume() fails", status);
+
+                    return FALSE;
+                }
+                else
+                {
+                    EFI_GUID fileSystemInfoId = EFI_FILE_SYSTEM_INFO_ID;
+                    EFI_FILE_SYSTEM_INFO info;
+                    unsigned long long size = sizeof(info);
+                    if (status = root->GetInfo(root, &fileSystemInfoId, &size, &info))
+                    {
+                        logStatus(L"EFI_FILE_PROTOCOL.GetInfo() fails", status);
+                    }
+                    else
+                    {
+                        setText(message, L"Label of volume #");
+                        appendNumber(message, i, FALSE);
+                        appendText(message, L" is '");
+                        appendText(message, info.VolumeLabel);
+                        appendText(message, L"'.");
+                        log(message);
+                    }
+                }
+            }
+        }
+
+        bs->FreePool(buffer);
+    }
+
     bs->LocateProtocol(&simpleFileSystemProtocolGuid, NULL, (void**)&simpleFileSystemProtocol);
     if (status = simpleFileSystemProtocol->OpenVolume(simpleFileSystemProtocol, (void**)&root))
     {
@@ -5482,7 +5546,7 @@ static BOOLEAN initialize()
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
         bs->SetMem(numberOfBufferedTransfers, sizeof(numberOfBufferedTransfers), 0);
-        bs->SetMem(chosenTransfersEffectsAndQuestionSizes, sizeof(chosenTransfersEffectsAndQuestionSizes), 0);
+        bs->SetMem(chosenTransfersInvocationsAndQuestionSizes, sizeof(chosenTransfersInvocationsAndQuestionSizes), 0);
 
         if (status = bs->AllocatePool(EfiRuntimeServicesData, 0x1000000 * sizeof(Entity), (void**)&entities))
         {
@@ -5977,7 +6041,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         broadcastedTick.broadcastTick.tick.year = 0;// time.Year - 2000;
 
                                         *((__m256i*)broadcastedTick.broadcastTick.tick.prevStateDigest) = ZERO;
-                                        *((__m256i*)broadcastedTick.broadcastTick.tick.nextTickChosenTransfersEffectsAndQuestionsDigest) = ZERO;
+                                        *((__m256i*)broadcastedTick.broadcastTick.tick.nextTickChosenTransfersInvocationsAndQuestionsDigest) = ZERO;
 
                                         for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
                                         {
@@ -6020,7 +6084,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 && actualTicks[j].tick == system.tick + 1
                                                 && *((unsigned long long*)&actualTicks[j].millisecond) == *((unsigned long long*)&actualTicks[ownComputorIndices[0]].millisecond)
                                                 && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].prevStateDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].prevStateDigest))) == 0xFFFFFFFF
-                                                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].nextTickChosenTransfersEffectsAndQuestionsDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].nextTickChosenTransfersEffectsAndQuestionsDigest))) == 0xFFFFFFFF)
+                                                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].nextTickChosenTransfersInvocationsAndQuestionsDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].nextTickChosenTransfersInvocationsAndQuestionsDigest))) == 0xFFFFFFFF)
                                             {
                                                 unsigned char publicKeyAndStateDigest[32 + 32];
                                                 *((__m256i*)&publicKeyAndStateDigest[0]) = *((__m256i*)computors.publicKeys[actualTicks[j].computorIndex]);
