@@ -35,7 +35,7 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 
 #define VERSION_A 1
 #define VERSION_B 35
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -580,7 +580,7 @@ typedef struct
     unsigned long long VolumeSize;
     unsigned long long FreeSpace;
     unsigned int BlockSize;
-    CHAR16 VolumeLabel[12];
+    CHAR16 VolumeLabel[256];
 } EFI_FILE_SYSTEM_INFO;
 
 typedef struct
@@ -3720,6 +3720,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define SIGNATURE_SIZE 64
 #define SOLUTION_THRESHOLD 30
 #define SYSTEM_DATA_SAVING_PERIOD 60
+#define VOLUME_LABEL L"Qubic"
 
 static __m256i ZERO;
 
@@ -5483,8 +5484,8 @@ static BOOLEAN initialize()
 #if NUMBER_OF_COMPUTING_PROCESSORS || NUMBER_OF_MINING_PROCESSORS
     EFI_GUID simpleFileSystemProtocolGuid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
     unsigned long long numberOfHandles;
-    EFI_HANDLE* buffer;
-    if (status = bs->LocateHandleBuffer(ByProtocol, &simpleFileSystemProtocolGuid, NULL, &numberOfHandles, &buffer))
+    EFI_HANDLE* handles;
+    if (status = bs->LocateHandleBuffer(ByProtocol, &simpleFileSystemProtocolGuid, NULL, &numberOfHandles, &handles))
     {
         logStatus(L"EFI_BOOT_SERVICES.LocateHandleBuffer() fails", status);
 
@@ -5494,9 +5495,11 @@ static BOOLEAN initialize()
     {
         for (unsigned int i = 0; i < numberOfHandles; i++)
         {
-            if (status = bs->OpenProtocol(buffer[i], &simpleFileSystemProtocolGuid, (void**)&simpleFileSystemProtocol, ih, NULL, EFI_OPEN_PROTOCOL_GET_PROTOCOL))
+            if (status = bs->OpenProtocol(handles[i], &simpleFileSystemProtocolGuid, (void**)&simpleFileSystemProtocol, ih, NULL, EFI_OPEN_PROTOCOL_GET_PROTOCOL))
             {
                 logStatus(L"EFI_BOOT_SERVICES.OpenProtocol() fails", status);
+
+                bs->FreePool(handles);
 
                 return FALSE;
             }
@@ -5505,6 +5508,9 @@ static BOOLEAN initialize()
                 if (status = simpleFileSystemProtocol->OpenVolume(simpleFileSystemProtocol, (void**)&root))
                 {
                     logStatus(L"EFI_SIMPLE_FILE_SYSTEM_PROTOCOL.OpenVolume() fails", status);
+
+                    bs->CloseProtocol(handles[i], &simpleFileSystemProtocolGuid, ih, NULL);
+                    bs->FreePool(handles);
 
                     return FALSE;
                 }
@@ -5516,24 +5522,61 @@ static BOOLEAN initialize()
                     if (status = root->GetInfo(root, &fileSystemInfoId, &size, &info))
                     {
                         logStatus(L"EFI_FILE_PROTOCOL.GetInfo() fails", status);
+
+                        bs->CloseProtocol(handles[i], &simpleFileSystemProtocolGuid, ih, NULL);
+                        bs->FreePool(handles);
+
+                        return FALSE;
                     }
                     else
                     {
-                        setText(message, L"Label of volume #");
+                        setText(message, L"Volume #");
                         appendNumber(message, i, FALSE);
-                        appendText(message, L" is '");
+                        appendText(message, L" (");
                         appendText(message, info.VolumeLabel);
-                        appendText(message, L"'.");
+                        appendText(message, L"): ");
+                        appendNumber(message, info.FreeSpace, TRUE);
+                        appendText(message, L" / ");
+                        appendNumber(message, info.VolumeSize, TRUE);
+                        appendText(message, L" free bytes | Read-");
+                        appendText(message, info.ReadOnly ? L"only." : L"Write.");
                         log(message);
+
+                        bool matches = true;
+                        for (unsigned int j = 0; j < sizeof(info.VolumeLabel) / sizeof(info.VolumeLabel[0]); j++)
+                        {
+                            if (info.VolumeLabel[j] != VOLUME_LABEL[j])
+                            {
+                                matches = false;
+
+                                break;
+                            }
+                            if (!VOLUME_LABEL[j])
+                            {
+                                break;
+                            }
+                        }
+                        if (matches)
+                        {
+                            break;
+                        }
+                        else
+                        {
+                            bs->CloseProtocol(handles[i], &simpleFileSystemProtocolGuid, ih, NULL);
+                            simpleFileSystemProtocol = NULL;
+                        }
                     }
                 }
             }
         }
 
-        bs->FreePool(buffer);
+        bs->FreePool(handles);
     }
 
-    bs->LocateProtocol(&simpleFileSystemProtocolGuid, NULL, (void**)&simpleFileSystemProtocol);
+    if (!simpleFileSystemProtocol)
+    {
+        bs->LocateProtocol(&simpleFileSystemProtocolGuid, NULL, (void**)&simpleFileSystemProtocol); // TODO: Do proper cleanup
+    }
     if (status = simpleFileSystemProtocol->OpenVolume(simpleFileSystemProtocol, (void**)&root))
     {
         logStatus(L"EFI_SIMPLE_FILE_SYSTEM_PROTOCOL.OpenVolume() fails", status);
