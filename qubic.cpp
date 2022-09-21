@@ -34,16 +34,16 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 35
-#define VERSION_C 1
+#define VERSION_B 36
+#define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
 static const unsigned char knownPublicPeers[][4] = {
 };
 
-#define EPOCH 22
-#define TICK 2633058
+#define EPOCH 23
+#define TICK 2654272
 
 /*#if NUMBER_OF_COMPUTING_PROCESSORS
 #include "qubics.h"
@@ -3718,7 +3718,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 300
 #define REVENUE_PUBLICATION_PERIOD 300
 #define SIGNATURE_SIZE 64
-#define SOLUTION_THRESHOLD 30
+#define SOLUTION_THRESHOLD 28
 #define SYSTEM_DATA_SAVING_PERIOD 60
 #define VOLUME_LABEL L"Qubic"
 
@@ -4012,6 +4012,9 @@ static struct System
     unsigned int tick;
     unsigned int tickCounters[NUMBER_OF_COMPUTORS];
 } system, systemToSave;
+static unsigned char systemSavingStage = 0;
+static EFI_FILE_PROTOCOL* systemFile;
+static EFI_FILE_IO_TOKEN systemFileIOToken;
 static unsigned int tickNumberOfComputors = 0, nextTickNumberOfComputors = 0;
 static unsigned long long latestRevenuePublicationTick = 0;
 static unsigned short numberOfOwnComputorIndices = 0;
@@ -5321,27 +5324,14 @@ static void saveSystem()
     bs->CopyMem(&systemToSave, &system, sizeof(systemToSave));
     _InterlockedCompareExchange8(&systemLock, 0, 1);
 
-    EFI_FILE_PROTOCOL* dataFile;
+    systemFileIOToken.Status = -1;
+    systemSavingStage = 1;
     EFI_STATUS status;
-    if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SYSTEM_DATA_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0))
+    if (status = root->OpenEx(root, (void**)&systemFile, (CHAR16*)SYSTEM_DATA_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0, &systemFileIOToken))
     {
-        logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status);
-    }
-    else
-    {
-        unsigned long long size = sizeof(systemToSave);
-        status = dataFile->Write(dataFile, &size, &systemToSave);
-        dataFile->Close(dataFile);
-        if (status)
-        {
-            logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status);
-        }
-        else
-        {
-            setNumber(message, size, TRUE);
-            appendText(message, L" bytes of system data are saved.");
-            log(message);
-        }
+        logStatus(L"EFI_FILE_PROTOCOL.OpenEx() fails", status);
+
+        systemSavingStage = 0;
     }
 }
 
@@ -5617,6 +5607,13 @@ static BOOLEAN initialize()
             }
             else
             {
+                if (status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, emptyCallback, NULL, &systemFileIOToken.Event))
+                {
+                    logStatus(L"EFI_BOOT_SERVICES.CreateEvent() fails", status);
+
+                    return FALSE;
+                }
+
                 if (system.epoch < EPOCH)
                 {
                     bs->SetMem(&system.tickCounters, sizeof(system.tickCounters), 0);
@@ -5718,7 +5715,7 @@ static BOOLEAN initialize()
 #endif
 
 #if NUMBER_OF_MINING_PROCESSORS
-        miningData[0] = 800;
+        miningData[0] = 804;
         miningData[1] = 477;
         miningData[2] = 826;
         miningData[3] = 96;
@@ -7452,10 +7449,63 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 #endif
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
-                                if (curTimeTick - systemDataSavingTick >= SYSTEM_DATA_SAVING_PERIOD * frequency)
+                                if (systemSavingStage)
                                 {
-                                    systemDataSavingTick = curTimeTick;
-                                    saveSystem();
+                                    if (systemFileIOToken.Status != -1)
+                                    {
+                                        switch (systemSavingStage)
+                                        {
+                                        case 1:
+                                        {
+                                            if (systemFileIOToken.Status)
+                                            {
+                                                logStatus(L"EFI_FILE_PROTOCOL.OpenEx() fails", status);
+
+                                                systemSavingStage = 0;
+                                            }
+                                            else
+                                            {
+                                                systemFileIOToken.Status = -1;
+                                                systemFileIOToken.BufferSize = sizeof(systemToSave);
+                                                systemFileIOToken.Buffer = &systemToSave;
+                                                systemSavingStage = 2;
+                                                if (status = systemFile->WriteEx(systemFile, &systemFileIOToken))
+                                                {
+                                                    logStatus(L"EFI_FILE_PROTOCOL.WriteEx() fails", status);
+
+                                                    systemFile->Close(systemFile);
+                                                    systemSavingStage = 0;
+                                                }
+                                            }
+                                        }
+                                        break;
+
+                                        case 2:
+                                        {
+                                            systemFile->Close(systemFile);
+                                            systemSavingStage = 0;
+
+                                            if (systemFileIOToken.Status)
+                                            {
+                                                logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status);
+                                            }
+                                            else
+                                            {
+                                                log(L"The system data are saved.");
+                                            }
+                                        }
+                                        break;
+                                        }
+                                    }
+                                }
+                                else
+                                {
+                                    if (curTimeTick - systemDataSavingTick >= SYSTEM_DATA_SAVING_PERIOD * frequency)
+                                    {
+                                        systemDataSavingTick = curTimeTick;
+
+                                        saveSystem();
+                                    }
                                 }
 #endif
 
@@ -7579,7 +7629,37 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 #endif
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
-                            saveSystem();
+                            {
+                                while (_InterlockedCompareExchange8(&systemLock, 1, 0))
+                                {
+                                    _mm_pause();
+                                }
+                                bs->CopyMem(&systemToSave, &system, sizeof(systemToSave));
+                                _InterlockedCompareExchange8(&systemLock, 0, 1);
+
+                                EFI_FILE_PROTOCOL* dataFile;
+                                EFI_STATUS status;
+                                if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SYSTEM_DATA_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0))
+                                {
+                                    logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status);
+                                }
+                                else
+                                {
+                                    unsigned long long size = sizeof(systemToSave);
+                                    status = dataFile->Write(dataFile, &size, &systemToSave);
+                                    dataFile->Close(dataFile);
+                                    if (status)
+                                    {
+                                        logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status);
+                                    }
+                                    else
+                                    {
+                                        setNumber(message, size, TRUE);
+                                        appendText(message, L" bytes of system data are saved.");
+                                        log(message);
+                                    }
+                                }
+                            }
 #endif
 #if NUMBER_OF_MINING_PROCESSORS
                             saveSolution();
