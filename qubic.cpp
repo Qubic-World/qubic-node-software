@@ -35,7 +35,7 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 
 #define VERSION_A 1
 #define VERSION_B 36
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -3690,7 +3690,6 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 ////////// Qubic \\\\\\\\\\
 
 #define BUFFER_SIZE 1048576
-#define COMPUTORS_REBROADCASTING_PERIOD 30
 #define DEJAVU_SWAP_LIMIT 2621440 // False duplicate chance < 2%
 #define ISSUANCE_RATE 1000000000000
 #define MAX_ANSWER_SIZE 1024
@@ -3982,6 +3981,10 @@ typedef struct
     Answer answer;
 } BroadcastAnswer;
 
+#define REQUEST_COMPUTORS 11
+
+#define REQUEST_TICKS 12
+
 #define GET_COMPUTER_STATE 0
 
 typedef struct
@@ -3996,7 +3999,11 @@ static volatile int state = 0;
 static unsigned char ownSubseeds[sizeof(ownSeeds) / sizeof(ownSeeds[0])][32], ownPrivateKeys[sizeof(ownSeeds) / sizeof(ownSeeds[0])][32], ownPublicKeys[sizeof(ownSeeds) / sizeof(ownSeeds[0])][32];
 static unsigned char operatorPublicKey[32], computorPublicKey[32], adminPublicKey[32];
 
-static Computors computors;
+static struct
+{
+    RequestResponseHeader header;
+    BroadcastComputors broadcastComputors;
+} broadcastedComputors;
 
 static EFI_TIME time;
 static CHAR16 message[16384], timestampedMessage[16384];
@@ -4012,9 +4019,6 @@ static struct System
     unsigned int tick;
     unsigned int tickCounters[NUMBER_OF_COMPUTORS];
 } system, systemToSave;
-static unsigned char systemSavingStage = 0;
-static EFI_FILE_PROTOCOL* systemFile;
-static EFI_FILE_IO_TOKEN systemFileIOToken;
 static unsigned int tickNumberOfComputors = 0, nextTickNumberOfComputors = 0;
 static unsigned long long latestRevenuePublicationTick = 0;
 static unsigned short numberOfOwnComputorIndices = 0;
@@ -4093,12 +4097,6 @@ static struct
 static struct
 {
     RequestResponseHeader header;
-    BroadcastComputors broadcastComputors;
-} broadcastedComputors;
-
-static struct
-{
-    RequestResponseHeader header;
     BroadcastTick broadcastTick;
 } broadcastedTick;
 
@@ -4107,6 +4105,16 @@ static struct
     RequestResponseHeader header;
     BroadcastRevenues broadcastRevenues;
 } broadcastedRevenues;
+
+static struct
+{
+    RequestResponseHeader header;
+} requestedComputors;
+
+static struct
+{
+    RequestResponseHeader header;
+} requestedTicks;
 
 static bool showExtendedLogging = false;
 
@@ -4453,14 +4461,14 @@ static bool analyzeTick(Tick* tick)
         /*&& ms(tick->year, tick->month, tick->day, tick->hour, tick->minute, tick->second, tick->millisecond) >= ms(tick->prevYear, tick->prevMonth, tick->prevDay, tick->prevHour, tick->prevMinute, tick->prevSecond, tick->prevMillisecond)*/ // TODO
         )
     {
-        if (computors.epoch
-            && tick->epoch == computors.epoch)
+        if (broadcastedComputors.broadcastComputors.computors.epoch
+            && tick->epoch == broadcastedComputors.broadcastComputors.computors.epoch)
         {
             unsigned char digest[32];
             tick->computorIndex ^= BROADCAST_TICK;
             KangarooTwelve((unsigned char*)tick, sizeof(Tick) - SIGNATURE_SIZE, digest, sizeof(digest));
             tick->computorIndex ^= BROADCAST_TICK;
-            if (verify(computors.publicKeys[tick->computorIndex], digest, tick->signature))
+            if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[tick->computorIndex], digest, tick->signature))
             {
                 if (!_InterlockedCompareExchange8(&ticksLock, 1, 0))
                 {
@@ -4528,13 +4536,13 @@ static void requestProcessor(void* ProcedureArgument)
                 case BROADCAST_COMPUTORS:
                 {
                     BroadcastComputors* request = (BroadcastComputors*)((char*)processor->cache + sizeof(RequestResponseHeader));
-                    if (request->computors.epoch > computors.epoch)
+                    if (request->computors.epoch > broadcastedComputors.broadcastComputors.computors.epoch)
                     {
                         unsigned char digest[32];
                         KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
                         if (verify(adminPublicKey, digest, request->computors.signature))
                         {
-                            bs->CopyMem(&computors, &request->computors, sizeof(Computors));
+                            bs->CopyMem(&broadcastedComputors.broadcastComputors.computors, &request->computors, sizeof(Computors));
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
                             if (request->computors.epoch == system.epoch)
@@ -4587,14 +4595,14 @@ static void requestProcessor(void* ProcedureArgument)
                         }
                         if (i == NUMBER_OF_COMPUTORS)
                         {
-                            if (computors.epoch
-                                && request->revenues.epoch == computors.epoch)
+                            if (broadcastedComputors.broadcastComputors.computors.epoch
+                                && request->revenues.epoch == broadcastedComputors.broadcastComputors.computors.epoch)
                             {
                                 unsigned char digest[32];
                                 request->revenues.computorIndex ^= BROADCAST_REVENUES;
                                 KangarooTwelve((unsigned char*)&request->revenues, sizeof(Revenues) - SIGNATURE_SIZE, digest, sizeof(digest));
                                 request->revenues.computorIndex ^= BROADCAST_REVENUES;
-                                if (verify(computors.publicKeys[request->revenues.computorIndex], digest, request->revenues.signature))
+                                if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->revenues.computorIndex], digest, request->revenues.signature))
                                 {
                                     responseSize = requestHeader->size;
                                 }
@@ -4698,14 +4706,14 @@ static void requestProcessor(void* ProcedureArgument)
                         && request->chosenTransfersInvocationsAndQuestions.numberOfQuestions <= MAX_NUMBER_OF_QUESTIONS_PER_TICK
                         && !request->chosenTransfersInvocationsAndQuestions.padding[0] && !request->chosenTransfersInvocationsAndQuestions.padding[1] && !request->chosenTransfersInvocationsAndQuestions.padding[2] && !request->chosenTransfersInvocationsAndQuestions.padding[3])
                     {
-                        if (computors.epoch
-                            && request->chosenTransfersInvocationsAndQuestions.epoch == computors.epoch)
+                        if (broadcastedComputors.broadcastComputors.computors.epoch
+                            && request->chosenTransfersInvocationsAndQuestions.epoch == broadcastedComputors.broadcastComputors.computors.epoch)
                         {
                             unsigned char digest[32];
                             request->chosenTransfersInvocationsAndQuestions.computorIndex ^= BROADCAST_CHOSEN_TRANSFERS_INVOCATIONS_AND_QUESTIONS;
                             KangarooTwelve((unsigned char*)&request->chosenTransfersInvocationsAndQuestions, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
                             request->chosenTransfersInvocationsAndQuestions.computorIndex ^= BROADCAST_CHOSEN_TRANSFERS_INVOCATIONS_AND_QUESTIONS;
-                            if (verify(computors.publicKeys[request->chosenTransfersInvocationsAndQuestions.computorIndex], digest, ((const unsigned char*)processor->cache) + requestHeader->size - SIGNATURE_SIZE))
+                            if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->chosenTransfersInvocationsAndQuestions.computorIndex], digest, ((const unsigned char*)processor->cache) + requestHeader->size - SIGNATURE_SIZE))
                             {
                                 char* ptr = ((char*)processor->cache) + sizeof(RequestResponseHeader) + sizeof(BroadcastChosenTransfersInvocationsAndQuestions);
                                 unsigned int i;
@@ -4772,14 +4780,14 @@ static void requestProcessor(void* ProcedureArgument)
                     if (request->answer.computorIndex < NUMBER_OF_COMPUTORS
                         && request->answer.answerSize <= MAX_ANSWER_SIZE && requestHeader->size == sizeof(RequestResponseHeader) + sizeof(BroadcastAnswer) + request->answer.answerSize + SIGNATURE_SIZE)
                     {
-                        if (computors.epoch
-                            && request->answer.epoch == computors.epoch)
+                        if (broadcastedComputors.broadcastComputors.computors.epoch
+                            && request->answer.epoch == broadcastedComputors.broadcastComputors.computors.epoch)
                         {
                             unsigned char digest[32];
                             request->answer.computorIndex ^= BROADCAST_ANSWER;
                             KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
                             request->answer.computorIndex ^= BROADCAST_ANSWER;
-                            if (verify(computors.publicKeys[request->answer.computorIndex], digest, ((const unsigned char*)request + sizeof(BroadcastAnswer) + request->answer.answerSize)))
+                            if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->answer.computorIndex], digest, ((const unsigned char*)request + sizeof(BroadcastAnswer) + request->answer.answerSize)))
                             {
                                 responseSize = requestHeader->size;
                             }
@@ -4803,7 +4811,7 @@ static void requestProcessor(void* ProcedureArgument)
                     responseHeader->type = GET_COMPUTER_STATE;
 
                     ComputerState* computerState = (ComputerState*)((char*)processor->cache + sizeof(RequestResponseHeader));
-                    bs->CopyMem(&computerState->computors, &computors, sizeof(computerState->computors));
+                    bs->CopyMem(&computerState->computors, &broadcastedComputors.broadcastComputors.computors, sizeof(Computors));
 
                     if (!_InterlockedCompareExchange8(&ticksLock, 1, 0))
                     {
@@ -4966,14 +4974,14 @@ static void requestProcessor(void* ProcedureArgument)
                     if (request->answer.computorIndex < NUMBER_OF_COMPUTORS
                         && request->answer.answerSize <= MAX_ANSWER_SIZE && requestHeader->size == sizeof(RequestResponseHeader) + sizeof(BroadcastAnswer) + request->answer.answerSize + SIGNATURE_SIZE)
                     {
-                        if (computors.epoch
-                            && request->answer.epoch == computors.epoch)
+                        if (broadcastedComputors.broadcastComputors.computors.epoch
+                            && request->answer.epoch == broadcastedComputors.broadcastComputors.computors.epoch)
                         {
                             unsigned char digest[32];
                             request->answer.computorIndex ^= BROADCAST_ANSWER;
                             KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
                             request->answer.computorIndex ^= BROADCAST_ANSWER;
-                            if (verify(computors.publicKeys[request->answer.computorIndex], digest, ((const unsigned char*)request + sizeof(BroadcastAnswer) + request->answer.answerSize)))
+                            if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->answer.computorIndex], digest, ((const unsigned char*)request + sizeof(BroadcastAnswer) + request->answer.answerSize)))
                             {
                                 pushToAll(responseHeader, false);
                             }
@@ -5324,14 +5332,27 @@ static void saveSystem()
     bs->CopyMem(&systemToSave, &system, sizeof(systemToSave));
     _InterlockedCompareExchange8(&systemLock, 0, 1);
 
-    systemFileIOToken.Status = -1;
-    systemSavingStage = 1;
+    EFI_FILE_PROTOCOL* dataFile;
     EFI_STATUS status;
-    if (status = root->OpenEx(root, (void**)&systemFile, (CHAR16*)SYSTEM_DATA_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0, &systemFileIOToken))
+    if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SYSTEM_DATA_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0))
     {
-        logStatus(L"EFI_FILE_PROTOCOL.OpenEx() fails", status);
-
-        systemSavingStage = 0;
+        logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status);
+    }
+    else
+    {
+        unsigned long long size = sizeof(systemToSave);
+        status = dataFile->Write(dataFile, &size, &systemToSave);
+        dataFile->Close(dataFile);
+        if (status)
+        {
+            logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status);
+        }
+        else
+        {
+            setNumber(message, size, TRUE);
+            appendText(message, L" bytes of system data are saved.");
+            log(message);
+        }
     }
 }
 
@@ -5447,27 +5468,33 @@ static BOOLEAN initialize()
 #endif
     bs->SetMem(publicPeers, sizeof(publicPeers), 0);
 
-    bs->SetMem(&computors, sizeof(computors), 0);
+    bs->SetMem(&broadcastedComputors.broadcastComputors.computors, sizeof(Computors), 0);
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
     bs->SetMem(&system, sizeof(system), 0);
     system.version = VERSION_B;
 #endif
 
+    broadcastedComputors.header.size = sizeof(broadcastedComputors.header) + sizeof(broadcastedComputors.broadcastComputors);
+    broadcastedComputors.header.protocol = VERSION_B;
+    broadcastedComputors.header.type = BROADCAST_COMPUTORS;
 #if NUMBER_OF_MINING_PROCESSORS
     broadcastedSolution.header.size = sizeof(broadcastedSolution);
     broadcastedSolution.header.protocol = VERSION_B;
     broadcastedSolution.header.type = BROADCAST_RESOURCE_TESTING_SOLUTION;
 #endif
-    broadcastedComputors.header.size = sizeof(broadcastedComputors.header) + sizeof(broadcastedComputors.broadcastComputors);
-    broadcastedComputors.header.protocol = VERSION_B;
-    broadcastedComputors.header.type = BROADCAST_COMPUTORS;
     broadcastedTick.header.size = sizeof(broadcastedTick);
     broadcastedTick.header.protocol = VERSION_B;
     broadcastedTick.header.type = BROADCAST_TICK;
     broadcastedRevenues.header.size = sizeof(broadcastedRevenues);
     broadcastedRevenues.header.protocol = VERSION_B;
     broadcastedRevenues.header.type = BROADCAST_REVENUES;
+    requestedComputors.header.size = sizeof(requestedComputors);
+    requestedComputors.header.protocol = VERSION_B;
+    requestedComputors.header.type = REQUEST_COMPUTORS;
+    requestedTicks.header.size = sizeof(requestedTicks);
+    requestedTicks.header.protocol = VERSION_B;
+    requestedTicks.header.type = REQUEST_TICKS;
 
     EFI_STATUS status;
 
@@ -5607,13 +5634,6 @@ static BOOLEAN initialize()
             }
             else
             {
-                if (status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, emptyCallback, NULL, &systemFileIOToken.Event))
-                {
-                    logStatus(L"EFI_BOOT_SERVICES.CreateEvent() fails", status);
-
-                    return FALSE;
-                }
-
                 if (system.epoch < EPOCH)
                 {
                     bs->SetMem(&system.tickCounters, sizeof(system.tickCounters), 0);
@@ -5624,14 +5644,14 @@ static BOOLEAN initialize()
                     system.tick = TICK;
                 }
 
-                if (computors.epoch == system.epoch)
+                if (broadcastedComputors.broadcastComputors.computors.epoch == system.epoch)
                 {
                     numberOfOwnComputorIndices = 0;
                     for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
                     {
                         for (unsigned int j = 0; j < sizeof(ownSeeds) / sizeof(ownSeeds[0]); j++)
                         {
-                            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)computors.publicKeys[i]), *((__m256i*)ownPublicKeys[j]))) == 0xFFFFFFFF)
+                            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)broadcastedComputors.broadcastComputors.computors.publicKeys[i]), *((__m256i*)ownPublicKeys[j]))) == 0xFFFFFFFF)
                             {
                                 ownComputorIndices[numberOfOwnComputorIndices] = i;
                                 ownComputorIndicesMapping[numberOfOwnComputorIndices++] = j;
@@ -6057,7 +6077,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             _rdrand64_step(&salt);
 
                             unsigned int latestOwnTick = 0;
-                            unsigned long long systemDataSavingTick = 0, loggingTick = 0, peerRefreshingTick = 0, computorsRebroadcastingTick = 0, resourceTestingSolutionPublicationTick = 0;
+                            unsigned long long systemDataSavingTick = 0, loggingTick = 0, peerRefreshingTick = 0, resourceTestingSolutionPublicationTick = 0;
                             while (!state)
                             {
                                 const unsigned long long curTimeTick = __rdtsc();
@@ -6127,7 +6147,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].nextTickChosenTransfersInvocationsAndQuestionsDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].nextTickChosenTransfersInvocationsAndQuestionsDigest))) == 0xFFFFFFFF)
                                             {
                                                 unsigned char publicKeyAndStateDigest[32 + 32];
-                                                *((__m256i*)&publicKeyAndStateDigest[0]) = *((__m256i*)computors.publicKeys[actualTicks[j].computorIndex]);
+                                                *((__m256i*)&publicKeyAndStateDigest[0]) = *((__m256i*)broadcastedComputors.broadcastComputors.computors.publicKeys[actualTicks[j].computorIndex]);
                                                 *((__m256i*)&publicKeyAndStateDigest[32]) = ZERO;
                                                 unsigned char saltedStateDigest[32];
                                                 KangarooTwelve(publicKeyAndStateDigest, sizeof(publicKeyAndStateDigest), saltedStateDigest, sizeof(saltedStateDigest));
@@ -6543,10 +6563,15 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     {
                                                         *software++ = (VERSION_C / 10) + '0';
                                                     }
-                                                    *software = (VERSION_C % 10) + '0';
+                                                    *software++ = (VERSION_C % 10) + '0';
 
-                                                    peers[i].dataToTransmitSize = requestHeader->size;
+                                                    bs->CopyMem(software, &requestedComputors, requestedComputors.header.size);
+                                                    bs->CopyMem(software + requestedComputors.header.size, &requestedTicks, requestedTicks.header.size);
 
+                                                    peers[i].dataToTransmitSize = requestHeader->size + requestedComputors.header.size + requestedTicks.header.size;
+
+                                                    _InterlockedIncrement64(&numberOfDisseminatedRequests);
+                                                    _InterlockedIncrement64(&numberOfDisseminatedRequests);
                                                     _InterlockedIncrement64(&numberOfDisseminatedRequests);
                                                 }
                                             }
@@ -6700,10 +6725,15 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                             {
                                                                                 *software++ = (VERSION_C / 10) + '0';
                                                                             }
-                                                                            *software = (VERSION_C % 10) + '0';
+                                                                            *software++ = (VERSION_C % 10) + '0';
 
-                                                                            peers[i].dataToTransmitSize += responseHeader->size;
+                                                                            bs->CopyMem(software, &requestedComputors, requestedComputors.header.size);
+                                                                            bs->CopyMem(software + requestedComputors.header.size, &requestedTicks, requestedTicks.header.size);
 
+                                                                            peers[i].dataToTransmitSize += (responseHeader->size + requestedComputors.header.size + requestedTicks.header.size);
+
+                                                                            _InterlockedIncrement64(&numberOfDisseminatedRequests);
+                                                                            _InterlockedIncrement64(&numberOfDisseminatedRequests);
                                                                             _InterlockedIncrement64(&numberOfDisseminatedRequests);
                                                                         }
                                                                     }
@@ -6740,6 +6770,36 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                         if (shouldBeBroadcasted)
                                                                         {
                                                                             pushToAll(requestResponseHeader, false);
+                                                                        }
+                                                                    }
+
+                                                                    _InterlockedIncrement64(&numberOfProcessedRequests);
+                                                                }
+                                                                break;
+
+                                                                case REQUEST_COMPUTORS:
+                                                                {
+                                                                    push(&peers[i], &broadcastedComputors.header, true);
+
+                                                                    _InterlockedIncrement64(&numberOfProcessedRequests);
+                                                                }
+                                                                break;
+
+                                                                case REQUEST_TICKS:
+                                                                {
+                                                                    for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
+                                                                    {
+                                                                        if (latestTicks[j].epoch)
+                                                                        {
+                                                                            bs->CopyMem(&broadcastedTick.broadcastTick.tick, &latestTicks[j], sizeof(Tick));
+
+                                                                            push(&peers[i], &broadcastedTick.header, true);
+                                                                        }
+                                                                        if (actualTicks[j].epoch && actualTicks[j].tick != latestTicks[j].tick)
+                                                                        {
+                                                                            bs->CopyMem(&broadcastedTick.broadcastTick.tick, &actualTicks[j], sizeof(Tick));
+
+                                                                            push(&peers[i], &broadcastedTick.header, true);
                                                                         }
                                                                     }
 
@@ -7449,63 +7509,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 #endif
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
-                                if (systemSavingStage)
+                                if (curTimeTick - systemDataSavingTick >= SYSTEM_DATA_SAVING_PERIOD * frequency)
                                 {
-                                    if (systemFileIOToken.Status != -1)
-                                    {
-                                        switch (systemSavingStage)
-                                        {
-                                        case 1:
-                                        {
-                                            if (systemFileIOToken.Status)
-                                            {
-                                                logStatus(L"EFI_FILE_PROTOCOL.OpenEx() fails", status);
+                                    systemDataSavingTick = curTimeTick;
 
-                                                systemSavingStage = 0;
-                                            }
-                                            else
-                                            {
-                                                systemFileIOToken.Status = -1;
-                                                systemFileIOToken.BufferSize = sizeof(systemToSave);
-                                                systemFileIOToken.Buffer = &systemToSave;
-                                                systemSavingStage = 2;
-                                                if (status = systemFile->WriteEx(systemFile, &systemFileIOToken))
-                                                {
-                                                    logStatus(L"EFI_FILE_PROTOCOL.WriteEx() fails", status);
-
-                                                    systemFile->Close(systemFile);
-                                                    systemSavingStage = 0;
-                                                }
-                                            }
-                                        }
-                                        break;
-
-                                        case 2:
-                                        {
-                                            systemFile->Close(systemFile);
-                                            systemSavingStage = 0;
-
-                                            if (systemFileIOToken.Status)
-                                            {
-                                                logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status);
-                                            }
-                                            else
-                                            {
-                                                log(L"The system data are saved.");
-                                            }
-                                        }
-                                        break;
-                                        }
-                                    }
-                                }
-                                else
-                                {
-                                    if (curTimeTick - systemDataSavingTick >= SYSTEM_DATA_SAVING_PERIOD * frequency)
-                                    {
-                                        systemDataSavingTick = curTimeTick;
-
-                                        saveSystem();
-                                    }
+                                    saveSystem();
                                 }
 #endif
 
@@ -7519,16 +7527,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         _rdrand32_step(&peerIndex);
                                         closePeer(peerIndex % (NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS));
                                     }
-                                }
-
-                                if (curTimeTick - computorsRebroadcastingTick >= COMPUTORS_REBROADCASTING_PERIOD * frequency
-                                    && computors.epoch)
-                                {
-                                    computorsRebroadcastingTick = curTimeTick;
-
-                                    bs->CopyMem(&broadcastedComputors.broadcastComputors.computors, &computors, sizeof(computors));
-
-                                    pushToAll(&broadcastedComputors.header, true);
                                 }
 
 #if NUMBER_OF_MINING_PROCESSORS
@@ -7629,37 +7627,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 #endif
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
-                            {
-                                while (_InterlockedCompareExchange8(&systemLock, 1, 0))
-                                {
-                                    _mm_pause();
-                                }
-                                bs->CopyMem(&systemToSave, &system, sizeof(systemToSave));
-                                _InterlockedCompareExchange8(&systemLock, 0, 1);
-
-                                EFI_FILE_PROTOCOL* dataFile;
-                                EFI_STATUS status;
-                                if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SYSTEM_DATA_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0))
-                                {
-                                    logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status);
-                                }
-                                else
-                                {
-                                    unsigned long long size = sizeof(systemToSave);
-                                    status = dataFile->Write(dataFile, &size, &systemToSave);
-                                    dataFile->Close(dataFile);
-                                    if (status)
-                                    {
-                                        logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status);
-                                    }
-                                    else
-                                    {
-                                        setNumber(message, size, TRUE);
-                                        appendText(message, L" bytes of system data are saved.");
-                                        log(message);
-                                    }
-                                }
-                            }
+                            saveSystem();
 #endif
 #if NUMBER_OF_MINING_PROCESSORS
                             saveSolution();
