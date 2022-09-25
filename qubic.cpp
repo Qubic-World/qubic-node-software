@@ -35,7 +35,7 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 
 #define VERSION_A 1
 #define VERSION_B 36
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -3692,10 +3692,11 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define BUFFER_SIZE 1048576
 #define DEJAVU_SWAP_LIMIT 2621440 // False duplicate chance < 2%
 #define ISSUANCE_RATE 1000000000000
+#define LEDGER_DATA_SAVING_PERIOD 60
 #define MAX_ANSWER_SIZE 1024
-#define MAX_ENERGY_AMOUNT (ISSUANCE_RATE * 1000)
 #define MAX_INVOCATION_SIZE 1024
 #define MAX_MESSAGE_SIZE 1024
+#define MAX_NUMBER_OF_ENTITIES 0x1000000 // Must be 2^N
 #define MAX_NUMBER_OF_PROCESSORS 1024
 #define MAX_NUMBER_OF_PUBLIC_PEERS 256
 #define MAX_NUMBER_OF_INVOCATIONS_PER_TICK 0
@@ -3703,7 +3704,6 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define MAX_NUMBER_OF_TRANSFERS_PER_TICK 100
 #define MAX_QUESTION_SIZE 1024
 #define MAX_TRANSFER_DESCRIPTION_SIZE 112
-#define MIN_ENERGY_AMOUNT 1000000
 #define NUMBER_OF_EXCHANGED_PEERS 4
 #define NUMBER_OF_OUTGOING_CONNECTIONS 16
 #define NUMBER_OF_INCOMING_CONNECTIONS 48
@@ -3718,7 +3718,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define REVENUE_PUBLICATION_PERIOD 300
 #define SIGNATURE_SIZE 64
 #define SOLUTION_THRESHOLD 28
-#define SYSTEM_DATA_SAVING_PERIOD 60
+#define SYSTEM_DATA_SAVING_PERIOD 300
 #define VOLUME_LABEL L"Qubic"
 
 static __m256i ZERO;
@@ -3726,15 +3726,9 @@ static __m256i ZERO;
 typedef struct
 {
     unsigned char publicKey[32];
-    long long incomingAmount, outgoingAmount;
+    long long amount;
+    unsigned int latestIncreaseTick, latestDecreaseTick;
 } Entity;
-
-typedef struct
-{
-    unsigned int index;
-    char padding[4];
-    Entity entity;
-} StoredEntity;
 
 typedef struct
 {
@@ -4029,9 +4023,9 @@ static unsigned int numberOfBufferedTransfers[sizeof(ownSeeds) / sizeof(ownSeeds
 static unsigned char bufferedTransferBytes[sizeof(ownSeeds) / sizeof(ownSeeds[0])][MAX_NUMBER_OF_TRANSFERS_PER_TICK][sizeof(Transfer) + MAX_TRANSFER_DESCRIPTION_SIZE + SIGNATURE_SIZE];
 static unsigned int chosenTransfersInvocationsAndQuestionSizes[NUMBER_OF_COMPUTORS];
 
-static StoredEntity storedEntities[1024];
 static volatile char entitiesLock = 0;
 static Entity* entities = NULL;
+static unsigned int numberOfEntities = 0;
 #endif
 static char chosenTransfersInvocationsAndQuestionBytes[NUMBER_OF_COMPUTORS][sizeof(BroadcastChosenTransfersInvocationsAndQuestions) + (sizeof(Transfer) + MAX_TRANSFER_DESCRIPTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_TRANSFERS_PER_TICK + (sizeof(Invocation) + MAX_INVOCATION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_INVOCATIONS_PER_TICK + (sizeof(Question) + MAX_QUESTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_QUESTIONS_PER_TICK + SIGNATURE_SIZE];
 
@@ -4279,9 +4273,9 @@ static void logStatus(const CHAR16* message, const EFI_STATUS status)
 }
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
-static void increaseEnergy(unsigned char* publicKey, long long amount)
+static void increaseEnergy(unsigned char* publicKey, long long amount, unsigned int tick)
 {
-    unsigned int index = (*((unsigned int*)publicKey)) & 0xFFFFFF;
+    unsigned int index = (*((unsigned int*)publicKey)) & (MAX_NUMBER_OF_ENTITIES - 1);
 
     while (_InterlockedCompareExchange8(&entitiesLock, 1, 0))
     {
@@ -4291,18 +4285,20 @@ static void increaseEnergy(unsigned char* publicKey, long long amount)
 iteration:
     if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)entities[index].publicKey), *((__m256i*)publicKey))) == 0xFFFFFFFF)
     {
-        entities[index].incomingAmount += amount;
+        entities[index].amount += amount;
+        entities[index].latestIncreaseTick = tick;
     }
     else
     {
         if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)entities[index].publicKey), ZERO)) == 0xFFFFFFFF)
         {
             *((__m256i*)entities[index].publicKey) = *((__m256i*)publicKey);
-            entities[index].incomingAmount = amount;
+            entities[index].amount = amount;
+            entities[index].latestIncreaseTick = tick;
         }
         else
         {
-            index = (index + 1) & 0xFFFFFF;
+            index = (index + 1) & (MAX_NUMBER_OF_ENTITIES - 1);
 
             goto iteration;
         }
@@ -4311,9 +4307,9 @@ iteration:
     _InterlockedCompareExchange8(&entitiesLock, 0, 1);
 }
 
-static BOOLEAN decreaseEnergy(unsigned char* publicKey, long long amount)
+static bool decreaseEnergy(unsigned char* publicKey, long long amount, unsigned int tick)
 {
-    unsigned int index = (*((unsigned int*)publicKey)) & 0xFFFFFF;
+    unsigned int index = (*((unsigned int*)publicKey)) & (MAX_NUMBER_OF_ENTITIES - 1);
 
     while (_InterlockedCompareExchange8(&entitiesLock, 1, 0))
     {
@@ -4323,27 +4319,21 @@ static BOOLEAN decreaseEnergy(unsigned char* publicKey, long long amount)
 iteration:
     if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)entities[index].publicKey), *((__m256i*)publicKey))) == 0xFFFFFFFF)
     {
-        if (entities[index].incomingAmount - entities[index].outgoingAmount >= amount)
+        if (entities[index].amount >= amount)
         {
-            if (entities[index].incomingAmount - entities[index].outgoingAmount < amount + MIN_ENERGY_AMOUNT)
-            {
-                entities[index].outgoingAmount = entities[index].incomingAmount;
-            }
-            else
-            {
-                entities[index].outgoingAmount += amount;
-            }
+            entities[index].amount -= amount;
+            entities[index].latestDecreaseTick = tick;
 
             _InterlockedCompareExchange8(&entitiesLock, 0, 1);
 
-            return TRUE;
+            return true;
         }
     }
     else
     {
         if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)entities[index].publicKey), ZERO)) != 0xFFFFFFFF)
         {
-            index = (index + 1) & 0xFFFFFF;
+            index = (index + 1) & (MAX_NUMBER_OF_ENTITIES - 1);
 
             goto iteration;
         }
@@ -4351,7 +4341,7 @@ iteration:
 
     _InterlockedCompareExchange8(&entitiesLock, 0, 1);
 
-    return FALSE;
+    return false;
 }
 #endif
 
@@ -4449,61 +4439,6 @@ static void push(Client* client, RequestResponseHeader* requestResponseHeader)
     }
 }
 
-static bool analyzeTick(Tick* tick)
-{
-    if (tick->computorIndex < NUMBER_OF_COMPUTORS
-        //&& tick->month >= 1 && tick->month <= 12
-        //&& tick->day >= 1 && tick->day <= 31
-        && tick->hour <= 23
-        && tick->minute <= 59
-        && tick->second <= 59
-        && tick->millisecond <= 999
-        /*&& ms(tick->year, tick->month, tick->day, tick->hour, tick->minute, tick->second, tick->millisecond) >= ms(tick->prevYear, tick->prevMonth, tick->prevDay, tick->prevHour, tick->prevMinute, tick->prevSecond, tick->prevMillisecond)*/ // TODO
-        )
-    {
-        if (broadcastedComputors.broadcastComputors.computors.epoch
-            && tick->epoch == broadcastedComputors.broadcastComputors.computors.epoch)
-        {
-            unsigned char digest[32];
-            tick->computorIndex ^= BROADCAST_TICK;
-            KangarooTwelve((unsigned char*)tick, sizeof(Tick) - SIGNATURE_SIZE, digest, sizeof(digest));
-            tick->computorIndex ^= BROADCAST_TICK;
-            if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[tick->computorIndex], digest, tick->signature))
-            {
-                if (!_InterlockedCompareExchange8(&ticksLock, 1, 0))
-                {
-                    if (tick->tick > latestTicks[tick->computorIndex].tick)
-                    {
-                        bs->CopyMem(&latestTicks[tick->computorIndex], tick, sizeof(Tick));
-                    }
-
-#if NUMBER_OF_COMPUTING_PROCESSORS
-                    if (!_InterlockedCompareExchange8(&systemLock, 1, 0))
-                    {
-                        if (tick->tick == system.tick + 1)
-                        {
-                            bs->CopyMem(&actualTicks[tick->computorIndex], tick, sizeof(Tick));
-                        }
-
-                        _InterlockedCompareExchange8(&systemLock, 0, 1);
-                    }
-#endif
-
-                    _InterlockedCompareExchange8(&ticksLock, 0, 1);
-                }
-
-                return true;
-            }
-        }
-        else
-        {
-            return true;
-        }
-    }
-
-    return false;
-}
-
 static void requestProcessor(void* ProcedureArgument)
 {
     enableAVX2();
@@ -4572,10 +4507,65 @@ static void requestProcessor(void* ProcedureArgument)
 
                 case BROADCAST_TICK:
                 {
-                    if (requestHeader->size == broadcastedTick.header.size
-                        && analyzeTick(&((BroadcastTick*)((char*)processor->cache + sizeof(RequestResponseHeader)))->tick))
+                    BroadcastTick* request = (BroadcastTick*)((char*)processor->cache + sizeof(RequestResponseHeader));
+                    if (request->tick.computorIndex < NUMBER_OF_COMPUTORS
+                        && request->tick.tick != latestTicks[request->tick.computorIndex].tick)
                     {
-                        responseSize = requestHeader->size;
+#if NUMBER_OF_COMPUTING_PROCESSORS
+                        if (request->tick.tick == actualTicks[request->tick.computorIndex].tick)
+                        {
+                            break;
+                        }
+#endif
+
+                        if (//&& request->tick.month >= 1 && request->tick.month <= 12
+                            //&& request->tick.day >= 1 && request->tick.day <= 31
+                            /*&&*/ request->tick.hour <= 23
+                            && request->tick.minute <= 59
+                            && request->tick.second <= 59
+                            && request->tick.millisecond <= 999
+                            /*&& ms(request->tick.year, request->tick.month, request->tick.day, request->tick.hour, request->tick.minute, request->tick.second, request->tick.millisecond) >= ms(request->tick.prevYear, request->tick.prevMonth, request->tick.prevDay, request->tick.prevHour, request->tick.prevMinute, request->tick.prevSecond, request->tick.prevMillisecond)*/ // TODO
+                            )
+                        {
+                            if (broadcastedComputors.broadcastComputors.computors.epoch
+                                && request->tick.epoch == broadcastedComputors.broadcastComputors.computors.epoch)
+                            {
+                                unsigned char digest[32];
+                                request->tick.computorIndex ^= BROADCAST_TICK;
+                                KangarooTwelve((unsigned char*)&request->tick, sizeof(Tick) - SIGNATURE_SIZE, digest, sizeof(digest));
+                                request->tick.computorIndex ^= BROADCAST_TICK;
+                                if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->tick.computorIndex], digest, request->tick.signature))
+                                {
+                                    if (!_InterlockedCompareExchange8(&ticksLock, 1, 0))
+                                    {
+                                        if (request->tick.tick > latestTicks[request->tick.computorIndex].tick)
+                                        {
+                                            bs->CopyMem(&latestTicks[request->tick.computorIndex], &request->tick, sizeof(Tick));
+                                        }
+
+#if NUMBER_OF_COMPUTING_PROCESSORS
+                                        if (!_InterlockedCompareExchange8(&systemLock, 1, 0))
+                                        {
+                                            if (request->tick.tick == system.tick + 1)
+                                            {
+                                                bs->CopyMem(&actualTicks[request->tick.computorIndex], &request->tick, sizeof(Tick));
+                                            }
+
+                                            _InterlockedCompareExchange8(&systemLock, 0, 1);
+                                        }
+#endif
+
+                                        _InterlockedCompareExchange8(&ticksLock, 0, 1);
+                                    }
+
+                                    responseSize = requestHeader->size;
+                                }
+                            }
+                            else
+                            {
+                                responseSize = requestHeader->size;
+                            }
+                        }
                     }
                 }
                 break;
@@ -4642,7 +4632,7 @@ static void requestProcessor(void* ProcedureArgument)
                 {
                     responseSize = requestHeader->size;
                     BroadcastTransfer* request = (BroadcastTransfer*)((char*)processor->cache + sizeof(RequestResponseHeader));
-                    if (request->transfer.amount >= MIN_ENERGY_AMOUNT && request->transfer.amount <= MAX_ENERGY_AMOUNT
+                    if (request->transfer.amount > 0
                         && request->transfer.descriptionSize <= MAX_TRANSFER_DESCRIPTION_SIZE && requestHeader->size == sizeof(RequestResponseHeader) + sizeof(Transfer) + request->transfer.descriptionSize + SIGNATURE_SIZE)
                     {
                         unsigned char digest[32];
@@ -4681,7 +4671,7 @@ static void requestProcessor(void* ProcedureArgument)
                 case BROADCAST_INVOCATION:
                 {
                     BroadcastInvocation* request = (BroadcastInvocation*)((char*)processor->cache + sizeof(RequestResponseHeader));
-                    if (request->invocation.amount >= MIN_ENERGY_AMOUNT && request->invocation.amount <= MAX_ENERGY_AMOUNT
+                    if (request->invocation.amount >= 0
                         && request->invocation.invocationSize <= MAX_INVOCATION_SIZE && requestHeader->size == sizeof(RequestResponseHeader) + sizeof(BroadcastInvocation) + request->invocation.invocationSize + SIGNATURE_SIZE)
                     {
                         unsigned char digest[32];
@@ -4720,7 +4710,7 @@ static void requestProcessor(void* ProcedureArgument)
                                 for (i = 0; i < request->chosenTransfersInvocationsAndQuestions.numberOfTransfers; i++)
                                 {
                                     Transfer* transfer = (Transfer*)ptr;
-                                    if (transfer->amount >= MIN_ENERGY_AMOUNT && transfer->amount <= MAX_ENERGY_AMOUNT
+                                    if (transfer->amount > 0
                                         && transfer->descriptionSize <= MAX_TRANSFER_DESCRIPTION_SIZE)
                                     {
                                         unsigned char digest[32];
@@ -4919,7 +4909,7 @@ static void requestProcessor(void* ProcedureArgument)
                 {
                     responseSize = requestHeader->size;
                     BroadcastTransfer* request = (BroadcastTransfer*)((char*)processor->cache + sizeof(RequestResponseHeader));
-                    if (request->transfer.amount >= MIN_ENERGY_AMOUNT && request->transfer.amount <= MAX_ENERGY_AMOUNT
+                    if (request->transfer.amount > 0
                         && request->transfer.descriptionSize <= MAX_TRANSFER_DESCRIPTION_SIZE && requestHeader->size == sizeof(RequestResponseHeader) + sizeof(Transfer) + request->transfer.descriptionSize + SIGNATURE_SIZE)
                     {
                         unsigned char digest[32];
@@ -4937,7 +4927,8 @@ static void requestProcessor(void* ProcedureArgument)
                 case BROADCAST_INVOCATION:
                 {
                     BroadcastInvocation* request = (BroadcastInvocation*)((char*)processor->cache + sizeof(RequestResponseHeader));
-                    if (request->invocation.invocationSize <= MAX_INVOCATION_SIZE && requestHeader->size == sizeof(RequestResponseHeader) + sizeof(BroadcastInvocation) + request->invocation.invocationSize + SIGNATURE_SIZE)
+                    if (request->invocation.amount >= 0
+                        && request->invocation.invocationSize <= MAX_INVOCATION_SIZE && requestHeader->size == sizeof(RequestResponseHeader) + sizeof(BroadcastInvocation) + request->invocation.invocationSize + SIGNATURE_SIZE)
                     {
                         unsigned char digest[32];
                         request->invocation.sourcePublicKey[0] ^= BROADCAST_INVOCATION;
@@ -5350,7 +5341,7 @@ static void saveSystem()
         else
         {
             setNumber(message, size, TRUE);
-            appendText(message, L" bytes of system data are saved.");
+            appendText(message, L" bytes of the system data are saved.");
             log(message);
         }
     }
@@ -5358,6 +5349,8 @@ static void saveSystem()
 
 static void saveLedger()
 {
+    const unsigned long long beginningTick = __rdtsc();
+
     EFI_FILE_PROTOCOL* dataFile;
     EFI_STATUS status;
     if (status = root->Open(root, (void**)&dataFile, (CHAR16*)LEDGER_DATA_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0))
@@ -5371,29 +5364,21 @@ static void saveLedger()
             _mm_pause();
         }
 
-        unsigned int numberOfStoredEntities = 0;
-        for (unsigned int i = 0; i < 0x1000000; i++)
-        {
-            if (entities[i].incomingAmount - entities[i].outgoingAmount)
-            {
-                storedEntities[numberOfStoredEntities].index = i;
-                bs->CopyMem(&storedEntities[numberOfStoredEntities++].entity, &entities[i], sizeof(Entity));
-            }
-            if ((numberOfStoredEntities == sizeof(storedEntities) / sizeof(storedEntities[0]) || i == 0x1000000 - 1) && numberOfStoredEntities)
-            {
-                unsigned long long size = numberOfStoredEntities * sizeof(StoredEntity);
-                if (status = dataFile->Write(dataFile, &size, &storedEntities))
-                {
-                    logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status);
-
-                    break;
-                }
-
-                numberOfStoredEntities = 0;
-            }
-        }
-
+        unsigned long long size = MAX_NUMBER_OF_ENTITIES * sizeof(Entity);
+        status = dataFile->Write(dataFile, &size, entities);
         dataFile->Close(dataFile);
+        if (status)
+        {
+            logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status);
+        }
+        else
+        {
+            setNumber(message, size, TRUE);
+            appendText(message, L" bytes of the ledger data are saved (");
+            appendNumber(message, (__rdtsc() - beginningTick) * 1000 / frequency, TRUE);
+            appendText(message, L" ms).");
+            log(message);
+        }
 
         _InterlockedCompareExchange8(&entitiesLock, 0, 1);
     }
@@ -5469,11 +5454,6 @@ static BOOLEAN initialize()
     bs->SetMem(publicPeers, sizeof(publicPeers), 0);
 
     bs->SetMem(&broadcastedComputors.broadcastComputors.computors, sizeof(Computors), 0);
-
-#if NUMBER_OF_COMPUTING_PROCESSORS
-    bs->SetMem(&system, sizeof(system), 0);
-    system.version = VERSION_B;
-#endif
 
     broadcastedComputors.header.size = sizeof(broadcastedComputors.header) + sizeof(broadcastedComputors.broadcastComputors);
     broadcastedComputors.header.protocol = VERSION_B;
@@ -5608,7 +5588,7 @@ static BOOLEAN initialize()
         bs->SetMem(numberOfBufferedTransfers, sizeof(numberOfBufferedTransfers), 0);
         bs->SetMem(chosenTransfersInvocationsAndQuestionSizes, sizeof(chosenTransfersInvocationsAndQuestionSizes), 0);
 
-        if (status = bs->AllocatePool(EfiRuntimeServicesData, 0x1000000 * sizeof(Entity), (void**)&entities))
+        if (status = bs->AllocatePool(EfiRuntimeServicesData, MAX_NUMBER_OF_ENTITIES * sizeof(Entity), (void**)&entities))
         {
             logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status);
 
@@ -5623,6 +5603,9 @@ static BOOLEAN initialize()
         }
         else
         {
+            bs->SetMem(&system, sizeof(system), 0);
+            system.version = VERSION_B;
+
             unsigned long long size = sizeof(system);
             status = dataFile->Read(dataFile, &size, &system);
             dataFile->Close(dataFile);
@@ -5672,55 +5655,31 @@ static BOOLEAN initialize()
         }
         else
         {
-            bs->SetMem(entities, 0x1000000 * sizeof(Entity), 0);
+            bs->SetMem(entities, MAX_NUMBER_OF_ENTITIES * sizeof(Entity), 0);
 
-            unsigned long long size;
-            do
-            {
-                size = sizeof(storedEntities);
-                if (status = dataFile->Read(dataFile, &size, &storedEntities))
-                {
-                    logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status);
-                    dataFile->Close(dataFile);
-
-                    return FALSE;
-                }
-                else
-                {
-                    if (size % sizeof(StoredEntity))
-                    {
-                        log(L"Ledger data file is corrupted!");
-                        dataFile->Close(dataFile);
-
-                        return FALSE;
-                    }
-                    else
-                    {
-                        for (unsigned int i = 0; i < size / sizeof(StoredEntity); i++)
-                        {
-                            bs->CopyMem(&entities[storedEntities[i].index], &storedEntities[i].entity, sizeof(Entity));
-                        }
-                    }
-                }
-
-            } while (size);
-
+            unsigned long long size = MAX_NUMBER_OF_ENTITIES * sizeof(Entity);
+            status = dataFile->Read(dataFile, &size, entities);
             dataFile->Close(dataFile);
+            if (status)
+            {
+                logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status);
+
+                return FALSE;
+            }
 
             unsigned char digest[32];
             CHAR16 hash[64 + 1];
-            unsigned int numberOfEntities = 0;
             unsigned long long totalAmount = 0;
 
-            KangarooTwelve((unsigned char*)entities, 0x1000000 * sizeof(Entity), digest, sizeof(digest));
+            KangarooTwelve((unsigned char*)entities, MAX_NUMBER_OF_ENTITIES * sizeof(Entity), digest, sizeof(digest));
             getHash(digest, hash);
 
-            for (unsigned int i = 0; i < 0x1000000; i++)
+            for (unsigned int i = 0; i < MAX_NUMBER_OF_ENTITIES; i++)
             {
-                if (entities[i].incomingAmount - entities[i].outgoingAmount)
+                if (entities[i].amount)
                 {
                     numberOfEntities++;
-                    totalAmount += (entities[i].incomingAmount - entities[i].outgoingAmount);
+                    totalAmount += entities[i].amount;
                 }
             }
 
@@ -6077,7 +6036,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             _rdrand64_step(&salt);
 
                             unsigned int latestOwnTick = 0;
-                            unsigned long long systemDataSavingTick = 0, loggingTick = 0, peerRefreshingTick = 0, resourceTestingSolutionPublicationTick = 0;
+                            unsigned long long systemDataSavingTick = 0, ledgerDataSavingTick = 0, loggingTick = 0, peerRefreshingTick = 0, resourceTestingSolutionPublicationTick = 0;
                             while (!state)
                             {
                                 const unsigned long long curTimeTick = __rdtsc();
@@ -6795,12 +6754,14 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                                             push(&peers[i], &broadcastedTick.header, true);
                                                                         }
+#if NUMBER_OF_COMPUTING_PROCESSORS
                                                                         if (actualTicks[j].epoch && actualTicks[j].tick != latestTicks[j].tick)
                                                                         {
                                                                             bs->CopyMem(&broadcastedTick.broadcastTick.tick, &actualTicks[j], sizeof(Tick));
 
                                                                             push(&peers[i], &broadcastedTick.header, true);
                                                                         }
+#endif
                                                                     }
 
                                                                     _InterlockedIncrement64(&numberOfProcessedRequests);
@@ -7515,6 +7476,13 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                     saveSystem();
                                 }
+
+                                if (curTimeTick - ledgerDataSavingTick >= LEDGER_DATA_SAVING_PERIOD * frequency)
+                                {
+                                    ledgerDataSavingTick = curTimeTick;
+
+                                    saveLedger();
+                                }
 #endif
 
                                 if (curTimeTick - peerRefreshingTick >= PEER_REFRESHING_PERIOD * frequency)
@@ -7628,6 +7596,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
                             saveSystem();
+                            saveLedger();
 #endif
 #if NUMBER_OF_MINING_PROCESSORS
                             saveSolution();
