@@ -1,7 +1,3 @@
-#include <intrin.h>
-
-
-
 ////////// Private Settings \\\\\\\\\\
 
 #define NUMBER_OF_COMPUTING_PROCESSORS 0
@@ -34,8 +30,8 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 36
-#define VERSION_C 2
+#define VERSION_B 37
+#define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -43,7 +39,7 @@ static const unsigned char knownPublicPeers[][4] = {
 };
 
 #define EPOCH 23
-#define TICK 2654272
+#define TICK 2654273
 
 /*#if NUMBER_OF_COMPUTING_PROCESSORS
 #include "qubics.h"
@@ -52,6 +48,8 @@ static const unsigned char knownPublicPeers[][4] = {
 
 
 ////////// UEFI \\\\\\\\\\
+
+#include <intrin.h>
 
 #define FALSE ((BOOLEAN)0)
 #define IN
@@ -3691,6 +3689,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 
 #define BUFFER_SIZE 1048576
 #define DEJAVU_SWAP_LIMIT 2621440 // False duplicate chance < 2%
+#define DISSEMINATION_MULTIPLIER 4
 #define ISSUANCE_RATE 1000000000000
 #define LEDGER_DATA_SAVING_PERIOD 60
 #define MAX_ANSWER_SIZE 1024
@@ -3866,7 +3865,7 @@ typedef struct
 {
     unsigned short computorIndex;
     unsigned short epoch;
-    unsigned char revenuePercents[NUMBER_OF_COMPUTORS];
+    unsigned int revenues[NUMBER_OF_COMPUTORS];
     unsigned char signature[SIGNATURE_SIZE];
 } Revenues;
 
@@ -4275,6 +4274,8 @@ static void logStatus(const CHAR16* message, const EFI_STATUS status)
 #if NUMBER_OF_COMPUTING_PROCESSORS
 static void increaseEnergy(unsigned char* publicKey, long long amount, unsigned int tick)
 {
+    // TODO: numberOfEntities!
+
     unsigned int index = (*((unsigned int*)publicKey)) & (MAX_NUMBER_OF_ENTITIES - 1);
 
     while (_InterlockedCompareExchange8(&entitiesLock, 1, 0))
@@ -4417,11 +4418,27 @@ static void push(Peer* peer, RequestResponseHeader* requestResponseHeader, bool 
     }
 }
 
-static void pushToAll(RequestResponseHeader* requestResponseHeader, bool isUrgent)
+static void pushToSome(RequestResponseHeader* requestResponseHeader)
 {
+    unsigned short suitablePeerIndices[NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS];
+    unsigned short numberOfSuitablePeers = 0;
     for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
     {
-        push(&peers[i], requestResponseHeader, isUrgent);
+        if (peers[i].tcp4Protocol && peers[i].isConnectedAccepted && peers[i].exchangedPublicPeers && !peers[i].isClosing
+            && !peers[i].dataToTransmitSize)
+        {
+            suitablePeerIndices[numberOfSuitablePeers++] = i;
+        }
+    }
+    unsigned short numberOfRemainingSuitablePeers = DISSEMINATION_MULTIPLIER;
+    while (numberOfRemainingSuitablePeers-- && numberOfSuitablePeers)
+    {
+        unsigned short random;
+        _rdrand16_step(&random);
+        const unsigned short index = random % numberOfSuitablePeers;
+        push(&peers[index], requestResponseHeader, false);
+
+        suitablePeerIndices[index] = suitablePeerIndices[--numberOfSuitablePeers];
     }
 }
 
@@ -4578,7 +4595,7 @@ static void requestProcessor(void* ProcedureArgument)
                         unsigned int i;
                         for (i = 0; i < NUMBER_OF_COMPUTORS; i++)
                         {
-                            if (request->revenues.revenuePercents[i] > 100)
+                            if (request->revenues.revenues[i] > (ISSUANCE_RATE / NUMBER_OF_COMPUTORS))
                             {
                                 break;
                             }
@@ -4899,7 +4916,7 @@ static void requestProcessor(void* ProcedureArgument)
                                 //log(L"Receives a message for self.");
                             }*/
 
-                            pushToAll(responseHeader, false);
+                            pushToSome(responseHeader);
                         }
                     }
                 }
@@ -4918,7 +4935,7 @@ static void requestProcessor(void* ProcedureArgument)
                         request->transfer.sourcePublicKey[0] ^= BROADCAST_TRANSFER;
                         if (verify(request->transfer.sourcePublicKey, digest, ((const unsigned char*)processor->cache + requestHeader->size - SIGNATURE_SIZE)))
                         {
-                            pushToAll(responseHeader, false);
+                            pushToSome(responseHeader);
                         }
                     }
                 }
@@ -4936,7 +4953,7 @@ static void requestProcessor(void* ProcedureArgument)
                         request->invocation.sourcePublicKey[0] ^= BROADCAST_INVOCATION;
                         if (verify(request->invocation.sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastInvocation) + request->invocation.invocationSize)))
                         {
-                            pushToAll(responseHeader, false);
+                            pushToSome(responseHeader);
                         }
                     }
                 }
@@ -4953,7 +4970,7 @@ static void requestProcessor(void* ProcedureArgument)
                         request->question.sourcePublicKey[0] ^= BROADCAST_QUESTION;
                         if (verify(request->question.sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastQuestion) + request->question.questionSize)))
                         {
-                            pushToAll(responseHeader, false);
+                            pushToSome(responseHeader);
                         }
                     }
                 }
@@ -4974,12 +4991,12 @@ static void requestProcessor(void* ProcedureArgument)
                             request->answer.computorIndex ^= BROADCAST_ANSWER;
                             if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->answer.computorIndex], digest, ((const unsigned char*)request + sizeof(BroadcastAnswer) + request->answer.answerSize)))
                             {
-                                pushToAll(responseHeader, false);
+                                pushToSome(responseHeader);
                             }
                         }
                         else
                         {
-                            pushToAll(responseHeader, false);
+                            pushToSome(responseHeader);
                         }
                     }
                 }
@@ -6084,7 +6101,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             bs->CopyMem(&actualTicks[ownComputorIndices[i]], &broadcastedTick.broadcastTick.tick, sizeof(Tick));
                                             _InterlockedCompareExchange8(&ticksLock, 0, 1);
 
-                                            pushToAll(&broadcastedTick.header, true);
+                                            for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
+                                            {
+                                                push(&peers[j], &broadcastedTick.header, true);
+                                            }
                                         }
                                     }
 
@@ -6231,17 +6251,38 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             broadcastedRevenues.broadcastRevenues.revenues.computorIndex = ownComputorIndices[i];
 
                                             unsigned int maxCounter = 0;
-                                            unsigned int ownCounter = system.tickCounters[ownComputorIndices[i]];
                                             for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
                                             {
-                                                if (system.tickCounters[j] > maxCounter && system.tickCounters[j] < ownCounter)
+                                                if (system.tickCounters[j] > maxCounter)
                                                 {
-                                                    maxCounter = system.tickCounters[j];
+                                                    unsigned int k;
+                                                    for (k = 0; k < numberOfOwnComputorIndices; k++)
+                                                    {
+                                                        if (ownComputorIndices[k] == j)
+                                                        {
+                                                            break;
+                                                        }
+                                                    }
+                                                    if (k == numberOfOwnComputorIndices)
+                                                    {
+                                                        maxCounter = system.tickCounters[j];
+                                                    }
                                                 }
                                             }
-                                            for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
+                                            if (maxCounter)
                                             {
-                                                broadcastedRevenues.broadcastRevenues.revenues.revenuePercents[j] = (system.tickCounters[j] >= maxCounter || !maxCounter) ? 100 : (unsigned char)(system.tickCounters[j] * 100UL / maxCounter);
+                                                for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
+                                                {
+                                                    broadcastedRevenues.broadcastRevenues.revenues.revenues[j] = (system.tickCounters[j] >= maxCounter) ? (ISSUANCE_RATE / NUMBER_OF_COMPUTORS) : (system.tickCounters[j] * ((unsigned long long)(ISSUANCE_RATE / NUMBER_OF_COMPUTORS)) / maxCounter);
+                                                }
+                                                for (unsigned int j = 0; j < numberOfOwnComputorIndices; j++)
+                                                {
+                                                    broadcastedRevenues.broadcastRevenues.revenues.revenues[ownComputorIndices[j]] = ISSUANCE_RATE / NUMBER_OF_COMPUTORS;
+                                                }
+                                            }
+                                            else
+                                            {
+                                                bs->SetMem(broadcastedRevenues.broadcastRevenues.revenues.revenues, sizeof(broadcastedRevenues.broadcastRevenues.revenues.revenues), 0);
                                             }
 
                                             unsigned char digest[32];
@@ -6250,7 +6291,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             broadcastedRevenues.broadcastRevenues.revenues.computorIndex ^= BROADCAST_REVENUES;
                                             sign(ownSubseeds[ownComputorIndicesMapping[i]], ownPublicKeys[ownComputorIndicesMapping[i]], digest, broadcastedRevenues.broadcastRevenues.revenues.signature);
 
-                                            pushToAll(&broadcastedRevenues.header, true);
+                                            for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
+                                            {
+                                                push(&peers[j], &broadcastedRevenues.header, true);
+                                            }
                                         }
                                     }
                                 }
@@ -6728,7 +6772,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                                         if (shouldBeBroadcasted)
                                                                         {
-                                                                            pushToAll(requestResponseHeader, false);
+                                                                            pushToSome(requestResponseHeader);
                                                                         }
                                                                     }
 
@@ -7518,7 +7562,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                     if (shouldBeBroadcasted)
                                     {
-                                        pushToAll(&broadcastedSolution.header, true);
+                                        pushToSome(&broadcastedSolution.header);
                                     }
 
                                     saveSolution();
@@ -7537,7 +7581,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                             if (processor->responsePeer)
                                             {
-                                                pushToAll(responseHeader, false);
+                                                pushToSome(responseHeader);
                                             }
                                             else
                                             {
