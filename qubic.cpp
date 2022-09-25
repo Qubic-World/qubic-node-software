@@ -31,7 +31,7 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 
 #define VERSION_A 1
 #define VERSION_B 37
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -39,7 +39,7 @@ static const unsigned char knownPublicPeers[][4] = {
 };
 
 #define EPOCH 23
-#define TICK 2654273
+#define TICK 2654275
 
 /*#if NUMBER_OF_COMPUTING_PROCESSORS
 #include "qubics.h"
@@ -4401,20 +4401,18 @@ inline long long ms(unsigned short year, unsigned char month, unsigned char day,
 
 static void push(Peer* peer, RequestResponseHeader* requestResponseHeader, bool isUrgent)
 {
-    if (peer->tcp4Protocol && peer->isConnectedAccepted && peer->exchangedPublicPeers && !peer->isClosing)
+    if (peer->tcp4Protocol && peer->isConnectedAccepted && peer->exchangedPublicPeers && !peer->isClosing
+        && (isUrgent || !peer->dataToTransmitSize))
     {
-        if (isUrgent || !peer->dataToTransmitSize)
+        if (peer->dataToTransmitSize + requestResponseHeader->size > BUFFER_SIZE)
         {
-            if (peer->dataToTransmitSize + requestResponseHeader->size > BUFFER_SIZE)
-            {
-                peer->dataToTransmitSize = 0;
-            }
-
-            bs->CopyMem(&peer->dataToTransmit[peer->dataToTransmitSize], requestResponseHeader, requestResponseHeader->size);
-            peer->dataToTransmitSize += requestResponseHeader->size;
-
-            _InterlockedIncrement64(&numberOfDisseminatedRequests);
+            peer->dataToTransmitSize = 0;
         }
+
+        bs->CopyMem(&peer->dataToTransmit[peer->dataToTransmitSize], requestResponseHeader, requestResponseHeader->size);
+        peer->dataToTransmitSize += requestResponseHeader->size;
+
+        _InterlockedIncrement64(&numberOfDisseminatedRequests);
     }
 }
 
@@ -5337,7 +5335,7 @@ static void saveSystem()
     {
         _mm_pause();
     }
-    bs->CopyMem(&systemToSave, &system, sizeof(systemToSave));
+    bs->CopyMem(&systemToSave, &system, sizeof(System));
     _InterlockedCompareExchange8(&systemLock, 0, 1);
 
     EFI_FILE_PROTOCOL* dataFile;
@@ -5636,7 +5634,7 @@ static BOOLEAN initialize()
             {
                 if (system.epoch < EPOCH)
                 {
-                    bs->SetMem(&system.tickCounters, sizeof(system.tickCounters), 0);
+                    bs->SetMem(system.tickCounters, sizeof(system.tickCounters), 0);
                 }
                 system.epoch = EPOCH;
                 if (system.tick < TICK)
@@ -6109,6 +6107,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     }
 
                                     unsigned int counters[NUMBER_OF_COMPUTORS];
+                                    bs->SetMem(counters, sizeof(counters), 0);
                                     tickNumberOfComputors = 0;
                                     nextTickNumberOfComputors = 0;
                                     while (_InterlockedCompareExchange8(&ticksLock, 1, 0))
@@ -6136,14 +6135,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                     counters[j] = 1;
                                                 }
-                                                else
-                                                {
-                                                    counters[j] = 0;
-                                                }
-                                            }
-                                            else
-                                            {
-                                                counters[j] = 0;
                                             }
                                         }
 
@@ -6790,22 +6781,33 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                                 case REQUEST_TICKS:
                                                                 {
+                                                                    unsigned short computorIndices[NUMBER_OF_COMPUTORS];
+                                                                    unsigned short numberOfComputorIndices = NUMBER_OF_COMPUTORS;
                                                                     for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
                                                                     {
-                                                                        if (latestTicks[j].epoch)
+                                                                        computorIndices[j] = j;
+                                                                    }
+                                                                    while (numberOfComputorIndices)
+                                                                    {
+                                                                        unsigned short random;
+                                                                        _rdrand16_step(&random);
+                                                                        const unsigned short index = random % numberOfComputorIndices;
+                                                                        if (latestTicks[index].epoch)
                                                                         {
-                                                                            bs->CopyMem(&broadcastedTick.broadcastTick.tick, &latestTicks[j], sizeof(Tick));
+                                                                            bs->CopyMem(&broadcastedTick.broadcastTick.tick, &latestTicks[index], sizeof(Tick));
 
                                                                             push(&peers[i], &broadcastedTick.header, true);
                                                                         }
 #if NUMBER_OF_COMPUTING_PROCESSORS
-                                                                        if (actualTicks[j].epoch && actualTicks[j].tick != latestTicks[j].tick)
+                                                                        if (actualTicks[index].epoch && actualTicks[index].tick != latestTicks[index].tick)
                                                                         {
-                                                                            bs->CopyMem(&broadcastedTick.broadcastTick.tick, &actualTicks[j], sizeof(Tick));
+                                                                            bs->CopyMem(&broadcastedTick.broadcastTick.tick, &actualTicks[index], sizeof(Tick));
 
                                                                             push(&peers[i], &broadcastedTick.header, true);
                                                                         }
 #endif
+
+                                                                        computorIndices[index] = computorIndices[--numberOfComputorIndices];
                                                                     }
 
                                                                     _InterlockedIncrement64(&numberOfProcessedRequests);
