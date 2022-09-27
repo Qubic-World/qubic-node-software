@@ -31,7 +31,7 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 
 #define VERSION_A 1
 #define VERSION_B 37
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -3978,6 +3978,23 @@ typedef struct
 
 #define REQUEST_TICKS 12
 
+#define BROADCAST_TERMINATOR 13
+
+typedef struct
+{
+    unsigned char nonce;
+    unsigned char numberOfNewComputors;
+    unsigned short epoch;
+    unsigned int tick;
+    unsigned int revenues[NUMBER_OF_COMPUTORS];
+    unsigned char signature[SIGNATURE_SIZE];
+} Terminator;
+
+typedef struct
+{
+    Terminator terminator;
+} BroadcastTerminator;
+
 #define GET_COMPUTER_STATE 0
 
 typedef struct
@@ -4225,11 +4242,6 @@ static void appendErrorStatus(CHAR16* dst, const EFI_STATUS status)
 
 static void log(const CHAR16* message)
 {
-    EFI_TIME newTime;
-    if (!rs->GetTime(&newTime, NULL))
-    {
-        bs->CopyMem(&time, &newTime, sizeof(time));
-    }
     timestampedMessage[0] = (time.Year %= 100) / 10 + L'0';
     timestampedMessage[1] = time.Year % 10 + L'0';
     timestampedMessage[2] = time.Month / 10 + L'0';
@@ -4800,6 +4812,32 @@ static void requestProcessor(void* ProcedureArgument)
                         else
                         {
                             responseSize = requestHeader->size;
+                        }
+                    }
+                }
+                break;
+
+                case BROADCAST_TERMINATOR:
+                {
+                    BroadcastTerminator* request = (BroadcastTerminator*)((char*)processor->cache + sizeof(RequestResponseHeader));
+                    if (request->terminator.numberOfNewComputors <= NUMBER_OF_COMPUTORS - QUORUM)
+                    {
+                        unsigned int i;
+                        for (i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                        {
+                            if (request->terminator.revenues[i] > ISSUANCE_RATE / NUMBER_OF_COMPUTORS)
+                            {
+                                break;
+                            }
+                        }
+                        if (i == NUMBER_OF_COMPUTORS)
+                        {
+                            unsigned char digest[32];
+                            KangarooTwelve((unsigned char*)request, sizeof(Terminator) - SIGNATURE_SIZE, digest, sizeof(digest));
+                            if (verify(adminPublicKey, digest, request->terminator.signature))
+                            {
+                                responseSize = requestHeader->size;
+                            }
                         }
                     }
                 }
@@ -5927,11 +5965,19 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
-    bs->SetMem(&time, sizeof(time), 0);
-    time.Year = 2022;
-    time.Month = 4;
-    time.Day = 13;
-    time.Hour = 12;
+    {
+        bs->SetMem(&time, sizeof(time), 0);
+        time.Year = 2022;
+        time.Month = 4;
+        time.Day = 13;
+        time.Hour = 12;
+
+        EFI_TIME newTime;
+        if (!rs->GetTime(&newTime, NULL))
+        {
+            bs->CopyMem(&time, &newTime, sizeof(time));
+        }
+    }
 
     st->ConOut->ClearScreen(st->ConOut);
     setText(message, L"Qubic ");
@@ -6051,10 +6097,21 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             _rdrand64_step(&salt);
 
                             unsigned int latestOwnTick = 0;
-                            unsigned long long systemDataSavingTick = 0, ledgerDataSavingTick = 0, loggingTick = 0, peerRefreshingTick = 0, resourceTestingSolutionPublicationTick = 0;
+                            unsigned long long timingTick = 0, systemDataSavingTick = 0, ledgerDataSavingTick = 0, loggingTick = 0, peerRefreshingTick = 0, resourceTestingSolutionPublicationTick = 0;
                             while (!state)
                             {
                                 const unsigned long long curTimeTick = __rdtsc();
+
+                                if (curTimeTick - timingTick >= (frequency >> 1))
+                                {
+                                    timingTick = curTimeTick;
+                                
+                                    EFI_TIME newTime;
+                                    if (!rs->GetTime(&newTime, NULL))
+                                    {
+                                        bs->CopyMem(&time, &newTime, sizeof(time));
+                                    }
+                                }
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
                                 if (numberOfOwnComputorIndices)
@@ -6737,6 +6794,17 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     {
                                                                         addPublicPeer(request->peers[j]);
                                                                     }
+
+                                                                    unsigned char* software = ((unsigned char*)peers[i].receiveBuffer) + (sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers));
+                                                                    char peerSoftware[512];
+                                                                    bs->SetMem(peerSoftware, sizeof(peerSoftware), 0);
+                                                                    for (unsigned int j = 0; j < software[0]; j++)
+                                                                    {
+                                                                        peerSoftware[j << 1] = software[1 + j];
+                                                                    }
+                                                                    setText(message, (const CHAR16*)peerSoftware);
+                                                                    appendText(message, L" connects.");
+                                                                    log(message);
 
                                                                     _InterlockedIncrement64(&numberOfProcessedRequests);
                                                                 }
