@@ -31,7 +31,7 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 
 #define VERSION_A 1
 #define VERSION_B 38
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -5650,7 +5650,7 @@ static BOOLEAN initialize()
                         bool matches = true;
                         for (unsigned int j = 0; j < sizeof(info.VolumeLabel) / sizeof(info.VolumeLabel[0]); j++)
                         {
-                            if (info.VolumeLabel[j] != VOLUME_LABEL[j])
+                            if (info.VolumeLabel[j] != VOLUME_LABEL[j] && info.VolumeLabel[j] != (VOLUME_LABEL[j] ^ 0x20))
                             {
                                 matches = false;
 
@@ -6327,6 +6327,20 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         if (ticks[bestTickIndex] >= system.tick + 2)
                                         {
                                             system.tick++;
+
+                                            for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                                            {
+                                                while (_InterlockedCompareExchange8(&tickLocks[i], 1, 0))
+                                                {
+                                                    _mm_pause();
+                                                }
+                                                if (latestTicks[i].tick == system.tick + 1)
+                                                {
+                                                    bs->CopyMem(&previousTicks[i], &actualTicks[i], sizeof(Tick));
+                                                    bs->CopyMem(&actualTicks[i], &latestTicks[i], sizeof(Tick));
+                                                }
+                                                _InterlockedCompareExchange8(&tickLocks[i], 0, 1);
+                                            }
 
                                             for (unsigned int i = 0; i < sizeof(tickTicks) / sizeof(tickTicks[0]) - 1; i++)
                                             {
