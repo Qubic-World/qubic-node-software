@@ -31,7 +31,7 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 
 #define VERSION_A 1
 #define VERSION_B 37
-#define VERSION_C 2
+#define VERSION_C 3
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -39,7 +39,7 @@ static const unsigned char knownPublicPeers[][4] = {
 };
 
 #define EPOCH 23
-#define TICK 2654275
+#define TICK 2654286
 
 /*#if NUMBER_OF_COMPUTING_PROCESSORS
 #include "qubics.h"
@@ -3726,7 +3726,8 @@ typedef struct
 {
     unsigned char publicKey[32];
     long long amount;
-    unsigned int latestIncreaseTick, latestDecreaseTick;
+    unsigned int latestChangeTick;
+    char padding[4];
 } Entity;
 
 typedef struct
@@ -3995,6 +3996,30 @@ typedef struct
     Terminator terminator;
 } BroadcastTerminator;
 
+#define REQUEST_INITIAL_LEDGER_DIGEST 14
+
+typedef struct
+{
+    unsigned int nonce;
+    unsigned short epoch;
+} RequestInitialLedgerDigest;
+
+#define BROADCAST_INITIAL_LEDGER_DIGEST 15
+
+typedef struct
+{
+    unsigned short computorIndex;
+    unsigned short epoch;
+    unsigned int nonce;
+    unsigned char digest[32];
+    unsigned char signature[SIGNATURE_SIZE];
+} InitialLedgerDigest;
+
+typedef struct
+{
+    InitialLedgerDigest initialLedgerDigest;
+} BroadcastInitialLedgerDigest;
+
 #define GET_COMPUTER_STATE 0
 
 typedef struct
@@ -4021,14 +4046,13 @@ static CHAR16 message[16384], timestampedMessage[16384];
 static EFI_FILE_PROTOCOL* root = NULL;
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
-static volatile char systemLock = 0;
 static struct System
 {
     short version;
     unsigned short epoch;
     unsigned int tick;
     unsigned int tickCounters[NUMBER_OF_COMPUTORS];
-} system, systemToSave;
+} system;
 static unsigned int tickNumberOfComputors = 0, nextTickNumberOfComputors = 0;
 static unsigned long long latestRevenuePublicationTick = 0;
 static unsigned short numberOfOwnComputorIndices = 0;
@@ -4039,13 +4063,14 @@ static unsigned int numberOfBufferedTransfers[sizeof(ownSeeds) / sizeof(ownSeeds
 static unsigned char bufferedTransferBytes[sizeof(ownSeeds) / sizeof(ownSeeds[0])][MAX_NUMBER_OF_TRANSFERS_PER_TICK][sizeof(Transfer) + MAX_TRANSFER_DESCRIPTION_SIZE + SIGNATURE_SIZE];
 static unsigned int chosenTransfersInvocationsAndQuestionSizes[NUMBER_OF_COMPUTORS];
 
+static Entity* initialEntities = NULL;
 static volatile char entitiesLock = 0;
 static Entity* entities = NULL;
 static unsigned int numberOfEntities = 0;
 #endif
 static char chosenTransfersInvocationsAndQuestionBytes[NUMBER_OF_COMPUTORS][sizeof(BroadcastChosenTransfersInvocationsAndQuestions) + (sizeof(Transfer) + MAX_TRANSFER_DESCRIPTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_TRANSFERS_PER_TICK + (sizeof(Invocation) + MAX_INVOCATION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_INVOCATIONS_PER_TICK + (sizeof(Question) + MAX_QUESTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_QUESTIONS_PER_TICK + SIGNATURE_SIZE];
 
-static volatile char ticksLock = 0;
+static volatile char tickLocks[NUMBER_OF_COMPUTORS];
 static Tick latestTicks[NUMBER_OF_COMPUTORS];
 #if NUMBER_OF_COMPUTING_PROCESSORS
 static Tick actualTicks[NUMBER_OF_COMPUTORS];
@@ -4242,7 +4267,7 @@ static void appendErrorStatus(CHAR16* dst, const EFI_STATUS status)
 
 static void log(const CHAR16* message)
 {
-    timestampedMessage[0] = (time.Year %= 100) / 10 + L'0';
+    timestampedMessage[0] = (time.Year % 100) / 10 + L'0';
     timestampedMessage[1] = time.Year % 10 + L'0';
     timestampedMessage[2] = time.Month / 10 + L'0';
     timestampedMessage[3] = time.Month % 10 + L'0';
@@ -4274,12 +4299,14 @@ static void log(const CHAR16* message)
     st->ConOut->OutputString(st->ConOut, timestampedMessage);
 }
 
-static void logStatus(const CHAR16* message, const EFI_STATUS status)
+static void logStatus(const CHAR16* message, const EFI_STATUS status, const unsigned int lineNumber)
 {
     setText(::message, message);
     appendText(::message, L" (");
     appendErrorStatus(::message, status);
-    appendText(::message, L")!");
+    appendText(::message, L") near line ");
+    appendNumber(::message, lineNumber, FALSE);
+    appendText(::message, L"!");
     log(::message);
 }
 
@@ -4299,7 +4326,7 @@ iteration:
     if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)entities[index].publicKey), *((__m256i*)publicKey))) == 0xFFFFFFFF)
     {
         entities[index].amount += amount;
-        entities[index].latestIncreaseTick = tick;
+        entities[index].latestChangeTick = tick;
     }
     else
     {
@@ -4307,7 +4334,7 @@ iteration:
         {
             *((__m256i*)entities[index].publicKey) = *((__m256i*)publicKey);
             entities[index].amount = amount;
-            entities[index].latestIncreaseTick = tick;
+            entities[index].latestChangeTick = tick;
         }
         else
         {
@@ -4335,7 +4362,7 @@ iteration:
         if (entities[index].amount >= amount)
         {
             entities[index].amount -= amount;
-            entities[index].latestDecreaseTick = tick;
+            entities[index].latestChangeTick = tick;
 
             _InterlockedCompareExchange8(&entitiesLock, 0, 1);
 
@@ -4401,12 +4428,12 @@ static void enableAVX2()
     _xsetbv(_XCR_XFEATURE_ENABLED_MASK, (_xgetbv(_XCR_XFEATURE_ENABLED_MASK) & 0xFFFB) | 7);
 }
 
-inline int dayIndex(unsigned short year, unsigned char month, unsigned char day) // 0 = Wednesday
+inline int dayIndex(unsigned int year, unsigned int month, unsigned int day) // 0 = Wednesday
 {
     return (year += (2000 - (month = (month + 9) % 12) / 10)) * 365 + year / 4 - year / 100 + year / 400 + (month * 306 + 5) / 10 + day - 1;
 }
 
-inline long long ms(unsigned short year, unsigned char month, unsigned char day, unsigned char hour, unsigned char minute, unsigned char second, unsigned short millisecond)
+inline long long ms(unsigned char year, unsigned char month, unsigned char day, unsigned char hour, unsigned char minute, unsigned char second, unsigned short millisecond)
 {
     return (((((long long)dayIndex(year, month, day)) * 24 + hour) * 60 + minute) * 60 + second) * 1000 + millisecond;
 }
@@ -4554,8 +4581,7 @@ static void requestProcessor(void* ProcedureArgument)
                             /*&& ms(request->tick.year, request->tick.month, request->tick.day, request->tick.hour, request->tick.minute, request->tick.second, request->tick.millisecond) >= ms(request->tick.prevYear, request->tick.prevMonth, request->tick.prevDay, request->tick.prevHour, request->tick.prevMinute, request->tick.prevSecond, request->tick.prevMillisecond)*/ // TODO
                             )
                         {
-                            if (broadcastedComputors.broadcastComputors.computors.epoch
-                                && request->tick.epoch == broadcastedComputors.broadcastComputors.computors.epoch)
+                            if (request->tick.epoch == broadcastedComputors.broadcastComputors.computors.epoch)
                             {
                                 unsigned char digest[32];
                                 request->tick.computorIndex ^= BROADCAST_TICK;
@@ -4563,34 +4589,27 @@ static void requestProcessor(void* ProcedureArgument)
                                 request->tick.computorIndex ^= BROADCAST_TICK;
                                 if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->tick.computorIndex], digest, request->tick.signature))
                                 {
-                                    if (!_InterlockedCompareExchange8(&ticksLock, 1, 0))
+                                    while (_InterlockedCompareExchange8(&tickLocks[request->tick.computorIndex], 1, 0))
                                     {
-                                        if (request->tick.tick > latestTicks[request->tick.computorIndex].tick)
-                                        {
-                                            bs->CopyMem(&latestTicks[request->tick.computorIndex], &request->tick, sizeof(Tick));
-                                        }
+                                        _mm_pause();
+                                    }
+
+                                    if (request->tick.tick > latestTicks[request->tick.computorIndex].tick)
+                                    {
+                                        bs->CopyMem(&latestTicks[request->tick.computorIndex], &request->tick, sizeof(Tick));
+                                    }
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
-                                        if (!_InterlockedCompareExchange8(&systemLock, 1, 0))
-                                        {
-                                            if (request->tick.tick == system.tick + 1)
-                                            {
-                                                bs->CopyMem(&actualTicks[request->tick.computorIndex], &request->tick, sizeof(Tick));
-                                            }
-
-                                            _InterlockedCompareExchange8(&systemLock, 0, 1);
-                                        }
+                                    if (request->tick.tick == system.tick + 1)
+                                    {
+                                        bs->CopyMem(&actualTicks[request->tick.computorIndex], &request->tick, sizeof(Tick));
+                                    }
 #endif
 
-                                        _InterlockedCompareExchange8(&ticksLock, 0, 1);
-                                    }
+                                    _InterlockedCompareExchange8(&tickLocks[request->tick.computorIndex], 0, 1);
 
                                     responseSize = requestHeader->size;
                                 }
-                            }
-                            else
-                            {
-                                responseSize = requestHeader->size;
                             }
                         }
                     }
@@ -4612,8 +4631,7 @@ static void requestProcessor(void* ProcedureArgument)
                         }
                         if (i == NUMBER_OF_COMPUTORS)
                         {
-                            if (broadcastedComputors.broadcastComputors.computors.epoch
-                                && request->revenues.epoch == broadcastedComputors.broadcastComputors.computors.epoch)
+                            if (request->revenues.epoch == broadcastedComputors.broadcastComputors.computors.epoch)
                             {
                                 unsigned char digest[32];
                                 request->revenues.computorIndex ^= BROADCAST_REVENUES;
@@ -4623,10 +4641,6 @@ static void requestProcessor(void* ProcedureArgument)
                                 {
                                     responseSize = requestHeader->size;
                                 }
-                            }
-                            else
-                            {
-                                responseSize = requestHeader->size;
                             }
                         }
                     }
@@ -4723,8 +4737,7 @@ static void requestProcessor(void* ProcedureArgument)
                         && request->chosenTransfersInvocationsAndQuestions.numberOfQuestions <= MAX_NUMBER_OF_QUESTIONS_PER_TICK
                         && !request->chosenTransfersInvocationsAndQuestions.padding[0] && !request->chosenTransfersInvocationsAndQuestions.padding[1] && !request->chosenTransfersInvocationsAndQuestions.padding[2] && !request->chosenTransfersInvocationsAndQuestions.padding[3])
                     {
-                        if (broadcastedComputors.broadcastComputors.computors.epoch
-                            && request->chosenTransfersInvocationsAndQuestions.epoch == broadcastedComputors.broadcastComputors.computors.epoch)
+                        if (request->chosenTransfersInvocationsAndQuestions.epoch == broadcastedComputors.broadcastComputors.computors.epoch)
                         {
                             unsigned char digest[32];
                             request->chosenTransfersInvocationsAndQuestions.computorIndex ^= BROADCAST_CHOSEN_TRANSFERS_INVOCATIONS_AND_QUESTIONS;
@@ -4766,10 +4779,6 @@ static void requestProcessor(void* ProcedureArgument)
                                 }
                             }
                         }
-                        else
-                        {
-                            responseSize = requestHeader->size;
-                        }
                     }
                 }
                 break;
@@ -4797,8 +4806,7 @@ static void requestProcessor(void* ProcedureArgument)
                     if (request->answer.computorIndex < NUMBER_OF_COMPUTORS
                         && request->answer.answerSize <= MAX_ANSWER_SIZE && requestHeader->size == sizeof(RequestResponseHeader) + sizeof(BroadcastAnswer) + request->answer.answerSize + SIGNATURE_SIZE)
                     {
-                        if (broadcastedComputors.broadcastComputors.computors.epoch
-                            && request->answer.epoch == broadcastedComputors.broadcastComputors.computors.epoch)
+                        if (request->answer.epoch == broadcastedComputors.broadcastComputors.computors.epoch)
                         {
                             unsigned char digest[32];
                             request->answer.computorIndex ^= BROADCAST_ANSWER;
@@ -4808,10 +4816,6 @@ static void requestProcessor(void* ProcedureArgument)
                             {
                                 responseSize = requestHeader->size;
                             }
-                        }
-                        else
-                        {
-                            responseSize = requestHeader->size;
                         }
                     }
                 }
@@ -4842,6 +4846,32 @@ static void requestProcessor(void* ProcedureArgument)
                     }
                 }
                 break;
+
+                case REQUEST_INITIAL_LEDGER_DIGEST:
+                {
+                    responseSize = requestHeader->size;
+                }
+                break;
+
+                case BROADCAST_INITIAL_LEDGER_DIGEST:
+                {
+                    BroadcastInitialLedgerDigest* request = (BroadcastInitialLedgerDigest*)((char*)processor->cache + sizeof(RequestResponseHeader));
+                    if (request->initialLedgerDigest.computorIndex < NUMBER_OF_COMPUTORS)
+                    {
+                        if (request->initialLedgerDigest.epoch == broadcastedComputors.broadcastComputors.computors.epoch)
+                        {
+                            unsigned char digest[32];
+                            request->initialLedgerDigest.computorIndex ^= BROADCAST_INITIAL_LEDGER_DIGEST;
+                            KangarooTwelve((unsigned char*)&request->initialLedgerDigest, sizeof(InitialLedgerDigest) - SIGNATURE_SIZE, digest, sizeof(digest));
+                            request->initialLedgerDigest.computorIndex ^= BROADCAST_INITIAL_LEDGER_DIGEST;
+                            if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->initialLedgerDigest.computorIndex], digest, request->initialLedgerDigest.signature))
+                            {
+                                responseSize = requestHeader->size;
+                            }
+                        }
+                    }
+                }
+                break;
                 }
             }
             else
@@ -4856,58 +4886,49 @@ static void requestProcessor(void* ProcedureArgument)
                     ComputerState* computerState = (ComputerState*)((char*)processor->cache + sizeof(RequestResponseHeader));
                     bs->CopyMem(&computerState->computors, &broadcastedComputors.broadcastComputors.computors, sizeof(Computors));
 
-                    if (!_InterlockedCompareExchange8(&ticksLock, 1, 0))
+                    unsigned short numberOfTicks = 0;
+                    unsigned int ticks[NUMBER_OF_COMPUTORS];
+                    unsigned short tickQuantities[NUMBER_OF_COMPUTORS];
+
+                    for (unsigned short i = 0; i < NUMBER_OF_COMPUTORS; i++)
                     {
-                        unsigned short numberOfTicks = 0;
-                        unsigned int ticks[NUMBER_OF_COMPUTORS];
-                        unsigned short tickQuantities[NUMBER_OF_COMPUTORS];
-
-                        for (unsigned short i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                        unsigned short j;
+                        for (j = 0; j < numberOfTicks; j++)
                         {
-                            unsigned short j;
-                            for (j = 0; j < numberOfTicks; j++)
+                            if (latestTicks[i].tick == ticks[j])
                             {
-                                if (latestTicks[i].tick == ticks[j])
-                                {
-                                    tickQuantities[j]++;
+                                tickQuantities[j]++;
 
-                                    break;
-                                }
-                            }
-                            if (j == numberOfTicks)
-                            {
-                                ticks[numberOfTicks] = latestTicks[i].tick;
-                                tickQuantities[numberOfTicks++] = 1;
+                                break;
                             }
                         }
-
-                        _InterlockedCompareExchange8(&ticksLock, 0, 1);
-
-                        for (unsigned int i = numberOfTicks; i--; )
+                        if (j == numberOfTicks)
                         {
-                            for (unsigned int j = 0; j < i; j++)
-                            {
-                                if (tickQuantities[j] < tickQuantities[j + 1])
-                                {
-                                    const unsigned short tickQuantity = tickQuantities[j];
-                                    tickQuantities[j] = tickQuantities[j + 1];
-                                    tickQuantities[j + 1] = tickQuantity;
-                                }
-                            }
+                            ticks[numberOfTicks] = latestTicks[i].tick;
+                            tickQuantities[numberOfTicks++] = 1;
                         }
-
-                        unsigned int tickIndex = 0;
-                        unsigned int numberOfComputors = 0;
-                        while ((numberOfComputors += tickQuantities[tickIndex]) < QUORUM)
-                        {
-                            tickIndex++;
-                        }
-                        computerState->tick = ticks[tickIndex];
                     }
-                    else
+
+                    for (unsigned int i = numberOfTicks; i--; )
                     {
-                        computerState->tick = 0;
+                        for (unsigned int j = 0; j < i; j++)
+                        {
+                            if (tickQuantities[j] < tickQuantities[j + 1])
+                            {
+                                const unsigned short tickQuantity = tickQuantities[j];
+                                tickQuantities[j] = tickQuantities[j + 1];
+                                tickQuantities[j + 1] = tickQuantity;
+                            }
+                        }
                     }
+
+                    unsigned int tickIndex = 0;
+                    unsigned int numberOfComputors = 0;
+                    while ((numberOfComputors += tickQuantities[tickIndex]) < QUORUM)
+                    {
+                        tickIndex++;
+                    }
+                    computerState->tick = ticks[tickIndex];
 
                     bool noVerifiedPublicPeers = true;
                     for (unsigned int i = 0; i < numberOfPublicPeers; i++)
@@ -5018,8 +5039,7 @@ static void requestProcessor(void* ProcedureArgument)
                     if (request->answer.computorIndex < NUMBER_OF_COMPUTORS
                         && request->answer.answerSize <= MAX_ANSWER_SIZE && requestHeader->size == sizeof(RequestResponseHeader) + sizeof(BroadcastAnswer) + request->answer.answerSize + SIGNATURE_SIZE)
                     {
-                        if (broadcastedComputors.broadcastComputors.computors.epoch
-                            && request->answer.epoch == broadcastedComputors.broadcastComputors.computors.epoch)
+                        if (request->answer.epoch == broadcastedComputors.broadcastComputors.computors.epoch)
                         {
                             unsigned char digest[32];
                             request->answer.computorIndex ^= BROADCAST_ANSWER;
@@ -5029,10 +5049,6 @@ static void requestProcessor(void* ProcedureArgument)
                             {
                                 pushToSome(responseHeader);
                             }
-                        }
-                        else
-                        {
-                            pushToSome(responseHeader);
                         }
                     }
                 }
@@ -5066,7 +5082,7 @@ static EFI_HANDLE getTcp4Protocol(const unsigned char* remoteAddress, const unsi
     EFI_HANDLE childHandle = NULL;
     if (status = tcp4ServiceBindingProtocol->CreateChild(tcp4ServiceBindingProtocol, &childHandle))
     {
-        logStatus(L"EFI_TCP4_SERVICE_BINDING_PROTOCOL.CreateChild() fails", status);
+        logStatus(L"EFI_TCP4_SERVICE_BINDING_PROTOCOL.CreateChild() fails", status, __LINE__);
 
         return NULL;
     }
@@ -5074,7 +5090,7 @@ static EFI_HANDLE getTcp4Protocol(const unsigned char* remoteAddress, const unsi
     {
         if (status = bs->OpenProtocol(childHandle, &tcp4ProtocolGuid, (void**)tcp4Protocol, ih, NULL, EFI_OPEN_PROTOCOL_GET_PROTOCOL))
         {
-            logStatus(L"EFI_BOOT_SERVICES.OpenProtocol() fails", status);
+            logStatus(L"EFI_BOOT_SERVICES.OpenProtocol() fails", status, __LINE__);
 
             return NULL;
         }
@@ -5113,7 +5129,7 @@ static EFI_HANDLE getTcp4Protocol(const unsigned char* remoteAddress, const unsi
             if ((status = (*tcp4Protocol)->Configure(*tcp4Protocol, &configData))
                 && status != EFI_NO_MAPPING)
             {
-                logStatus(L"EFI_TCP4_PROTOCOL.Configure() fails", status);
+                logStatus(L"EFI_TCP4_PROTOCOL.Configure() fails", status, __LINE__);
 
                 return NULL;
             }
@@ -5131,7 +5147,7 @@ static EFI_HANDLE getTcp4Protocol(const unsigned char* remoteAddress, const unsi
                     {
                         if (status = (*tcp4Protocol)->Configure(*tcp4Protocol, &configData))
                         {
-                            logStatus(L"EFI_TCP4_PROTOCOL.Configure() fails", status);
+                            logStatus(L"EFI_TCP4_PROTOCOL.Configure() fails", status, __LINE__);
 
                             return NULL;
                         }
@@ -5142,7 +5158,7 @@ static EFI_HANDLE getTcp4Protocol(const unsigned char* remoteAddress, const unsi
                 {
                     if (status = (*tcp4Protocol)->Routes(*tcp4Protocol, FALSE, (EFI_IPv4_ADDRESS*)&defaultRouteAddress, (EFI_IPv4_ADDRESS*)&defaultRouteMask, (EFI_IPv4_ADDRESS*)&defaultRouteGateway))
                     {
-                        logStatus(L"EFI_TCP4_PROTOCOL.Routes() fails", status);
+                        logStatus(L"EFI_TCP4_PROTOCOL.Routes() fails", status, __LINE__);
 
                         return NULL;
                     }
@@ -5150,7 +5166,7 @@ static EFI_HANDLE getTcp4Protocol(const unsigned char* remoteAddress, const unsi
 
                 if (status = (*tcp4Protocol)->GetModeData(*tcp4Protocol, NULL, &configData, &modeData, NULL, NULL))
                 {
-                    logStatus(L"EFI_TCP4_PROTOCOL.GetModeData() fails", status);
+                    logStatus(L"EFI_TCP4_PROTOCOL.GetModeData() fails", status, __LINE__);
 
                     return NULL;
                 }
@@ -5204,7 +5220,7 @@ static void closePeer(const unsigned int peerIndex)
             EFI_STATUS status;
             if (status = peers[peerIndex].tcp4Protocol->Configure(peers[peerIndex].tcp4Protocol, NULL))
             {
-                logStatus(L"EFI_TCP4_PROTOCOL.Configure() fails", status);
+                logStatus(L"EFI_TCP4_PROTOCOL.Configure() fails", status, __LINE__);
             }
 
             peers[peerIndex].isClosing = TRUE;
@@ -5236,7 +5252,7 @@ static void closeClient(const unsigned int clientIndex)
             EFI_STATUS status;
             if (status = clients[clientIndex].tcp4Protocol->Configure(clients[clientIndex].tcp4Protocol, NULL))
             {
-                logStatus(L"EFI_TCP4_PROTOCOL.Configure() fails", status);
+                logStatus(L"EFI_TCP4_PROTOCOL.Configure() fails", status, __LINE__);
             }
 
             clients[clientIndex].isClosing = TRUE;
@@ -5369,27 +5385,20 @@ static void emptyCallback(EFI_EVENT Event, void* Context)
 #if NUMBER_OF_COMPUTING_PROCESSORS
 static void saveSystem()
 {
-    while (_InterlockedCompareExchange8(&systemLock, 1, 0))
-    {
-        _mm_pause();
-    }
-    bs->CopyMem(&systemToSave, &system, sizeof(System));
-    _InterlockedCompareExchange8(&systemLock, 0, 1);
-
     EFI_FILE_PROTOCOL* dataFile;
     EFI_STATUS status;
     if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SYSTEM_DATA_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0))
     {
-        logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status);
+        logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status, __LINE__);
     }
     else
     {
-        unsigned long long size = sizeof(systemToSave);
-        status = dataFile->Write(dataFile, &size, &systemToSave);
+        unsigned long long size = sizeof(system);
+        status = dataFile->Write(dataFile, &size, &system);
         dataFile->Close(dataFile);
         if (status)
         {
-            logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status);
+            logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status, __LINE__);
         }
         else
         {
@@ -5408,7 +5417,7 @@ static void saveLedger()
     EFI_STATUS status;
     if (status = root->Open(root, (void**)&dataFile, (CHAR16*)LEDGER_DATA_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0))
     {
-        logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status);
+        logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status, __LINE__);
     }
     else
     {
@@ -5422,7 +5431,7 @@ static void saveLedger()
         dataFile->Close(dataFile);
         if (status)
         {
-            logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status);
+            logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status, __LINE__);
         }
         else
         {
@@ -5445,7 +5454,7 @@ static void saveSolution()
     EFI_STATUS status;
     if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SOLUTION_DATA_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0))
     {
-        logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status);
+        logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status, __LINE__);
     }
     else
     {
@@ -5454,7 +5463,7 @@ static void saveSolution()
         dataFile->Close(dataFile);
         if (status)
         {
-            logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status);
+            logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status, __LINE__);
         }
     }
 }
@@ -5492,6 +5501,7 @@ static BOOLEAN initialize()
     appendText(message, L" Hz.");
     log(message);
 
+    bs->SetMem((void*)tickLocks, sizeof(tickLocks), 0);
     bs->SetMem(&latestTicks, sizeof(latestTicks), 0);
 #if NUMBER_OF_COMPUTING_PROCESSORS
     bs->SetMem(&actualTicks, sizeof(actualTicks), 0);
@@ -5506,11 +5516,19 @@ static BOOLEAN initialize()
 #endif
     bs->SetMem(publicPeers, sizeof(publicPeers), 0);
 
-    bs->SetMem(&broadcastedComputors.broadcastComputors.computors, sizeof(Computors), 0);
-
     broadcastedComputors.header.size = sizeof(broadcastedComputors.header) + sizeof(broadcastedComputors.broadcastComputors);
     broadcastedComputors.header.protocol = VERSION_B;
     broadcastedComputors.header.type = BROADCAST_COMPUTORS;
+    broadcastedComputors.broadcastComputors.computors.epoch = 0;
+    for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+    {
+        _rdrand64_step((unsigned long long*)&broadcastedComputors.broadcastComputors.computors.publicKeys[i][0]);
+        _rdrand64_step((unsigned long long*)&broadcastedComputors.broadcastComputors.computors.publicKeys[i][8]);
+        _rdrand64_step((unsigned long long*)&broadcastedComputors.broadcastComputors.computors.publicKeys[i][16]);
+        _rdrand64_step((unsigned long long*)&broadcastedComputors.broadcastComputors.computors.publicKeys[i][24]);
+    }
+    bs->SetMem(&broadcastedComputors.broadcastComputors.computors.signature, sizeof(broadcastedComputors.broadcastComputors.computors.signature), 0);
+
 #if NUMBER_OF_MINING_PROCESSORS
     broadcastedSolution.header.size = sizeof(broadcastedSolution);
     broadcastedSolution.header.protocol = VERSION_B;
@@ -5537,7 +5555,7 @@ static BOOLEAN initialize()
     EFI_HANDLE* handles;
     if (status = bs->LocateHandleBuffer(ByProtocol, &simpleFileSystemProtocolGuid, NULL, &numberOfHandles, &handles))
     {
-        logStatus(L"EFI_BOOT_SERVICES.LocateHandleBuffer() fails", status);
+        logStatus(L"EFI_BOOT_SERVICES.LocateHandleBuffer() fails", status, __LINE__);
 
         return FALSE;
     }
@@ -5547,7 +5565,7 @@ static BOOLEAN initialize()
         {
             if (status = bs->OpenProtocol(handles[i], &simpleFileSystemProtocolGuid, (void**)&simpleFileSystemProtocol, ih, NULL, EFI_OPEN_PROTOCOL_GET_PROTOCOL))
             {
-                logStatus(L"EFI_BOOT_SERVICES.OpenProtocol() fails", status);
+                logStatus(L"EFI_BOOT_SERVICES.OpenProtocol() fails", status, __LINE__);
 
                 bs->FreePool(handles);
 
@@ -5557,7 +5575,7 @@ static BOOLEAN initialize()
             {
                 if (status = simpleFileSystemProtocol->OpenVolume(simpleFileSystemProtocol, (void**)&root))
                 {
-                    logStatus(L"EFI_SIMPLE_FILE_SYSTEM_PROTOCOL.OpenVolume() fails", status);
+                    logStatus(L"EFI_SIMPLE_FILE_SYSTEM_PROTOCOL.OpenVolume() fails", status, __LINE__);
 
                     bs->CloseProtocol(handles[i], &simpleFileSystemProtocolGuid, ih, NULL);
                     bs->FreePool(handles);
@@ -5571,7 +5589,7 @@ static BOOLEAN initialize()
                     unsigned long long size = sizeof(info);
                     if (status = root->GetInfo(root, &fileSystemInfoId, &size, &info))
                     {
-                        logStatus(L"EFI_FILE_PROTOCOL.GetInfo() fails", status);
+                        logStatus(L"EFI_FILE_PROTOCOL.GetInfo() fails", status, __LINE__);
 
                         bs->CloseProtocol(handles[i], &simpleFileSystemProtocolGuid, ih, NULL);
                         bs->FreePool(handles);
@@ -5629,7 +5647,7 @@ static BOOLEAN initialize()
     }
     if (status = simpleFileSystemProtocol->OpenVolume(simpleFileSystemProtocol, (void**)&root))
     {
-        logStatus(L"EFI_SIMPLE_FILE_SYSTEM_PROTOCOL.OpenVolume() fails", status);
+        logStatus(L"EFI_SIMPLE_FILE_SYSTEM_PROTOCOL.OpenVolume() fails", status, __LINE__);
 
         return FALSE;
     }
@@ -5641,16 +5659,17 @@ static BOOLEAN initialize()
         bs->SetMem(numberOfBufferedTransfers, sizeof(numberOfBufferedTransfers), 0);
         bs->SetMem(chosenTransfersInvocationsAndQuestionSizes, sizeof(chosenTransfersInvocationsAndQuestionSizes), 0);
 
-        if (status = bs->AllocatePool(EfiRuntimeServicesData, MAX_NUMBER_OF_ENTITIES * sizeof(Entity), (void**)&entities))
+        if ((status = bs->AllocatePool(EfiRuntimeServicesData, MAX_NUMBER_OF_ENTITIES * sizeof(Entity), (void**)&initialEntities))
+            || (status = bs->AllocatePool(EfiRuntimeServicesData, MAX_NUMBER_OF_ENTITIES * sizeof(Entity), (void**)&entities)))
         {
-            logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status);
+            logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status, __LINE__);
 
             return FALSE;
         }
 
         if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SYSTEM_DATA_FILE_NAME, EFI_FILE_MODE_READ, 0))
         {
-            logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status);
+            logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status, __LINE__);
 
             return FALSE;
         }
@@ -5664,7 +5683,7 @@ static BOOLEAN initialize()
             dataFile->Close(dataFile);
             if (status)
             {
-                logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status);
+                logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status, __LINE__);
 
                 return FALSE;
             }
@@ -5679,46 +5698,30 @@ static BOOLEAN initialize()
                 {
                     system.tick = TICK;
                 }
-
-                if (broadcastedComputors.broadcastComputors.computors.epoch == system.epoch)
-                {
-                    numberOfOwnComputorIndices = 0;
-                    for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
-                    {
-                        for (unsigned int j = 0; j < sizeof(ownSeeds) / sizeof(ownSeeds[0]); j++)
-                        {
-                            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)broadcastedComputors.broadcastComputors.computors.publicKeys[i]), *((__m256i*)ownPublicKeys[j]))) == 0xFFFFFFFF)
-                            {
-                                ownComputorIndices[numberOfOwnComputorIndices] = i;
-                                ownComputorIndicesMapping[numberOfOwnComputorIndices++] = j;
-
-                                break;
-                            }
-                        }
-                    }
-                }
             }
         }
 
         if (status = root->Open(root, (void**)&dataFile, (CHAR16*)LEDGER_DATA_FILE_NAME, EFI_FILE_MODE_READ, 0))
         {
-            logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status);
+            logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status, __LINE__);
 
             return FALSE;
         }
         else
         {
-            bs->SetMem(entities, MAX_NUMBER_OF_ENTITIES * sizeof(Entity), 0);
+            bs->SetMem(initialEntities, MAX_NUMBER_OF_ENTITIES * sizeof(Entity), 0);
 
             unsigned long long size = MAX_NUMBER_OF_ENTITIES * sizeof(Entity);
-            status = dataFile->Read(dataFile, &size, entities);
+            status = dataFile->Read(dataFile, &size, initialEntities);
             dataFile->Close(dataFile);
             if (status)
             {
-                logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status);
+                logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status, __LINE__);
 
                 return FALSE;
             }
+
+            bs->CopyMem(entities, initialEntities, MAX_NUMBER_OF_ENTITIES * sizeof(Entity));
 
             unsigned char digest[32];
             CHAR16 hash[64 + 1];
@@ -5756,7 +5759,7 @@ static BOOLEAN initialize()
 
         if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SOLUTION_DATA_FILE_NAME, EFI_FILE_MODE_READ, 0))
         {
-            logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status);
+            logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status, __LINE__);
 
             return FALSE;
         }
@@ -5767,7 +5770,7 @@ static BOOLEAN initialize()
             dataFile->Close(dataFile);
             if (status)
             {
-                logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status);
+                logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status, __LINE__);
 
                 return FALSE;
             }
@@ -5796,7 +5799,7 @@ static BOOLEAN initialize()
     if ((status = bs->AllocatePool(EfiRuntimeServicesData, 536870912, (void**)&dejavu0))
         || (status = bs->AllocatePool(EfiRuntimeServicesData, 536870912, (void**)&dejavu1)))
     {
-        logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status);
+        logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status, __LINE__);
 
         return FALSE;
     }
@@ -5811,7 +5814,7 @@ static BOOLEAN initialize()
             || (status = bs->AllocatePool(EfiRuntimeServicesData, BUFFER_SIZE, &peers[i].transmitData.FragmentTable[0].FragmentBuffer))
             || (status = bs->AllocatePool(EfiRuntimeServicesData, BUFFER_SIZE, (void**)&peers[i].dataToTransmit)))
         {
-            logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status);
+            logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status, __LINE__);
 
             return FALSE;
         }
@@ -5819,7 +5822,7 @@ static BOOLEAN initialize()
             || (status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, emptyCallback, NULL, &peers[i].receiveToken.CompletionToken.Event))
             || (status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, emptyCallback, NULL, &peers[i].transmitToken.CompletionToken.Event)))
         {
-            logStatus(L"EFI_BOOT_SERVICES.CreateEvent() fails", status);
+            logStatus(L"EFI_BOOT_SERVICES.CreateEvent() fails", status, __LINE__);
 
             return FALSE;
         }
@@ -5839,7 +5842,7 @@ static BOOLEAN initialize()
             || (status = bs->AllocatePool(EfiRuntimeServicesData, BUFFER_SIZE, &clients[i].transmitData.FragmentTable[0].FragmentBuffer))
             || (status = bs->AllocatePool(EfiRuntimeServicesData, BUFFER_SIZE, (void**)&clients[i].dataToTransmit)))
         {
-            logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status);
+            logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status, __LINE__);
 
             return FALSE;
         }
@@ -5847,7 +5850,7 @@ static BOOLEAN initialize()
             || (status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, emptyCallback, NULL, &clients[i].receiveToken.CompletionToken.Event))
             || (status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, emptyCallback, NULL, &clients[i].transmitToken.CompletionToken.Event)))
         {
-            logStatus(L"EFI_BOOT_SERVICES.CreateEvent() fails", status);
+            logStatus(L"EFI_BOOT_SERVICES.CreateEvent() fails", status, __LINE__);
 
             return FALSE;
         }
@@ -5885,6 +5888,10 @@ static void deinitialize()
     if (entities)
     {
         bs->FreePool(entities);
+    }
+    if (initialEntities)
+    {
+        bs->FreePool(initialEntities);
     }
 #endif
 
@@ -6012,7 +6019,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                     || (status = bs->AllocatePool(EfiRuntimeServicesData, BUFFER_SIZE, &processors[numberOfProcessors].responseBuffer))
                     || (status = bs->AllocatePool(EfiRuntimeServicesData, BUFFER_SIZE, &processors[numberOfProcessors].cache)))
                 {
-                    logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status);
+                    logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status, __LINE__);
 
                     numberOfProcessors = 0;
 
@@ -6043,7 +6050,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                     EFI_STATUS status;
                     if (status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, emptyCallback, NULL, &processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].event))
                     {
-                        logStatus(L"EFI_BOOT_SERVICES.CreateEvent() fails", status);
+                        logStatus(L"EFI_BOOT_SERVICES.CreateEvent() fails", status, __LINE__);
 
                         numberOfProcessors = 0;
 
@@ -6064,7 +6071,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                     EFI_STATUS status;
                     if (status = bs->LocateProtocol(&tcp4ServiceBindingProtocolGuid, NULL, (void**)&tcp4ServiceBindingProtocol))
                     {
-                        logStatus(L"EFI_TCP4_SERVICE_BINDING_PROTOCOL is not located", status);
+                        logStatus(L"EFI_TCP4_SERVICE_BINDING_PROTOCOL is not located", status, __LINE__);
                     }
                     else
                     {
@@ -6084,7 +6091,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 EFI_STATUS status;
                                 if (status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, minerShutdownCallback, NULL, &minerEvents[i]))
                                 {
-                                    logStatus(L"EFI_BOOT_SERVICES.CreateEvent() fails", status);
+                                    logStatus(L"EFI_BOOT_SERVICES.CreateEvent() fails", status, __LINE__);
                                 }
                                 else
                                 {
@@ -6147,14 +6154,13 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             broadcastedTick.broadcastTick.tick.computorIndex ^= BROADCAST_TICK;
                                             sign(ownSubseeds[ownComputorIndicesMapping[i]], ownPublicKeys[ownComputorIndicesMapping[i]], digest, broadcastedTick.broadcastTick.tick.signature);
 
-                                            while (_InterlockedCompareExchange8(&ticksLock, 1, 0))
+                                            while (_InterlockedCompareExchange8(&tickLocks[ownComputorIndices[i]], 1, 0))
                                             {
                                                 _mm_pause();
                                             }
-
                                             bs->CopyMem(&latestTicks[ownComputorIndices[i]], &broadcastedTick.broadcastTick.tick, sizeof(Tick));
                                             bs->CopyMem(&actualTicks[ownComputorIndices[i]], &broadcastedTick.broadcastTick.tick, sizeof(Tick));
-                                            _InterlockedCompareExchange8(&ticksLock, 0, 1);
+                                            _InterlockedCompareExchange8(&tickLocks[ownComputorIndices[i]], 0, 1);
 
                                             for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
                                             {
@@ -6167,12 +6173,13 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     bs->SetMem(counters, sizeof(counters), 0);
                                     tickNumberOfComputors = 0;
                                     nextTickNumberOfComputors = 0;
-                                    while (_InterlockedCompareExchange8(&ticksLock, 1, 0))
-                                    {
-                                        _mm_pause();
-                                    }
                                     for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
                                     {
+                                        while (_InterlockedCompareExchange8(&tickLocks[j], 1, 0))
+                                        {
+                                            _mm_pause();
+                                        }
+
                                         if (actualTicks[j].epoch)
                                         {
                                             if (actualTicks[j].epoch == system.epoch
@@ -6199,6 +6206,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         {
                                             nextTickNumberOfComputors++;
                                         }
+
+                                        _InterlockedCompareExchange8(&tickLocks[j], 0, 1);
                                     }
                                     if (tickNumberOfComputors >= QUORUM)
                                     {
@@ -6214,10 +6223,15 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                         for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
                                         {
+                                            while (_InterlockedCompareExchange8(&tickLocks[i], 1, 0))
+                                            {
+                                                _mm_pause();
+                                            }
                                             if (latestTicks[i].tick == system.tick + 1)
                                             {
                                                 bs->CopyMem(&actualTicks[i], &latestTicks[i], sizeof(Tick));
                                             }
+                                            _InterlockedCompareExchange8(&tickLocks[i], 0, 1);
                                         }
 
                                         for (unsigned int i = 0; i < sizeof(tickTicks) / sizeof(tickTicks[0]) - 1; i++)
@@ -6261,8 +6275,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             }
                                         }
 
-                                        _InterlockedCompareExchange8(&ticksLock, 0, 1);
-
                                         unsigned short bestTickIndex = 0;
 
                                         for (unsigned short i = 1; i < numberOfTicks; i++)
@@ -6286,7 +6298,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             bs->SetMem(numberOfBufferedTransfers, sizeof(numberOfBufferedTransfers), 0);
                                         }
                                     }
-                                    _InterlockedCompareExchange8(&ticksLock, 0, 1);
 
                                     if (curTimeTick - latestRevenuePublicationTick >= REVENUE_PUBLICATION_PERIOD * frequency)
                                     {
@@ -6354,7 +6365,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
                                     if (system.epoch
-                                        && time.Hour >= 11 && dayIndex(time.Year - 2000, time.Month, time.Day) >= 8085 + system.epoch * 7)
+                                        && time.Hour >= 11 && dayIndex(time.Year - 2000, time.Month, time.Day) >= 738570 + system.epoch * 7) // TODO
                                     {
                                         state = 1;
                                     }
@@ -6616,13 +6627,20 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     }
                                                     *software++ = (VERSION_C % 10) + '0';
 
-                                                    bs->CopyMem(software, &requestedComputors, requestedComputors.header.size);
-                                                    bs->CopyMem(software + requestedComputors.header.size, &requestedTicks, requestedTicks.header.size);
+                                                    peers[i].dataToTransmitSize = requestHeader->size;
 
-                                                    peers[i].dataToTransmitSize = requestHeader->size + requestedComputors.header.size + requestedTicks.header.size;
+                                                    if (!broadcastedComputors.broadcastComputors.computors.epoch || !(dayIndex(time.Year - 2000, time.Month, time.Day) % 7))
+                                                    {
+                                                        bs->CopyMem(software, &requestedComputors, requestedComputors.header.size);
+                                                        software += requestedComputors.header.size;
+                                                        peers[i].dataToTransmitSize += requestedComputors.header.size;
+                                                        _InterlockedIncrement64(&numberOfDisseminatedRequests);
+                                                    }
 
+                                                    bs->CopyMem(software, &requestedTicks, requestedTicks.header.size);
+                                                    peers[i].dataToTransmitSize += requestedTicks.header.size;
                                                     _InterlockedIncrement64(&numberOfDisseminatedRequests);
-                                                    _InterlockedIncrement64(&numberOfDisseminatedRequests);
+
                                                     _InterlockedIncrement64(&numberOfDisseminatedRequests);
                                                 }
                                             }
@@ -6646,7 +6664,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     EFI_STATUS status;
                                                     if (status = bs->OpenProtocol(peers[i].connectAcceptToken.NewChildHandle, &tcp4ProtocolGuid, (void**)&peers[i].tcp4Protocol, ih, NULL, EFI_OPEN_PROTOCOL_GET_PROTOCOL))
                                                     {
-                                                        logStatus(L"EFI_BOOT_SERVICES.OpenProtocol() fails", status);
+                                                        logStatus(L"EFI_BOOT_SERVICES.OpenProtocol() fails", status, __LINE__);
 
                                                         peers[i].tcp4Protocol = NULL;
                                                     }
@@ -6778,13 +6796,20 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                             }
                                                                             *software++ = (VERSION_C % 10) + '0';
 
-                                                                            bs->CopyMem(software, &requestedComputors, requestedComputors.header.size);
-                                                                            bs->CopyMem(software + requestedComputors.header.size, &requestedTicks, requestedTicks.header.size);
+                                                                            peers[i].dataToTransmitSize += responseHeader->size;
 
-                                                                            peers[i].dataToTransmitSize += (responseHeader->size + requestedComputors.header.size + requestedTicks.header.size);
+                                                                            if (!broadcastedComputors.broadcastComputors.computors.epoch || !(dayIndex(time.Year - 2000, time.Month, time.Day) % 7))
+                                                                            {
+                                                                                bs->CopyMem(software, &requestedComputors, requestedComputors.header.size);
+                                                                                software += requestedComputors.header.size;
+                                                                                peers[i].dataToTransmitSize += requestedComputors.header.size;
+                                                                                _InterlockedIncrement64(&numberOfDisseminatedRequests);
+                                                                            }
 
+                                                                            bs->CopyMem(software, &requestedTicks, requestedTicks.header.size);
+                                                                            peers[i].dataToTransmitSize += requestedTicks.header.size;
                                                                             _InterlockedIncrement64(&numberOfDisseminatedRequests);
-                                                                            _InterlockedIncrement64(&numberOfDisseminatedRequests);
+
                                                                             _InterlockedIncrement64(&numberOfDisseminatedRequests);
                                                                         }
                                                                     }
@@ -6841,7 +6866,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                                 case REQUEST_COMPUTORS:
                                                                 {
-                                                                    push(&peers[i], &broadcastedComputors.header, true);
+                                                                    if (broadcastedComputors.broadcastComputors.computors.epoch)
+                                                                    {
+                                                                        push(&peers[i], &broadcastedComputors.header, true);
+                                                                    }
 
                                                                     _InterlockedIncrement64(&numberOfProcessedRequests);
                                                                 }
@@ -6949,7 +6977,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     EFI_STATUS status;
                                                     if (status = peers[i].tcp4Protocol->Receive(peers[i].tcp4Protocol, &peers[i].receiveToken))
                                                     {
-                                                        logStatus(L"EFI_TCP4_PROTOCOL.Receive() fails", status);
+                                                        logStatus(L"EFI_TCP4_PROTOCOL.Receive() fails", status, __LINE__);
 
                                                         closePeer(i);
                                                     }
@@ -6997,7 +7025,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             EFI_STATUS status;
                                             if (status = peers[i].tcp4Protocol->Transmit(peers[i].tcp4Protocol, &peers[i].transmitToken))
                                             {
-                                                logStatus(L"EFI_TCP4_PROTOCOL.Transmit() fails", status);
+                                                logStatus(L"EFI_TCP4_PROTOCOL.Transmit() fails", status, __LINE__);
 
                                                 closePeer(i);
                                             }
@@ -7038,7 +7066,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     EFI_STATUS status;
                                                     if (status = peers[i].tcp4Protocol->Connect(peers[i].tcp4Protocol, (EFI_TCP4_CONNECTION_TOKEN*)&peers[i].connectAcceptToken))
                                                     {
-                                                        logStatus(L"EFI_TCP4_PROTOCOL.Connect() fails", status);
+                                                        logStatus(L"EFI_TCP4_PROTOCOL.Connect() fails", status, __LINE__);
 
                                                         bs->CloseProtocol(peers[i].connectAcceptToken.NewChildHandle, &tcp4ProtocolGuid, ih, NULL);
                                                         tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peers[i].connectAcceptToken.NewChildHandle);
@@ -7067,7 +7095,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             EFI_STATUS status;
                                             if (status = peerTcp4Protocol->Accept(peerTcp4Protocol, &peers[i].connectAcceptToken))
                                             {
-                                                logStatus(L"EFI_TCP4_PROTOCOL.Accept() fails", status);
+                                                logStatus(L"EFI_TCP4_PROTOCOL.Accept() fails", status, __LINE__);
                                             }
                                             else
                                             {
@@ -7104,7 +7132,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 EFI_STATUS status;
                                                 if (status = bs->OpenProtocol(clients[i].acceptToken.NewChildHandle, &tcp4ProtocolGuid, (void**)&clients[i].tcp4Protocol, ih, NULL, EFI_OPEN_PROTOCOL_GET_PROTOCOL))
                                                 {
-                                                    logStatus(L"EFI_BOOT_SERVICES.OpenProtocol() fails", status);
+                                                    logStatus(L"EFI_BOOT_SERVICES.OpenProtocol() fails", status, __LINE__);
 
                                                     clients[i].tcp4Protocol = NULL;
                                                 }
@@ -7463,7 +7491,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     EFI_STATUS status;
                                                     if (status = clients[i].tcp4Protocol->Receive(clients[i].tcp4Protocol, &clients[i].receiveToken))
                                                     {
-                                                        logStatus(L"EFI_TCP4_PROTOCOL.Receive() fails", status);
+                                                        logStatus(L"EFI_TCP4_PROTOCOL.Receive() fails", status, __LINE__);
 
                                                         closeClient(i);
                                                     }
@@ -7549,7 +7577,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             EFI_STATUS status;
                                             if (status = clients[i].tcp4Protocol->Transmit(clients[i].tcp4Protocol, &clients[i].transmitToken))
                                             {
-                                                logStatus(L"EFI_TCP4_PROTOCOL.Transmit() fails", status);
+                                                logStatus(L"EFI_TCP4_PROTOCOL.Transmit() fails", status, __LINE__);
 
                                                 closeClient(i);
                                             }
@@ -7572,7 +7600,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         EFI_STATUS status;
                                         if (status = clientTcp4Protocol->Accept(clientTcp4Protocol, &clients[i].acceptToken))
                                         {
-                                            logStatus(L"EFI_TCP4_PROTOCOL.Accept() fails", status);
+                                            logStatus(L"EFI_TCP4_PROTOCOL.Accept() fails", status, __LINE__);
                                         }
                                         else
                                         {
