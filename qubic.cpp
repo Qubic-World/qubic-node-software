@@ -31,7 +31,7 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 
 #define VERSION_A 1
 #define VERSION_B 38
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -4076,6 +4076,7 @@ static Tick actualTicks[NUMBER_OF_COMPUTORS];
 #endif
 static Tick previousTicks[NUMBER_OF_COMPUTORS];
 static unsigned long long tickTicks[11];
+static unsigned int totalNumberOfTicks = 0, numberOfLostTicks = 0;
 
 static unsigned long long* dejavu0 = NULL;
 static unsigned long long* dejavu1 = NULL;
@@ -6253,6 +6254,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         nextTickNumberOfComputors = 0;
 
                                         system.tick++;
+                                        totalNumberOfTicks++;
 
                                         for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
                                         {
@@ -6327,6 +6329,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         if (ticks[bestTickIndex] >= system.tick + 2)
                                         {
                                             system.tick++;
+                                            totalNumberOfTicks++;
+                                            numberOfLostTicks++;
 
                                             for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
                                             {
@@ -6509,8 +6513,13 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         appendText(message, L"+");
                                         appendNumber(message, numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS), TRUE);
 
+                                        appendText(message, L" | ");
+                                        appendNumber(message, numberOfLostTicks, TRUE);
+                                        appendText(message, L"/");
+                                        appendNumber(message, totalNumberOfTicks, TRUE);
+                                        appendText(message, L" lost ticks | Tick = ");
+
                                         unsigned long long tickDuration = (tickTicks[sizeof(tickTicks) / sizeof(tickTicks[0]) - 1] - tickTicks[0]) / (sizeof(tickTicks) / sizeof(tickTicks[0]) - 1);
-                                        appendText(message, L" | Tick = ");
                                         appendNumber(message, tickDuration / frequency, FALSE);
                                         appendText(message, L".");
                                         appendNumber(message, (tickDuration% frequency) * 10 / frequency, FALSE);
