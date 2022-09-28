@@ -5,7 +5,7 @@
 
 // Do NOT share the data of "Private Settings" section with anybody!!!
 static unsigned char ownSeeds[][55 + 1] = {
-    "<seed1>"
+    "<seed1>",
 };
 
 static const unsigned char ownAddress[4] = { 0, 0, 0, 0 };
@@ -30,16 +30,16 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 37
-#define VERSION_C 3
+#define VERSION_B 38
+#define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
 static const unsigned char knownPublicPeers[][4] = {
 };
 
-#define EPOCH 23
-#define TICK 2654286
+#define EPOCH 24
+#define TICK 2654296
 
 /*#if NUMBER_OF_COMPUTING_PROCESSORS
 #include "qubics.h"
@@ -3691,7 +3691,6 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define DEJAVU_SWAP_LIMIT 2621440 // False duplicate chance < 2%
 #define DISSEMINATION_MULTIPLIER 4
 #define ISSUANCE_RATE 1000000000000
-#define LEDGER_DATA_SAVING_PERIOD 60
 #define MAX_ANSWER_SIZE 1024
 #define MAX_INVOCATION_SIZE 1024
 #define MAX_MESSAGE_SIZE 1024
@@ -3716,7 +3715,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 300
 #define REVENUE_PUBLICATION_PERIOD 300
 #define SIGNATURE_SIZE 64
-#define SOLUTION_THRESHOLD 28
+#define SOLUTION_THRESHOLD 27
 #define SYSTEM_DATA_SAVING_PERIOD 300
 #define VOLUME_LABEL L"Qubic"
 
@@ -4075,6 +4074,7 @@ static Tick latestTicks[NUMBER_OF_COMPUTORS];
 #if NUMBER_OF_COMPUTING_PROCESSORS
 static Tick actualTicks[NUMBER_OF_COMPUTORS];
 #endif
+static Tick previousTicks[NUMBER_OF_COMPUTORS];
 static unsigned long long tickTicks[11];
 
 static unsigned long long* dejavu0 = NULL;
@@ -4151,7 +4151,7 @@ static struct
     RequestResponseHeader header;
 } requestedTicks;
 
-static bool showExtendedLogging = false;
+static bool disableLogging = false;
 
 static void appendText(CHAR16* dst, const CHAR16* src)
 {
@@ -4267,6 +4267,11 @@ static void appendErrorStatus(CHAR16* dst, const EFI_STATUS status)
 
 static void log(const CHAR16* message)
 {
+    if (disableLogging)
+    {
+        return;
+    }
+
     timestampedMessage[0] = (time.Year % 100) / 10 + L'0';
     timestampedMessage[1] = time.Year % 10 + L'0';
     timestampedMessage[2] = time.Month / 10 + L'0';
@@ -4473,7 +4478,7 @@ static void pushToSome(RequestResponseHeader* requestResponseHeader)
         unsigned short random;
         _rdrand16_step(&random);
         const unsigned short index = random % numberOfSuitablePeers;
-        push(&peers[index], requestResponseHeader, false);
+        push(&peers[index], requestResponseHeader, true);
 
         suitablePeerIndices[index] = suitablePeerIndices[--numberOfSuitablePeers];
     }
@@ -4522,6 +4527,33 @@ static void requestProcessor(void* ProcedureArgument)
             {
                 switch (requestHeader->type)
                 {
+                case BROADCAST_RESOURCE_TESTING_SOLUTION:
+                {
+                    BroadcastResourceTestingSolution* request = (BroadcastResourceTestingSolution*)((char*)processor->cache + sizeof(RequestResponseHeader));
+                    if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->resourceTestingSolution.computorPublicKey), ZERO)) != 0xFFFFFFFF)
+                    {
+                        bool shouldBeBroadcasted = !(dayIndex(time.Year - 2000, time.Month, time.Day) % 7);
+                        if (!shouldBeBroadcasted)
+                        {
+                            for (unsigned int j = 0; j < sizeof(resourceTestingSolutionIdentitiesToBroadcast) / sizeof(resourceTestingSolutionIdentitiesToBroadcast[0]); j++)
+                            {
+                                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->resourceTestingSolution.computorPublicKey), *((__m256i*)resourceTestingSolutionIdentitiesToBroadcast[j]))) == 0xFFFFFFFF)
+                                {
+                                    shouldBeBroadcasted = true;
+
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (shouldBeBroadcasted)
+                        {
+                            responseSize = requestHeader->size;
+                        }
+                    }
+                }
+                break;
+
                 case BROADCAST_COMPUTORS:
                 {
                     BroadcastComputors* request = (BroadcastComputors*)((char*)processor->cache + sizeof(RequestResponseHeader));
@@ -4596,12 +4628,16 @@ static void requestProcessor(void* ProcedureArgument)
 
                                     if (request->tick.tick > latestTicks[request->tick.computorIndex].tick)
                                     {
+#if !NUMBER_OF_COMPUTING_PROCESSORS
+                                        bs->CopyMem(&previousTicks[request->tick.computorIndex], &latestTicks[request->tick.computorIndex], sizeof(Tick));
+#endif
                                         bs->CopyMem(&latestTicks[request->tick.computorIndex], &request->tick, sizeof(Tick));
                                     }
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
                                     if (request->tick.tick == system.tick + 1)
                                     {
+                                        bs->CopyMem(&previousTicks[request->tick.computorIndex], &actualTicks[request->tick.computorIndex], sizeof(Tick));
                                         bs->CopyMem(&actualTicks[request->tick.computorIndex], &request->tick, sizeof(Tick));
                                     }
 #endif
@@ -5506,6 +5542,7 @@ static BOOLEAN initialize()
 #if NUMBER_OF_COMPUTING_PROCESSORS
     bs->SetMem(&actualTicks, sizeof(actualTicks), 0);
 #endif
+    bs->SetMem(&previousTicks, sizeof(previousTicks), 0);
     bs->SetMem(&tickTicks, sizeof(tickTicks), 0);
     bs->SetMem(&broadcastedTick, sizeof(broadcastedTick), 0);
 
@@ -5753,7 +5790,7 @@ static BOOLEAN initialize()
         miningData[0] = 804;
         miningData[1] = 477;
         miningData[2] = 826;
-        miningData[3] = 96;
+        miningData[3] = 73;
         miningData[4] = 53;
         KangarooTwelve((unsigned char*)miningData, 5 * sizeof(unsigned long long), (unsigned char*)miningData, sizeof(miningData));
 
@@ -6104,7 +6141,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             _rdrand64_step(&salt);
 
                             unsigned int latestOwnTick = 0;
-                            unsigned long long timingTick = 0, systemDataSavingTick = 0, ledgerDataSavingTick = 0, loggingTick = 0, peerRefreshingTick = 0, resourceTestingSolutionPublicationTick = 0;
+                            unsigned long long timingTick = 0, systemDataSavingTick = 0, loggingTick = 0, peerRefreshingTick = 0, resourceTestingSolutionPublicationTick = 0;
                             while (!state)
                             {
                                 const unsigned long long curTimeTick = __rdtsc();
@@ -6159,6 +6196,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 _mm_pause();
                                             }
                                             bs->CopyMem(&latestTicks[ownComputorIndices[i]], &broadcastedTick.broadcastTick.tick, sizeof(Tick));
+                                            bs->CopyMem(&previousTicks[ownComputorIndices[i]], &actualTicks[ownComputorIndices[i]], sizeof(Tick));
                                             bs->CopyMem(&actualTicks[ownComputorIndices[i]], &broadcastedTick.broadcastTick.tick, sizeof(Tick));
                                             _InterlockedCompareExchange8(&tickLocks[ownComputorIndices[i]], 0, 1);
 
@@ -6229,6 +6267,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             }
                                             if (latestTicks[i].tick == system.tick + 1)
                                             {
+                                                bs->CopyMem(&previousTicks[i], &actualTicks[i], sizeof(Tick));
                                                 bs->CopyMem(&actualTicks[i], &latestTicks[i], sizeof(Tick));
                                             }
                                             _InterlockedCompareExchange8(&tickLocks[i], 0, 1);
@@ -6446,34 +6485,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     prevNumberOfDisseminatedRequests = numberOfDisseminatedRequests;
                                     prevNumberOfReceivedBytes = numberOfReceivedBytes;
                                     prevNumberOfTransmittedBytes = numberOfTransmittedBytes;
-
-                                    if (showExtendedLogging)
-                                    {
-                                        for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS; i++)
-                                        {
-                                            setText(message, L"c/a'ing=");
-                                            appendNumber(message, peers[i].isConnectingAccepting, FALSE);
-                                            appendText(message, L" c/a'ed=");
-                                            appendNumber(message, peers[i].isConnectedAccepted, FALSE);
-                                            appendText(message, L" rx'ing=");
-                                            appendNumber(message, peers[i].isReceiving, FALSE);
-                                            appendText(message, L" tx'ing=");
-                                            appendNumber(message, peers[i].isTransmitting, FALSE);
-                                            appendText(message, L" hx'ed=");
-                                            appendNumber(message, peers[i].exchangedPublicPeers, FALSE);
-                                            appendText(message, L" dx'ing=");
-                                            appendNumber(message, peers[i].isClosing, FALSE);
-                                            appendText(message, L" ");
-                                            appendNumber(message, peers[i].address[0], FALSE);
-                                            appendText(message, L".");
-                                            appendNumber(message, peers[i].address[1], FALSE);
-                                            appendText(message, L".");
-                                            appendNumber(message, peers[i].address[2], FALSE);
-                                            appendText(message, L".");
-                                            appendNumber(message, peers[i].address[3], FALSE);
-                                            log(message);
-                                        }
-                                    }
 
                                     if (true)
                                     {
@@ -6835,35 +6846,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                 }
                                                                 break;
 
-                                                                case BROADCAST_RESOURCE_TESTING_SOLUTION:
-                                                                {
-                                                                    BroadcastResourceTestingSolution* request = (BroadcastResourceTestingSolution*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader));
-                                                                    if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->resourceTestingSolution.computorPublicKey), ZERO)) != 0xFFFFFFFF)
-                                                                    {
-                                                                        bool shouldBeBroadcasted = !(dayIndex(time.Year - 2000, time.Month, time.Day) % 7);
-                                                                        if (!shouldBeBroadcasted)
-                                                                        {
-                                                                            for (unsigned int j = 0; j < sizeof(resourceTestingSolutionIdentitiesToBroadcast) / sizeof(resourceTestingSolutionIdentitiesToBroadcast[0]); j++)
-                                                                            {
-                                                                                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->resourceTestingSolution.computorPublicKey), *((__m256i*)resourceTestingSolutionIdentitiesToBroadcast[j]))) == 0xFFFFFFFF)
-                                                                                {
-                                                                                    shouldBeBroadcasted = true;
-
-                                                                                    break;
-                                                                                }
-                                                                            }
-                                                                        }
-
-                                                                        if (shouldBeBroadcasted)
-                                                                        {
-                                                                            pushToSome(requestResponseHeader);
-                                                                        }
-                                                                    }
-
-                                                                    _InterlockedIncrement64(&numberOfProcessedRequests);
-                                                                }
-                                                                break;
-
                                                                 case REQUEST_COMPUTORS:
                                                                 {
                                                                     if (broadcastedComputors.broadcastComputors.computors.epoch)
@@ -6895,13 +6877,25 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                             push(&peers[i], &broadcastedTick.header, true);
                                                                         }
 #if NUMBER_OF_COMPUTING_PROCESSORS
-                                                                        if (actualTicks[index].epoch && actualTicks[index].tick != latestTicks[index].tick)
+                                                                        if (actualTicks[index].epoch
+                                                                            && actualTicks[index].tick != latestTicks[index].tick)
                                                                         {
                                                                             bs->CopyMem(&broadcastedTick.broadcastTick.tick, &actualTicks[index], sizeof(Tick));
 
                                                                             push(&peers[i], &broadcastedTick.header, true);
                                                                         }
 #endif
+                                                                        if (previousTicks[index].epoch
+                                                                            && previousTicks[index].tick != latestTicks[index].tick
+#if NUMBER_OF_COMPUTING_PROCESSORS
+                                                                            && previousTicks[index].tick != actualTicks[index].tick
+#endif
+                                                                            )
+                                                                        {
+                                                                            bs->CopyMem(&broadcastedTick.broadcastTick.tick, &previousTicks[index], sizeof(Tick));
+
+                                                                            push(&peers[i], &broadcastedTick.header, true);
+                                                                        }
 
                                                                         computorIndices[index] = computorIndices[--numberOfComputorIndices];
                                                                     }
@@ -7618,13 +7612,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                     saveSystem();
                                 }
-
-                                if (curTimeTick - ledgerDataSavingTick >= LEDGER_DATA_SAVING_PERIOD * frequency)
-                                {
-                                    ledgerDataSavingTick = curTimeTick;
-
-                                    saveLedger();
-                                }
 #endif
 
                                 if (curTimeTick - peerRefreshingTick >= PEER_REFRESHING_PERIOD * frequency)
@@ -7660,7 +7647,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                     if (shouldBeBroadcasted)
                                     {
-                                        pushToSome(&broadcastedSolution.header);
+                                        for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
+                                        {
+                                            push(&peers[i], &broadcastedSolution.header, true);
+                                        }
                                     }
 
                                     saveSolution();
@@ -7698,7 +7688,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     {
                                     case 0x0B:
                                     {
-                                        log(L"[F4] Close all connections | [F12] Toggle extended logging | [ESC] Shut down.");
+                                        log(L"[F4] Close all connections | [Pause] Toggle logging | [ESC] Shut down.");
                                     }
                                     break;
 
@@ -7706,23 +7696,20 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     {
                                         for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
                                         {
-                                            if (((unsigned long long)peers[i].tcp4Protocol) > 1 && peers[i].isConnectedAccepted)
-                                            {
-                                                closePeer(i);
-                                            }
+                                            closePeer(i);
                                         }
-                                    }
-                                    break;
-
-                                    case 0x16:
-                                    {
-                                        showExtendedLogging = !showExtendedLogging;
                                     }
                                     break;
 
                                     case 0x17:
                                     {
                                         state = 1;
+                                    }
+                                    break;
+
+                                    case 0x48:
+                                    {
+                                        disableLogging = !disableLogging;
                                     }
                                     break;
                                     }
@@ -7738,7 +7725,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
                             saveSystem();
-                            saveLedger();
 #endif
 #if NUMBER_OF_MINING_PROCESSORS
                             saveSolution();
