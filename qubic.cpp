@@ -31,7 +31,7 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 
 #define VERSION_A 1
 #define VERSION_B 38
-#define VERSION_C 2
+#define VERSION_C 3
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -41,15 +41,15 @@ static const unsigned char knownPublicPeers[][4] = {
 #define EPOCH 24
 #define TICK 2654296
 
-/*#if NUMBER_OF_COMPUTING_PROCESSORS
+#include <intrin.h>
+
+#if NUMBER_OF_COMPUTING_PROCESSORS
 #include "qubics.h"
-#endif*/
+#endif
 
 
 
 ////////// UEFI \\\\\\\\\\
-
-#include <intrin.h>
 
 #define FALSE ((BOOLEAN)0)
 #define IN
@@ -101,6 +101,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define EFI_DEBUG_SUPPORT_PROTOCOL_GUID {0x2755590C, 0x6F3C, 0x42FA, {0x9E, 0xA4, 0xA3, 0xBA, 0x54, 0x3C, 0xDA, 0x25}}
 #define EFI_FILE_SYSTEM_INFO_ID {0x09576e93, 0x6d3f, 0x11d2, {0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b}}
+#define EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID {0x9042a9de, 0x23dc, 0x4a38, {0x96, 0xfb, 0x7a, 0xde, 0xd0, 0x80, 0x51, 0x6a}}
 #define EFI_MP_SERVICES_PROTOCOL_GUID {0x3fdda605, 0xa76e, 0x4f46, {0xad, 0x29, 0x12, 0xf4, 0x53, 0x1b, 0x3d, 0x08}}
 #define EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID {0x0964e5b22, 0x6459, 0x11d2, {0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b}}
 #define EFI_TCP4_PROTOCOL_GUID {0x65530BC7, 0xA359, 0x410f, {0xB0, 0x10, 0x5A, 0xAD, 0xC7, 0xEC, 0x2B, 0x62}}
@@ -162,6 +163,24 @@ typedef enum
 	AllocateAddress,
 	MaxAllocateType
 } EFI_ALLOCATE_TYPE;
+
+typedef enum
+{
+    EfiBltVideoFill,
+    EfiBltVideoToBltBuffer,
+    EfiBltBufferToVideo,
+    EfiBltVideoToVideo,
+    EfiGraphicsOutputBltOperationMax
+} EFI_GRAPHICS_OUTPUT_BLT_OPERATION;
+
+typedef enum
+{
+    PixelRedGreenBlueReserved8BitPerColor,
+    PixelBlueGreenRedReserved8BitPerColor,
+    PixelBitMask,
+    PixelBltOnly,
+    PixelFormatMax
+} EFI_GRAPHICS_PIXEL_FORMAT;
 
 typedef enum
 {
@@ -583,6 +602,42 @@ typedef struct
 
 typedef struct
 {
+    unsigned char Blue;
+    unsigned char Green;
+    unsigned char Red;
+    unsigned char Reserved;
+} EFI_GRAPHICS_OUTPUT_BLT_PIXEL;
+
+typedef struct
+{
+    unsigned int RedMask;
+    unsigned int GreenMask;
+    unsigned int BlueMask;
+    unsigned int ReservedMask;
+} EFI_PIXEL_BITMASK;
+
+typedef struct
+{
+    unsigned int Version;
+    unsigned int HorizontalResolution;
+    unsigned int VerticalResolution;
+    EFI_GRAPHICS_PIXEL_FORMAT PixelFormat;
+    EFI_PIXEL_BITMASK PixelInformation;
+    unsigned int PixelsPerScanLine;
+} EFI_GRAPHICS_OUTPUT_MODE_INFORMATION;
+
+typedef struct
+{
+    unsigned int MaxMode;
+    unsigned int Mode;
+    EFI_GRAPHICS_OUTPUT_MODE_INFORMATION* Info;
+    unsigned long long SizeOfInfo;
+    EFI_PHYSICAL_ADDRESS FrameBufferBase;
+    unsigned long long FrameBufferSize;
+} EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE;
+
+typedef struct
+{
 	unsigned short ScanCode;
 	CHAR16 UnicodeChar;
 } EFI_INPUT_KEY;
@@ -918,23 +973,23 @@ typedef void(__cdecl *EFI_EVENT_NOTIFY) (IN EFI_EVENT Event, IN void* Context);
 typedef void(*EFI_EXCEPTION_CALLBACK) (IN long long ExceptionType, IN OUT EFI_SYSTEM_CONTEXT SystemContext);
 typedef EFI_STATUS(__cdecl *EFI_EXIT) (IN EFI_HANDLE ImageHandle, IN EFI_STATUS ExitStatus, IN unsigned long long ExitDataSize, IN CHAR16* ExitData OPTIONAL);
 typedef EFI_STATUS(__cdecl *EFI_EXIT_BOOT_SERVICES) (IN EFI_HANDLE ImageHandle, IN unsigned long long MapKey);
-typedef EFI_STATUS(__cdecl* EFI_FILE_CLOSE) (IN void* This);
-typedef EFI_STATUS(__cdecl* EFI_FILE_DELETE) (IN void* This);
-typedef EFI_STATUS(__cdecl* EFI_FILE_FLUSH) (IN void* This);
-typedef EFI_STATUS(__cdecl* EFI_FILE_FLUSH_EX) (IN void* This, IN OUT EFI_FILE_IO_TOKEN* Token);
-typedef EFI_STATUS(__cdecl* EFI_FILE_GET_INFO) (IN void* This, IN EFI_GUID* InformationType, IN OUT unsigned long long* BufferSize, OUT void* Buffer);
-typedef EFI_STATUS(__cdecl* EFI_FILE_GET_POSITION) (IN void* This, OUT unsigned long long* Position);
-typedef EFI_STATUS(__cdecl* EFI_FILE_OPEN) (IN void* This, OUT void** NewHandle, IN CHAR16* FileName, IN unsigned long long OpenMode, IN unsigned long long Attributes);
-typedef EFI_STATUS(__cdecl* EFI_FILE_OPEN_EX) (IN void* This, OUT void** NewHandle, IN CHAR16* FileName, IN unsigned long long OpenMode, IN unsigned long long Attributes, IN OUT EFI_FILE_IO_TOKEN* Token);
-typedef EFI_STATUS(__cdecl* EFI_FILE_READ) (IN void* This, IN OUT unsigned long long* BufferSize, OUT void* Buffer);
-typedef EFI_STATUS(__cdecl* EFI_FILE_READ_EX) (IN void* This, IN OUT EFI_FILE_IO_TOKEN* Token);
-typedef EFI_STATUS(__cdecl* EFI_FILE_SET_INFO) (IN void* This, IN EFI_GUID* InformationType, IN unsigned long long BufferSize, IN void* Buffer);
-typedef EFI_STATUS(__cdecl* EFI_FILE_SET_POSITION) (IN void* This, IN unsigned long long Position);
-typedef EFI_STATUS(__cdecl* EFI_FILE_WRITE) (IN void* This, IN OUT unsigned long long* BufferSize, IN void* Buffer);
-typedef EFI_STATUS(__cdecl* EFI_FILE_WRITE_EX) (IN void* This, IN OUT EFI_FILE_IO_TOKEN* Token);
+typedef EFI_STATUS(__cdecl *EFI_FILE_CLOSE) (IN void* This);
+typedef EFI_STATUS(__cdecl *EFI_FILE_DELETE) (IN void* This);
+typedef EFI_STATUS(__cdecl *EFI_FILE_FLUSH) (IN void* This);
+typedef EFI_STATUS(__cdecl *EFI_FILE_FLUSH_EX) (IN void* This, IN OUT EFI_FILE_IO_TOKEN* Token);
+typedef EFI_STATUS(__cdecl *EFI_FILE_GET_INFO) (IN void* This, IN EFI_GUID* InformationType, IN OUT unsigned long long* BufferSize, OUT void* Buffer);
+typedef EFI_STATUS(__cdecl *EFI_FILE_GET_POSITION) (IN void* This, OUT unsigned long long* Position);
+typedef EFI_STATUS(__cdecl *EFI_FILE_OPEN) (IN void* This, OUT void** NewHandle, IN CHAR16* FileName, IN unsigned long long OpenMode, IN unsigned long long Attributes);
+typedef EFI_STATUS(__cdecl *EFI_FILE_OPEN_EX) (IN void* This, OUT void** NewHandle, IN CHAR16* FileName, IN unsigned long long OpenMode, IN unsigned long long Attributes, IN OUT EFI_FILE_IO_TOKEN* Token);
+typedef EFI_STATUS(__cdecl *EFI_FILE_READ) (IN void* This, IN OUT unsigned long long* BufferSize, OUT void* Buffer);
+typedef EFI_STATUS(__cdecl *EFI_FILE_READ_EX) (IN void* This, IN OUT EFI_FILE_IO_TOKEN* Token);
+typedef EFI_STATUS(__cdecl *EFI_FILE_SET_INFO) (IN void* This, IN EFI_GUID* InformationType, IN unsigned long long BufferSize, IN void* Buffer);
+typedef EFI_STATUS(__cdecl *EFI_FILE_SET_POSITION) (IN void* This, IN unsigned long long Position);
+typedef EFI_STATUS(__cdecl *EFI_FILE_WRITE) (IN void* This, IN OUT unsigned long long* BufferSize, IN void* Buffer);
+typedef EFI_STATUS(__cdecl *EFI_FILE_WRITE_EX) (IN void* This, IN OUT EFI_FILE_IO_TOKEN* Token);
 typedef EFI_STATUS(__cdecl *EFI_FREE_PAGES) (IN EFI_PHYSICAL_ADDRESS Memory, IN unsigned long long Pages);
 typedef EFI_STATUS(__cdecl *EFI_FREE_POOL) (IN void* Buffer);
-typedef EFI_STATUS(__cdecl* EFI_GET_MAXIMUM_PROCESSOR_INDEX) (IN void* This, OUT unsigned long long* MaxProcessorIndex);
+typedef EFI_STATUS(__cdecl *EFI_GET_MAXIMUM_PROCESSOR_INDEX) (IN void* This, OUT unsigned long long* MaxProcessorIndex);
 typedef EFI_STATUS(__cdecl *EFI_GET_MEMORY_MAP) (IN OUT unsigned long long* MemoryMapSize, OUT EFI_MEMORY_DESCRIPTOR* MemoryMap, OUT unsigned long long* MapKey, OUT unsigned long long* DescriptorSize, OUT unsigned int* DescriptorVersion);
 typedef EFI_STATUS(__cdecl *EFI_GET_NEXT_HIGH_MONO_COUNT) (OUT unsigned int* HighCount);
 typedef EFI_STATUS(__cdecl *EFI_GET_NEXT_MONOTONIC_COUNT) (OUT unsigned long long* Count);
@@ -942,6 +997,9 @@ typedef EFI_STATUS(__cdecl *EFI_GET_NEXT_VARIABLE_NAME) (IN OUT unsigned long lo
 typedef EFI_STATUS(__cdecl *EFI_GET_TIME) (OUT EFI_TIME* Time, OUT EFI_TIME_CAPABILITIES* Capabilities OPTIONAL);
 typedef EFI_STATUS(__cdecl *EFI_GET_VARIABLE) (IN CHAR16* VariableName, IN EFI_GUID* VendorGuid, OUT unsigned int* Attributes OPTIONAL, IN OUT unsigned long long* DataSize, OUT void* Data);
 typedef EFI_STATUS(__cdecl *EFI_GET_WAKEUP_TIME) (OUT BOOLEAN* Enabled, OUT BOOLEAN* Pending, OUT EFI_TIME* Time);
+typedef EFI_STATUS(__cdecl *EFI_GRAPHICS_OUTPUT_PROTOCOL_BLT) (IN void* This, IN OUT EFI_GRAPHICS_OUTPUT_BLT_PIXEL* BltBuffer, OPTIONAL IN EFI_GRAPHICS_OUTPUT_BLT_OPERATION BltOperation, IN unsigned long long SourceX, IN unsigned long long SourceY, IN unsigned long long DestinationX, IN unsigned long long DestinationY, IN unsigned long long Width, IN unsigned long long Height, IN unsigned long long Delta OPTIONAL);
+typedef EFI_STATUS(__cdecl *EFI_GRAPHICS_OUTPUT_PROTOCOL_QUERY_MODE) (IN void* This, IN unsigned int ModeNumber, OUT unsigned long long* SizeOfInfo, OUT EFI_GRAPHICS_OUTPUT_MODE_INFORMATION** Info);
+typedef EFI_STATUS(__cdecl *EFI_GRAPHICS_OUTPUT_PROTOCOL_SET_MODE) (IN void* This, IN unsigned int ModeNumber);
 typedef EFI_STATUS(__cdecl *EFI_HANDLE_PROTOCOL) (IN EFI_HANDLE Handle, IN EFI_GUID* Protocol, OUT void** Interface);
 typedef EFI_STATUS(__cdecl *EFI_IMAGE_LOAD) (IN BOOLEAN BootPolicy, IN EFI_HANDLE ParentImageHandle, IN EFI_DEVICE_PATH_PROTOCOL* DevicePath, IN void* SourceBuffer OPTIONAL, IN unsigned long long SourceSize, OUT EFI_HANDLE* ImageHandle);
 typedef EFI_STATUS(__cdecl *EFI_IMAGE_START) (IN EFI_HANDLE ImageHandle, OUT unsigned long long* ExitDataSize, OUT CHAR16** ExitData OPTIONAL);
@@ -951,7 +1009,7 @@ typedef EFI_STATUS(__cdecl *EFI_INPUT_RESET) (IN void* This, IN BOOLEAN Extended
 typedef EFI_STATUS(__cdecl *EFI_INSTALL_CONFIGURATION_TABLE) (IN EFI_GUID* Guid, IN void* Table);
 typedef EFI_STATUS(__cdecl *EFI_INSTALL_MULTIPLE_PROTOCOL_INTERFACES) (IN OUT EFI_HANDLE* Handle, ...);
 typedef EFI_STATUS(__cdecl *EFI_INSTALL_PROTOCOL_INTERFACE) (IN OUT EFI_HANDLE* Handle, IN EFI_GUID* Protocol, IN EFI_INTERFACE_TYPE InterfaceType, IN void* Interface);
-typedef EFI_STATUS(__cdecl* EFI_INVALIDATE_INSTRUCTION_CACHE) (IN void* This, IN unsigned long long ProcessorIndex, IN void* Start, IN unsigned long long Length);
+typedef EFI_STATUS(__cdecl *EFI_INVALIDATE_INSTRUCTION_CACHE) (IN void* This, IN unsigned long long ProcessorIndex, IN void* Start, IN unsigned long long Length);
 typedef EFI_STATUS(__cdecl *EFI_LOCATE_DEVICE_PATH) (IN EFI_GUID* Protocol, IN OUT EFI_DEVICE_PATH_PROTOCOL** DevicePath, OUT EFI_HANDLE* Device);
 typedef EFI_STATUS(__cdecl *EFI_LOCATE_HANDLE) (IN EFI_LOCATE_SEARCH_TYPE SearchType, IN EFI_GUID* Protocol OPTIONAL, IN void* SearchKey OPTIONAL, IN OUT unsigned long long* BufferSize, OUT EFI_HANDLE* Buffer);
 typedef EFI_STATUS(__cdecl *EFI_LOCATE_HANDLE_BUFFER) (IN EFI_LOCATE_SEARCH_TYPE SearchType, IN EFI_GUID* Protocol OPTIONAL, IN void* SearchKey OPTIONAL, OUT unsigned long long* NoHandles, OUT EFI_HANDLE** Buffer);
@@ -970,8 +1028,8 @@ typedef EFI_STATUS(__cdecl *EFI_PROTOCOLS_PER_HANDLE) (IN EFI_HANDLE Handle, OUT
 typedef EFI_STATUS(__cdecl *EFI_QUERY_CAPSULE_CAPABILITIES) (IN EFI_CAPSULE_HEADER** CapsuleHeaderArray, IN unsigned long long CapsuleCount, OUT unsigned long long* MaximumCapsuleSize, OUT EFI_RESET_TYPE* ResetType);
 typedef EFI_STATUS(__cdecl *EFI_QUERY_VARIABLE_INFO) (IN unsigned int Attributes, OUT unsigned long long* MaximumVariableStorageSize, OUT unsigned long long* RemainingVariableStorageSize, OUT unsigned long long* MaximumVariableSize);
 typedef EFI_TPL(__cdecl *EFI_RAISE_TPL) (IN EFI_TPL NewTpl);
-typedef EFI_STATUS(__cdecl* EFI_REGISTER_EXCEPTION_CALLBACK) (IN void* This, IN unsigned long long ProcessorIndex, IN EFI_EXCEPTION_CALLBACK ExceptionCallback, IN long long ExceptionType);
-typedef EFI_STATUS(__cdecl* EFI_REGISTER_PERIODIC_CALLBACK) (IN void* This, IN unsigned long long ProcessorIndex, IN EFI_PERIODIC_CALLBACK PeriodicCallback);
+typedef EFI_STATUS(__cdecl *EFI_REGISTER_EXCEPTION_CALLBACK) (IN void* This, IN unsigned long long ProcessorIndex, IN EFI_EXCEPTION_CALLBACK ExceptionCallback, IN long long ExceptionType);
+typedef EFI_STATUS(__cdecl *EFI_REGISTER_PERIODIC_CALLBACK) (IN void* This, IN unsigned long long ProcessorIndex, IN EFI_PERIODIC_CALLBACK PeriodicCallback);
 typedef EFI_STATUS(__cdecl *EFI_REGISTER_PROTOCOL_NOTIFY) (IN EFI_GUID* Protocol, IN EFI_EVENT Event, OUT void** Registration);
 typedef EFI_STATUS(__cdecl *EFI_REINSTALL_PROTOCOL_INTERFACE) (IN EFI_HANDLE Handle, IN EFI_GUID* Protocol, IN void* OldInterface, IN void* NewInterface);
 typedef EFI_STATUS(__cdecl *EFI_RESET_SYSTEM) (IN EFI_RESET_TYPE ResetType, IN EFI_STATUS ResetStatus, IN unsigned long long DataSize, IN CHAR16* ResetData OPTIONAL);
@@ -986,7 +1044,7 @@ typedef EFI_STATUS(__cdecl *EFI_SET_VIRTUAL_ADDRESS_MAP) (IN unsigned long long 
 typedef EFI_STATUS(__cdecl *EFI_SET_WAKEUP_TIME) (IN BOOLEAN Enable, IN EFI_TIME* Time OPTIONAL);
 typedef EFI_STATUS(__cdecl *EFI_SET_WATCHDOG_TIMER) (IN unsigned long long Timeout, IN unsigned long long WatchdogCode, IN unsigned long long DataSize, IN CHAR16* WatchdogData OPTIONAL);
 typedef EFI_STATUS(__cdecl *EFI_SIGNAL_EVENT) (IN EFI_EVENT Event);
-typedef EFI_STATUS(__cdecl* EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_OPEN_VOLUME) (IN void* This, OUT void** Root);
+typedef EFI_STATUS(__cdecl *EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_OPEN_VOLUME) (IN void* This, OUT void** Root);
 typedef EFI_STATUS(__cdecl *EFI_STALL) (IN unsigned long long Microseconds);
 typedef EFI_STATUS(__cdecl *EFI_TCP4_ACCEPT) (IN void* This, IN EFI_TCP4_LISTEN_TOKEN* ListenToken);
 typedef EFI_STATUS(__cdecl *EFI_TCP4_CANCEL)(IN void* This, IN EFI_TCP4_COMPLETION_TOKEN* Token OPTIONAL);
@@ -1102,6 +1160,14 @@ typedef struct
     EFI_FILE_WRITE_EX WriteEx;
     EFI_FILE_FLUSH_EX FlushEx;
 } EFI_FILE_PROTOCOL;
+
+typedef struct
+{
+    EFI_GRAPHICS_OUTPUT_PROTOCOL_QUERY_MODE QueryMode;
+    EFI_GRAPHICS_OUTPUT_PROTOCOL_SET_MODE SetMode;
+    EFI_GRAPHICS_OUTPUT_PROTOCOL_BLT Blt;
+    EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE* Mode;
+} EFI_GRAPHICS_OUTPUT_PROTOCOL;
 
 typedef struct
 {
@@ -6038,7 +6104,28 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     {
         for (unsigned int i = 0; i < sizeof(ownSeeds) / sizeof(ownSeeds[0]); i++)
         {
-            getIdentity(ownPublicKeys[i], message);
+            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)ownSeeds[i]), ZERO)) != 0xFFFFFFFF)
+            {
+                getIdentity(ownPublicKeys[i], message);
+                log(message);
+            }
+        }
+
+        EFI_STATUS status;
+
+        EFI_GUID graphicsOutputProtocolGuid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
+        EFI_GRAPHICS_OUTPUT_PROTOCOL* graphicsOutputProtocol;
+        if (status = bs->LocateProtocol(&graphicsOutputProtocolGuid, NULL, (void**)&graphicsOutputProtocol))
+        {
+            logStatus(L"EFI_GRAPHICS_OUTPUT_PROTOCOL is not located", status, __LINE__);
+        }
+        else
+        {
+            setText(message, L"Current graphics mode = ");
+            appendNumber(message, graphicsOutputProtocol->Mode->Info->HorizontalResolution, FALSE);
+            appendText(message, L"x");
+            appendNumber(message, graphicsOutputProtocol->Mode->Info->VerticalResolution, FALSE);
+            appendText(message, L".");
             log(message);
         }
 
@@ -6052,7 +6139,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
             mpServicesProtocol->GetProcessorInfo(mpServicesProtocol, i, &processorInformation);
             if (processorInformation.StatusFlag == (PROCESSOR_ENABLED_BIT | PROCESSOR_HEALTH_STATUS_BIT))
             {
-                EFI_STATUS status;
                 if ((status = bs->AllocatePool(EfiRuntimeServicesData, BUFFER_SIZE, &processors[numberOfProcessors].requestBuffer))
                     || (status = bs->AllocatePool(EfiRuntimeServicesData, BUFFER_SIZE, &processors[numberOfProcessors].responseBuffer))
                     || (status = bs->AllocatePool(EfiRuntimeServicesData, BUFFER_SIZE, &processors[numberOfProcessors].cache)))
@@ -6504,68 +6590,65 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     prevNumberOfReceivedBytes = numberOfReceivedBytes;
                                     prevNumberOfTransmittedBytes = numberOfTransmittedBytes;
 
-                                    if (true)
-                                    {
-                                        setText(message, L"1+");
-                                        appendNumber(message, NUMBER_OF_COMPUTING_PROCESSORS, TRUE);
-                                        appendText(message, L"+");
-                                        appendNumber(message, NUMBER_OF_MINING_PROCESSORS, TRUE);
-                                        appendText(message, L"+");
-                                        appendNumber(message, numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS), TRUE);
+                                    setText(message, L"1+");
+                                    appendNumber(message, NUMBER_OF_COMPUTING_PROCESSORS, TRUE);
+                                    appendText(message, L"+");
+                                    appendNumber(message, NUMBER_OF_MINING_PROCESSORS, TRUE);
+                                    appendText(message, L"+");
+                                    appendNumber(message, numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS), TRUE);
 
-                                        appendText(message, L" | ");
-                                        appendNumber(message, numberOfLostTicks, TRUE);
-                                        appendText(message, L"/");
-                                        appendNumber(message, totalNumberOfTicks, TRUE);
-                                        appendText(message, L" lost ticks | Tick = ");
+                                    appendText(message, L" | ");
+                                    appendNumber(message, numberOfLostTicks, TRUE);
+                                    appendText(message, L"/");
+                                    appendNumber(message, totalNumberOfTicks, TRUE);
+                                    appendText(message, L" lost ticks | Tick = ");
 
-                                        unsigned long long tickDuration = (tickTicks[sizeof(tickTicks) / sizeof(tickTicks[0]) - 1] - tickTicks[0]) / (sizeof(tickTicks) / sizeof(tickTicks[0]) - 1);
-                                        appendNumber(message, tickDuration / frequency, FALSE);
-                                        appendText(message, L".");
-                                        appendNumber(message, (tickDuration% frequency) * 10 / frequency, FALSE);
+                                    unsigned long long tickDuration = (tickTicks[sizeof(tickTicks) / sizeof(tickTicks[0]) - 1] - tickTicks[0]) / (sizeof(tickTicks) / sizeof(tickTicks[0]) - 1);
+                                    appendNumber(message, tickDuration / frequency, FALSE);
+                                    appendText(message, L".");
+                                    appendNumber(message, (tickDuration% frequency) * 10 / frequency, FALSE);
 #if NUMBER_OF_MINING_PROCESSORS
-                                        appendText(message, L" s | Score = ");
-                                        int score = 0;
-                                        for (unsigned int i = 0; i < NUMBER_OF_SOLUTION_NONCES; i++)
+                                    appendText(message, L" s | Score = ");
+                                    int score = 0;
+                                    for (unsigned int i = 0; i < NUMBER_OF_SOLUTION_NONCES; i++)
+                                    {
+                                        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)broadcastedSolution.broadcastResourceTestingSolution.resourceTestingSolution.nonces[i]), ZERO)) != 0xFFFFFFFF)
                                         {
-                                            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)broadcastedSolution.broadcastResourceTestingSolution.resourceTestingSolution.nonces[i]), ZERO)) != 0xFFFFFFFF)
-                                            {
-                                                score++;
-                                            }
+                                            score++;
                                         }
-                                        appendNumber(message, score, TRUE);
-                                        appendText(message, L" (");
-                                        appendNumber(message, (numberOfMiningIterations - prevNumberOfMiningIterations) * frequency / (curTimeTick - prevMiningPerformanceTick), TRUE);
-                                        prevMiningPerformanceTick = curTimeTick;
-                                        prevNumberOfMiningIterations = numberOfMiningIterations;
-                                        appendText(message, L" it/s);");
+                                    }
+                                    appendNumber(message, score, TRUE);
+                                    appendText(message, L" (");
+                                    appendNumber(message, (numberOfMiningIterations - prevNumberOfMiningIterations) * frequency / (curTimeTick - prevMiningPerformanceTick), TRUE);
+                                    prevMiningPerformanceTick = curTimeTick;
+                                    prevNumberOfMiningIterations = numberOfMiningIterations;
+                                    appendText(message, L" it/s);");
 #else
-                                        appendText(message, L" s |");
+                                    appendText(message, L" s |");
 #endif
 #if NUMBER_OF_COMPUTING_PROCESSORS
-                                        appendText(message, L" computor index = ");
-                                        if (!numberOfOwnComputorIndices)
-                                        {
-                                            appendText(message, L"?.");
-                                        }
-                                        else
-                                        {
-                                            for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
-                                            {
-                                                const CHAR16 alphabet[26][2] = { L"A", L"B", L"C", L"D", L"E", L"F", L"G", L"H", L"I", L"J", L"K", L"L", L"M", L"N", L"O", L"P", L"Q", L"R", L"S", L"T", L"U", L"V", L"W", L"X", L"Y", L"Z" };
-                                                appendText(message, alphabet[ownComputorIndices[i] / 26]);
-                                                appendText(message, alphabet[ownComputorIndices[i] % 26]);
-                                                appendText(message, i ? L"[" : L"[in ");
-                                                appendNumber(message, ((ownComputorIndices[i] + NUMBER_OF_COMPUTORS) - system.tick % NUMBER_OF_COMPUTORS) % NUMBER_OF_COMPUTORS, FALSE);
-                                                appendText(message, i ? L"/" : L" ticks/");
-                                                appendNumber(message, numberOfBufferedTransfers[i], TRUE);
-                                                appendText(message, i ? L"]" : L" transfers]");
-                                                appendText(message, i < (unsigned int)(numberOfOwnComputorIndices - 1) ? L"+" : L".");
-                                            }
-                                        }
-#endif
-                                        log(message);
+                                    appendText(message, L" computor index = ");
+                                    if (!numberOfOwnComputorIndices)
+                                    {
+                                        appendText(message, L"?.");
                                     }
+                                    else
+                                    {
+                                        for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
+                                        {
+                                            const CHAR16 alphabet[26][2] = { L"A", L"B", L"C", L"D", L"E", L"F", L"G", L"H", L"I", L"J", L"K", L"L", L"M", L"N", L"O", L"P", L"Q", L"R", L"S", L"T", L"U", L"V", L"W", L"X", L"Y", L"Z" };
+                                            appendText(message, alphabet[ownComputorIndices[i] / 26]);
+                                            appendText(message, alphabet[ownComputorIndices[i] % 26]);
+                                            appendText(message, i ? L"[" : L"[in ");
+                                            appendNumber(message, ((ownComputorIndices[i] + NUMBER_OF_COMPUTORS) - system.tick % NUMBER_OF_COMPUTORS) % NUMBER_OF_COMPUTORS, FALSE);
+                                            appendText(message, i ? L"/" : L" ticks/");
+                                            appendNumber(message, numberOfBufferedTransfers[i], TRUE);
+                                            appendText(message, i ? L"]" : L" transfers]");
+                                            appendText(message, i < (unsigned int)(numberOfOwnComputorIndices - 1) ? L"+" : L".");
+                                        }
+                                    }
+#endif
+                                    log(message);
                                 }
 
                                 peerTcp4Protocol->Poll(peerTcp4Protocol);
