@@ -31,7 +31,7 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 
 #define VERSION_A 1
 #define VERSION_B 38
-#define VERSION_C 3
+#define VERSION_C 4
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -44,7 +44,7 @@ static const unsigned char knownPublicPeers[][4] = {
 #include <intrin.h>
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
-#include "qubics.h"
+//#include "qubics.h"
 #endif
 
 
@@ -4061,23 +4061,16 @@ typedef struct
     Terminator terminator;
 } BroadcastTerminator;
 
-#define REQUEST_INITIAL_LEDGER_DIGEST 14
-
-typedef struct
-{
-    unsigned int nonce;
-    unsigned short epoch;
-} RequestInitialLedgerDigest;
-
 #define BROADCAST_INITIAL_LEDGER_DIGEST 15
 
 typedef struct
 {
     unsigned short computorIndex;
     unsigned short epoch;
-    unsigned int nonce;
+    unsigned int tick;
     unsigned char digest[32];
     unsigned char signature[SIGNATURE_SIZE];
+    unsigned int nonce;
 } InitialLedgerDigest;
 
 typedef struct
@@ -4132,6 +4125,7 @@ static Entity* initialEntities = NULL;
 static volatile char entitiesLock = 0;
 static Entity* entities = NULL;
 static unsigned int numberOfEntities = 0;
+static unsigned char entitiesDigest[32];
 #endif
 static char chosenTransfersInvocationsAndQuestionBytes[NUMBER_OF_COMPUTORS][sizeof(BroadcastChosenTransfersInvocationsAndQuestions) + (sizeof(Transfer) + MAX_TRANSFER_DESCRIPTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_TRANSFERS_PER_TICK + (sizeof(Invocation) + MAX_INVOCATION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_INVOCATIONS_PER_TICK + (sizeof(Question) + MAX_QUESTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_QUESTIONS_PER_TICK + SIGNATURE_SIZE];
 
@@ -4217,6 +4211,12 @@ static struct
 {
     RequestResponseHeader header;
 } requestedTicks;
+
+static struct
+{
+    RequestResponseHeader header;
+    BroadcastInitialLedgerDigest broadcastInitialLedgerDigest;
+} broadcastedInitialLedgerDigest;
 
 static bool disableLogging = false;
 
@@ -4950,12 +4950,6 @@ static void requestProcessor(void* ProcedureArgument)
                 }
                 break;
 
-                case REQUEST_INITIAL_LEDGER_DIGEST:
-                {
-                    responseSize = requestHeader->size;
-                }
-                break;
-
                 case BROADCAST_INITIAL_LEDGER_DIGEST:
                 {
                     BroadcastInitialLedgerDigest* request = (BroadcastInitialLedgerDigest*)((char*)processor->cache + sizeof(RequestResponseHeader));
@@ -4965,7 +4959,7 @@ static void requestProcessor(void* ProcedureArgument)
                         {
                             unsigned char digest[32];
                             request->initialLedgerDigest.computorIndex ^= BROADCAST_INITIAL_LEDGER_DIGEST;
-                            KangarooTwelve((unsigned char*)&request->initialLedgerDigest, sizeof(InitialLedgerDigest) - SIGNATURE_SIZE, digest, sizeof(digest));
+                            KangarooTwelve((unsigned char*)&request->initialLedgerDigest, sizeof(InitialLedgerDigest) - sizeof(request->initialLedgerDigest.nonce) - SIGNATURE_SIZE, digest, sizeof(digest));
                             request->initialLedgerDigest.computorIndex ^= BROADCAST_INITIAL_LEDGER_DIGEST;
                             if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->initialLedgerDigest.computorIndex], digest, request->initialLedgerDigest.signature))
                             {
@@ -5650,6 +5644,9 @@ static BOOLEAN initialize()
     requestedTicks.header.size = sizeof(requestedTicks);
     requestedTicks.header.protocol = VERSION_B;
     requestedTicks.header.type = REQUEST_TICKS;
+    broadcastedInitialLedgerDigest.header.size = sizeof(broadcastedInitialLedgerDigest);
+    broadcastedInitialLedgerDigest.header.protocol = VERSION_B;
+    broadcastedInitialLedgerDigest.header.type = BROADCAST_INITIAL_LEDGER_DIGEST;
 
     EFI_STATUS status;
 
@@ -5827,12 +5824,11 @@ static BOOLEAN initialize()
 
             bs->CopyMem(entities, initialEntities, MAX_NUMBER_OF_ENTITIES * sizeof(Entity));
 
-            unsigned char digest[32];
-            CHAR16 hash[64 + 1];
+            CHAR16 digest[64 + 1];
             unsigned long long totalAmount = 0;
 
-            KangarooTwelve((unsigned char*)entities, MAX_NUMBER_OF_ENTITIES * sizeof(Entity), digest, sizeof(digest));
-            getHash(digest, hash);
+            KangarooTwelve((unsigned char*)entities, MAX_NUMBER_OF_ENTITIES * sizeof(Entity), entitiesDigest, sizeof(entitiesDigest));
+            getHash(entitiesDigest, digest);
 
             for (unsigned int i = 0; i < MAX_NUMBER_OF_ENTITIES; i++)
             {
@@ -5846,8 +5842,8 @@ static BOOLEAN initialize()
             setNumber(message, totalAmount, TRUE);
             appendText(message, L" qus in ");
             appendNumber(message, numberOfEntities, TRUE);
-            appendText(message, L" entities (ledger hash = ");
-            appendText(message, hash);
+            appendText(message, L" entities (ledger digest = ");
+            appendText(message, digest);
             appendText(message, L").");
             log(message);
         }
@@ -6121,12 +6117,33 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
         }
         else
         {
-            setText(message, L"Current graphics mode = ");
-            appendNumber(message, graphicsOutputProtocol->Mode->Info->HorizontalResolution, FALSE);
-            appendText(message, L"x");
-            appendNumber(message, graphicsOutputProtocol->Mode->Info->VerticalResolution, FALSE);
-            appendText(message, L".");
-            log(message);
+            for (unsigned int i = 0; i < graphicsOutputProtocol->Mode->MaxMode; i++)
+            {
+                unsigned long long size;
+                EFI_GRAPHICS_OUTPUT_MODE_INFORMATION* modeInfo;
+                if (status = graphicsOutputProtocol->QueryMode(graphicsOutputProtocol, i, &size, &modeInfo))
+                {
+                    logStatus(L"EFI_GRAPHICS_OUTPUT_PROTOCOL.QueryMode() fails", status, __LINE__);
+                }
+                else
+                {
+                    setText(message, L"Graphics mode #");
+                    appendNumber(message, i, FALSE);
+                    appendText(message, L": ");
+                    appendNumber(message, modeInfo->HorizontalResolution, FALSE);
+                    appendText(message, L"x");
+                    appendNumber(message, modeInfo->VerticalResolution, FALSE);
+                    if (i == graphicsOutputProtocol->Mode->Mode)
+                    {
+                        appendText(message, L" (current).");
+                    }
+                    else
+                    {
+                        appendText(message, L".");
+                    }
+                    log(message);
+                }
+            }
         }
 
         EFI_GUID mpServiceProtocolGuid = EFI_MP_SERVICES_PROTOCOL_GUID;
