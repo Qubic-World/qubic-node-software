@@ -18,10 +18,10 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 #define OPERATOR "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 #define COMPUTOR "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 #define SYSTEM_DATA_FILE_NAME L"system.data"
-#define LEDGER_DATA_FILE_NAME L"ledger.data"
+#define SPECTRUM_DATA_FILE_NAME L"spectrum.data"
 #define SOLUTION_DATA_FILE_NAME L"solution.data"
 
-static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
+static unsigned char resourceTestingSolutionIdspectrumToBroadcast[][70 + 1] = {
     "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 };
 
@@ -31,7 +31,7 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 
 #define VERSION_A 1
 #define VERSION_B 38
-#define VERSION_C 4
+#define VERSION_C 5
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -3760,7 +3760,6 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define MAX_ANSWER_SIZE 1024
 #define MAX_INVOCATION_SIZE 1024
 #define MAX_MESSAGE_SIZE 1024
-#define MAX_NUMBER_OF_ENTITIES 0x1000000 // Must be 2^N
 #define MAX_NUMBER_OF_PROCESSORS 1024
 #define MAX_NUMBER_OF_PUBLIC_PEERS 256
 #define MAX_NUMBER_OF_INVOCATIONS_PER_TICK 0
@@ -3782,6 +3781,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define REVENUE_PUBLICATION_PERIOD 300
 #define SIGNATURE_SIZE 64
 #define SOLUTION_THRESHOLD 27
+#define SPECTRUM_CAPACITY 0x1000000 // Must be 2^N
 #define SYSTEM_DATA_SAVING_PERIOD 300
 #define VOLUME_LABEL L"Qubic"
 
@@ -3790,9 +3790,9 @@ static __m256i ZERO;
 typedef struct
 {
     unsigned char publicKey[32];
-    long long amount;
-    unsigned int latestChangeTick;
-    char padding[4];
+    long long incomingAmount, outgoingAmount;
+    unsigned int numberOfIncomingTransfers, numberOfOutgoingTransfers;
+    unsigned int latestIncomingTransferTick, latestOutgoingTransferTick;
 } Entity;
 
 typedef struct
@@ -3913,6 +3913,7 @@ typedef struct
     unsigned char month;
     unsigned char year;
 
+    //unsigned char initialSpectrumDigest[32];
     unsigned char saltedStateDigest[32];
     unsigned char prevStateDigest[32];
     unsigned char nextTickChosenTransfersInvocationsAndQuestionsDigest[32];
@@ -4061,23 +4062,6 @@ typedef struct
     Terminator terminator;
 } BroadcastTerminator;
 
-#define BROADCAST_INITIAL_LEDGER_DIGEST 15
-
-typedef struct
-{
-    unsigned short computorIndex;
-    unsigned short epoch;
-    unsigned int tick;
-    unsigned char digest[32];
-    unsigned char signature[SIGNATURE_SIZE];
-    unsigned int nonce;
-} InitialLedgerDigest;
-
-typedef struct
-{
-    InitialLedgerDigest initialLedgerDigest;
-} BroadcastInitialLedgerDigest;
-
 #define GET_COMPUTER_STATE 0
 
 typedef struct
@@ -4121,11 +4105,11 @@ static unsigned int numberOfBufferedTransfers[sizeof(ownSeeds) / sizeof(ownSeeds
 static unsigned char bufferedTransferBytes[sizeof(ownSeeds) / sizeof(ownSeeds[0])][MAX_NUMBER_OF_TRANSFERS_PER_TICK][sizeof(Transfer) + MAX_TRANSFER_DESCRIPTION_SIZE + SIGNATURE_SIZE];
 static unsigned int chosenTransfersInvocationsAndQuestionSizes[NUMBER_OF_COMPUTORS];
 
-static Entity* initialEntities = NULL;
-static volatile char entitiesLock = 0;
-static Entity* entities = NULL;
+static Entity* initialSpectrum = NULL;
+static unsigned char initialSpectrumDigests[SPECTRUM_CAPACITY * 2 - 1][32];
+static volatile char spectrumLock = 0;
+static Entity* spectrum = NULL;
 static unsigned int numberOfEntities = 0;
-static unsigned char entitiesDigest[32];
 #endif
 static char chosenTransfersInvocationsAndQuestionBytes[NUMBER_OF_COMPUTORS][sizeof(BroadcastChosenTransfersInvocationsAndQuestions) + (sizeof(Transfer) + MAX_TRANSFER_DESCRIPTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_TRANSFERS_PER_TICK + (sizeof(Invocation) + MAX_INVOCATION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_INVOCATIONS_PER_TICK + (sizeof(Question) + MAX_QUESTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_QUESTIONS_PER_TICK + SIGNATURE_SIZE];
 
@@ -4211,12 +4195,6 @@ static struct
 {
     RequestResponseHeader header;
 } requestedTicks;
-
-static struct
-{
-    RequestResponseHeader header;
-    BroadcastInitialLedgerDigest broadcastInitialLedgerDigest;
-} broadcastedInitialLedgerDigest;
 
 static bool disableLogging = false;
 
@@ -4355,9 +4333,13 @@ static void log(const CHAR16* message)
     timestampedMessage[13] = 0;
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
-    appendNumber(timestampedMessage, tickNumberOfComputors, FALSE);
+    appendNumber(timestampedMessage, tickNumberOfComputors / 100, FALSE);
+    appendNumber(timestampedMessage, (tickNumberOfComputors % 100) / 10, FALSE);
+    appendNumber(timestampedMessage, tickNumberOfComputors % 10, FALSE);
     appendText(timestampedMessage, L"(");
-    appendNumber(timestampedMessage, nextTickNumberOfComputors, FALSE);
+    appendNumber(timestampedMessage, nextTickNumberOfComputors / 100, FALSE);
+    appendNumber(timestampedMessage, (nextTickNumberOfComputors % 100) / 10, FALSE);
+    appendNumber(timestampedMessage, nextTickNumberOfComputors % 10, FALSE);
     appendText(timestampedMessage, L").");
     appendNumber(timestampedMessage, system.tick, FALSE);
     appendText(timestampedMessage, L".");
@@ -4387,71 +4369,74 @@ static void increaseEnergy(unsigned char* publicKey, long long amount, unsigned 
 {
     // TODO: numberOfEntities!
 
-    unsigned int index = (*((unsigned int*)publicKey)) & (MAX_NUMBER_OF_ENTITIES - 1);
+    unsigned int index = (*((unsigned int*)publicKey)) & (SPECTRUM_CAPACITY - 1);
 
-    while (_InterlockedCompareExchange8(&entitiesLock, 1, 0))
+    while (_InterlockedCompareExchange8(&spectrumLock, 1, 0))
     {
         _mm_pause();
     }
 
 iteration:
-    if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)entities[index].publicKey), *((__m256i*)publicKey))) == 0xFFFFFFFF)
+    if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)spectrum[index].publicKey), *((__m256i*)publicKey))) == 0xFFFFFFFF)
     {
-        entities[index].amount += amount;
-        entities[index].latestChangeTick = tick;
+        spectrum[index].incomingAmount += amount;
+        spectrum[index].numberOfIncomingTransfers++;
+        spectrum[index].latestIncomingTransferTick = tick;
     }
     else
     {
-        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)entities[index].publicKey), ZERO)) == 0xFFFFFFFF)
+        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)spectrum[index].publicKey), ZERO)) == 0xFFFFFFFF)
         {
-            *((__m256i*)entities[index].publicKey) = *((__m256i*)publicKey);
-            entities[index].amount = amount;
-            entities[index].latestChangeTick = tick;
+            *((__m256i*)spectrum[index].publicKey) = *((__m256i*)publicKey);
+            spectrum[index].incomingAmount = amount;
+            spectrum[index].numberOfIncomingTransfers = 1;
+            spectrum[index].latestIncomingTransferTick = tick;
         }
         else
         {
-            index = (index + 1) & (MAX_NUMBER_OF_ENTITIES - 1);
+            index = (index + 1) & (SPECTRUM_CAPACITY - 1);
 
             goto iteration;
         }
     }
 
-    _InterlockedCompareExchange8(&entitiesLock, 0, 1);
+    _InterlockedCompareExchange8(&spectrumLock, 0, 1);
 }
 
 static bool decreaseEnergy(unsigned char* publicKey, long long amount, unsigned int tick)
 {
-    unsigned int index = (*((unsigned int*)publicKey)) & (MAX_NUMBER_OF_ENTITIES - 1);
+    unsigned int index = (*((unsigned int*)publicKey)) & (SPECTRUM_CAPACITY - 1);
 
-    while (_InterlockedCompareExchange8(&entitiesLock, 1, 0))
+    while (_InterlockedCompareExchange8(&spectrumLock, 1, 0))
     {
         _mm_pause();
     }
 
 iteration:
-    if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)entities[index].publicKey), *((__m256i*)publicKey))) == 0xFFFFFFFF)
+    if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)spectrum[index].publicKey), *((__m256i*)publicKey))) == 0xFFFFFFFF)
     {
-        if (entities[index].amount >= amount)
+        if (spectrum[index].incomingAmount - spectrum[index].outgoingAmount >= amount)
         {
-            entities[index].amount -= amount;
-            entities[index].latestChangeTick = tick;
+            spectrum[index].outgoingAmount += amount;
+            spectrum[index].numberOfOutgoingTransfers++;
+            spectrum[index].latestOutgoingTransferTick = tick;
 
-            _InterlockedCompareExchange8(&entitiesLock, 0, 1);
+            _InterlockedCompareExchange8(&spectrumLock, 0, 1);
 
             return true;
         }
     }
     else
     {
-        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)entities[index].publicKey), ZERO)) != 0xFFFFFFFF)
+        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)spectrum[index].publicKey), ZERO)) != 0xFFFFFFFF)
         {
-            index = (index + 1) & (MAX_NUMBER_OF_ENTITIES - 1);
+            index = (index + 1) & (SPECTRUM_CAPACITY - 1);
 
             goto iteration;
         }
     }
 
-    _InterlockedCompareExchange8(&entitiesLock, 0, 1);
+    _InterlockedCompareExchange8(&spectrumLock, 0, 1);
 
     return false;
 }
@@ -4602,9 +4587,9 @@ static void requestProcessor(void* ProcedureArgument)
                         bool shouldBeBroadcasted = !(dayIndex(time.Year - 2000, time.Month, time.Day) % 7);
                         if (!shouldBeBroadcasted)
                         {
-                            for (unsigned int j = 0; j < sizeof(resourceTestingSolutionIdentitiesToBroadcast) / sizeof(resourceTestingSolutionIdentitiesToBroadcast[0]); j++)
+                            for (unsigned int j = 0; j < sizeof(resourceTestingSolutionIdspectrumToBroadcast) / sizeof(resourceTestingSolutionIdspectrumToBroadcast[0]); j++)
                             {
-                                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->resourceTestingSolution.computorPublicKey), *((__m256i*)resourceTestingSolutionIdentitiesToBroadcast[j]))) == 0xFFFFFFFF)
+                                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->resourceTestingSolution.computorPublicKey), *((__m256i*)resourceTestingSolutionIdspectrumToBroadcast[j]))) == 0xFFFFFFFF)
                                 {
                                     shouldBeBroadcasted = true;
 
@@ -4942,26 +4927,6 @@ static void requestProcessor(void* ProcedureArgument)
                             unsigned char digest[32];
                             KangarooTwelve((unsigned char*)request, sizeof(Terminator) - SIGNATURE_SIZE, digest, sizeof(digest));
                             if (verify(adminPublicKey, digest, request->terminator.signature))
-                            {
-                                responseSize = requestHeader->size;
-                            }
-                        }
-                    }
-                }
-                break;
-
-                case BROADCAST_INITIAL_LEDGER_DIGEST:
-                {
-                    BroadcastInitialLedgerDigest* request = (BroadcastInitialLedgerDigest*)((char*)processor->cache + sizeof(RequestResponseHeader));
-                    if (request->initialLedgerDigest.computorIndex < NUMBER_OF_COMPUTORS)
-                    {
-                        if (request->initialLedgerDigest.epoch == broadcastedComputors.broadcastComputors.computors.epoch)
-                        {
-                            unsigned char digest[32];
-                            request->initialLedgerDigest.computorIndex ^= BROADCAST_INITIAL_LEDGER_DIGEST;
-                            KangarooTwelve((unsigned char*)&request->initialLedgerDigest, sizeof(InitialLedgerDigest) - sizeof(request->initialLedgerDigest.nonce) - SIGNATURE_SIZE, digest, sizeof(digest));
-                            request->initialLedgerDigest.computorIndex ^= BROADCAST_INITIAL_LEDGER_DIGEST;
-                            if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->initialLedgerDigest.computorIndex], digest, request->initialLedgerDigest.signature))
                             {
                                 responseSize = requestHeader->size;
                             }
@@ -5506,25 +5471,25 @@ static void saveSystem()
     }
 }
 
-static void saveLedger()
+static void saveSpectrum()
 {
     const unsigned long long beginningTick = __rdtsc();
 
     EFI_FILE_PROTOCOL* dataFile;
     EFI_STATUS status;
-    if (status = root->Open(root, (void**)&dataFile, (CHAR16*)LEDGER_DATA_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0))
+    if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SPECTRUM_DATA_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0))
     {
         logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status, __LINE__);
     }
     else
     {
-        while (_InterlockedCompareExchange8(&entitiesLock, 1, 0))
+        while (_InterlockedCompareExchange8(&spectrumLock, 1, 0))
         {
             _mm_pause();
         }
 
-        unsigned long long size = MAX_NUMBER_OF_ENTITIES * sizeof(Entity);
-        status = dataFile->Write(dataFile, &size, entities);
+        unsigned long long size = SPECTRUM_CAPACITY * sizeof(Entity);
+        status = dataFile->Write(dataFile, &size, spectrum);
         dataFile->Close(dataFile);
         if (status)
         {
@@ -5533,13 +5498,13 @@ static void saveLedger()
         else
         {
             setNumber(message, size, TRUE);
-            appendText(message, L" bytes of the ledger data are saved (");
+            appendText(message, L" bytes of the spectrum data are saved (");
             appendNumber(message, (__rdtsc() - beginningTick) * 1000 / frequency, TRUE);
             appendText(message, L" ms).");
             log(message);
         }
 
-        _InterlockedCompareExchange8(&entitiesLock, 0, 1);
+        _InterlockedCompareExchange8(&spectrumLock, 0, 1);
     }
 }
 #endif
@@ -5566,6 +5531,27 @@ static void saveSolution()
 }
 #endif
 
+static void getInitialSpectrumDigest()
+{
+    unsigned int digestIndex;
+    for (digestIndex = 0; digestIndex < SPECTRUM_CAPACITY; digestIndex++)
+    {
+        KangarooTwelve((unsigned char*)&initialSpectrum[digestIndex], sizeof(Entity), initialSpectrumDigests[digestIndex], 32);
+    }
+    unsigned int previousLevelBeginning = 0;
+    unsigned int numberOfLeafs = SPECTRUM_CAPACITY;
+    while (numberOfLeafs != 1)
+    {
+        for (unsigned int i = 0; i < numberOfLeafs; i += 2)
+        {
+            KangarooTwelve(initialSpectrumDigests[previousLevelBeginning + i], 64, initialSpectrumDigests[digestIndex++], 32);
+        }
+
+        previousLevelBeginning += numberOfLeafs;
+        numberOfLeafs >>= 1;
+    }
+}
+
 static BOOLEAN initialize()
 {
     enableAVX2();
@@ -5585,9 +5571,9 @@ static BOOLEAN initialize()
     getPublicKeyFromIdentity((const unsigned char*)COMPUTOR, computorPublicKey);
     getPublicKeyFromIdentity((const unsigned char*)ADMIN, adminPublicKey);
 
-    for (unsigned int i = 0; i < sizeof(resourceTestingSolutionIdentitiesToBroadcast) / sizeof(resourceTestingSolutionIdentitiesToBroadcast[0]); i++)
+    for (unsigned int i = 0; i < sizeof(resourceTestingSolutionIdspectrumToBroadcast) / sizeof(resourceTestingSolutionIdspectrumToBroadcast[0]); i++)
     {
-        getPublicKeyFromIdentity(resourceTestingSolutionIdentitiesToBroadcast[i], resourceTestingSolutionIdentitiesToBroadcast[i]);
+        getPublicKeyFromIdentity(resourceTestingSolutionIdspectrumToBroadcast[i], resourceTestingSolutionIdspectrumToBroadcast[i]);
     }
 
     frequency = __rdtsc();
@@ -5644,9 +5630,6 @@ static BOOLEAN initialize()
     requestedTicks.header.size = sizeof(requestedTicks);
     requestedTicks.header.protocol = VERSION_B;
     requestedTicks.header.type = REQUEST_TICKS;
-    broadcastedInitialLedgerDigest.header.size = sizeof(broadcastedInitialLedgerDigest);
-    broadcastedInitialLedgerDigest.header.protocol = VERSION_B;
-    broadcastedInitialLedgerDigest.header.type = BROADCAST_INITIAL_LEDGER_DIGEST;
 
     EFI_STATUS status;
 
@@ -5760,8 +5743,8 @@ static BOOLEAN initialize()
         bs->SetMem(numberOfBufferedTransfers, sizeof(numberOfBufferedTransfers), 0);
         bs->SetMem(chosenTransfersInvocationsAndQuestionSizes, sizeof(chosenTransfersInvocationsAndQuestionSizes), 0);
 
-        if ((status = bs->AllocatePool(EfiRuntimeServicesData, MAX_NUMBER_OF_ENTITIES * sizeof(Entity), (void**)&initialEntities))
-            || (status = bs->AllocatePool(EfiRuntimeServicesData, MAX_NUMBER_OF_ENTITIES * sizeof(Entity), (void**)&entities)))
+        if ((status = bs->AllocatePool(EfiRuntimeServicesData, SPECTRUM_CAPACITY * sizeof(Entity), (void**)&initialSpectrum))
+            || (status = bs->AllocatePool(EfiRuntimeServicesData, SPECTRUM_CAPACITY * sizeof(Entity), (void**)&spectrum)))
         {
             logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status, __LINE__);
 
@@ -5802,7 +5785,7 @@ static BOOLEAN initialize()
             }
         }
 
-        if (status = root->Open(root, (void**)&dataFile, (CHAR16*)LEDGER_DATA_FILE_NAME, EFI_FILE_MODE_READ, 0))
+        if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SPECTRUM_DATA_FILE_NAME, EFI_FILE_MODE_READ, 0))
         {
             logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status, __LINE__);
 
@@ -5810,10 +5793,10 @@ static BOOLEAN initialize()
         }
         else
         {
-            bs->SetMem(initialEntities, MAX_NUMBER_OF_ENTITIES * sizeof(Entity), 0);
+            bs->SetMem(initialSpectrum, SPECTRUM_CAPACITY * sizeof(Entity), 0);
 
-            unsigned long long size = MAX_NUMBER_OF_ENTITIES * sizeof(Entity);
-            status = dataFile->Read(dataFile, &size, initialEntities);
+            unsigned long long size = SPECTRUM_CAPACITY * sizeof(Entity);
+            status = dataFile->Read(dataFile, &size, initialSpectrum);
             dataFile->Close(dataFile);
             if (status)
             {
@@ -5822,27 +5805,33 @@ static BOOLEAN initialize()
                 return FALSE;
             }
 
-            bs->CopyMem(entities, initialEntities, MAX_NUMBER_OF_ENTITIES * sizeof(Entity));
+            bs->CopyMem(spectrum, initialSpectrum, SPECTRUM_CAPACITY * sizeof(Entity));
 
             CHAR16 digest[64 + 1];
             unsigned long long totalAmount = 0;
 
-            KangarooTwelve((unsigned char*)entities, MAX_NUMBER_OF_ENTITIES * sizeof(Entity), entitiesDigest, sizeof(entitiesDigest));
-            getHash(entitiesDigest, digest);
+            const unsigned long long beginningTick = __rdtsc();
+            getInitialSpectrumDigest();
+            setNumber(message, SPECTRUM_CAPACITY * sizeof(Entity), TRUE);
+            appendText(message, L" bytes of the spectrum data are hashed (");
+            appendNumber(message, (__rdtsc() - beginningTick) * 1000 / frequency, TRUE);
+            appendText(message, L" ms).");
+            log(message);
+            getHash(initialSpectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1], digest);
 
-            for (unsigned int i = 0; i < MAX_NUMBER_OF_ENTITIES; i++)
+            for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
             {
-                if (entities[i].amount)
+                if (spectrum[i].incomingAmount - spectrum[i].outgoingAmount)
                 {
                     numberOfEntities++;
-                    totalAmount += entities[i].amount;
+                    totalAmount += spectrum[i].incomingAmount - spectrum[i].outgoingAmount;
                 }
             }
 
             setNumber(message, totalAmount, TRUE);
             appendText(message, L" qus in ");
             appendNumber(message, numberOfEntities, TRUE);
-            appendText(message, L" entities (ledger digest = ");
+            appendText(message, L" entities (digest = ");
             appendText(message, digest);
             appendText(message, L").");
             log(message);
@@ -5985,13 +5974,13 @@ static void deinitialize()
 #endif
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
-    if (entities)
+    if (spectrum)
     {
-        bs->FreePool(entities);
+        bs->FreePool(spectrum);
     }
-    if (initialEntities)
+    if (initialSpectrum)
     {
-        bs->FreePool(initialEntities);
+        bs->FreePool(initialSpectrum);
     }
 #endif
 
@@ -6117,7 +6106,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
         }
         else
         {
-            for (unsigned int i = 0; i < graphicsOutputProtocol->Mode->MaxMode; i++)
+            /*for (unsigned int i = 0; i < graphicsOutputProtocol->Mode->MaxMode; i++)
             {
                 unsigned long long size;
                 EFI_GRAPHICS_OUTPUT_MODE_INFORMATION* modeInfo;
@@ -6143,7 +6132,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                     }
                     log(message);
                 }
-            }
+            }*/
         }
 
         EFI_GUID mpServiceProtocolGuid = EFI_MP_SERVICES_PROTOCOL_GUID;
@@ -7757,9 +7746,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     bool shouldBeBroadcasted = !(dayIndex(time.Year - 2000, time.Month, time.Day) % 7);
                                     if (!shouldBeBroadcasted)
                                     {
-                                        for (unsigned int i = 0; i < sizeof(resourceTestingSolutionIdentitiesToBroadcast) / sizeof(resourceTestingSolutionIdentitiesToBroadcast[0]); i++)
+                                        for (unsigned int i = 0; i < sizeof(resourceTestingSolutionIdspectrumToBroadcast) / sizeof(resourceTestingSolutionIdspectrumToBroadcast[0]); i++)
                                         {
-                                            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)broadcastedSolution.broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey), *((__m256i*)resourceTestingSolutionIdentitiesToBroadcast[i]))) == 0xFFFFFFFF)
+                                            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)broadcastedSolution.broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey), *((__m256i*)resourceTestingSolutionIdspectrumToBroadcast[i]))) == 0xFFFFFFFF)
                                             {
                                                 shouldBeBroadcasted = true;
 
