@@ -16,7 +16,7 @@ static const unsigned char defaultRouteGateway[4] = { 0, 0, 0, 0 };
 static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define OPERATOR "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-#define COMPUTOR "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+#define COMPUTOR "EEHHKLAELFGOMOEILMMPEAMGBHPNHJBKEAIINBIJDKGFPCABKGJEKLMGANFADFMJFCDFAL"
 #define SYSTEM_DATA_FILE_NAME L"system.data"
 #define SPECTRUM_DATA_FILE_NAME L"spectrum.data"
 #define SOLUTION_DATA_FILE_NAME L"solution.data"
@@ -30,8 +30,8 @@ static unsigned char resourceTestingSolutionIdspectrumToBroadcast[][70 + 1] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 38
-#define VERSION_C 5
+#define VERSION_B 39
+#define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -3913,9 +3913,16 @@ typedef struct
     unsigned char month;
     unsigned char year;
 
-    //unsigned char initialSpectrumDigest[32];
-    unsigned char saltedStateDigest[32];
-    unsigned char prevStateDigest[32];
+    unsigned char initSpectrumDigest[32];
+    unsigned char initComputerDigest[32];
+    unsigned char initUniverseDigest[32];
+    unsigned char prevSpectrumDigest[32];
+    unsigned char prevComputerDigest[32];
+    unsigned char prevUniverseDigest[32];
+    unsigned char saltedSpectrumDigest[32];
+    unsigned char saltedComputerDigest[32];
+    unsigned char saltedUniverseDigest[32];
+
     unsigned char nextTickChosenTransfersInvocationsAndQuestionsDigest[32];
 
     unsigned char signature[SIGNATURE_SIZE];
@@ -4105,8 +4112,8 @@ static unsigned int numberOfBufferedTransfers[sizeof(ownSeeds) / sizeof(ownSeeds
 static unsigned char bufferedTransferBytes[sizeof(ownSeeds) / sizeof(ownSeeds[0])][MAX_NUMBER_OF_TRANSFERS_PER_TICK][sizeof(Transfer) + MAX_TRANSFER_DESCRIPTION_SIZE + SIGNATURE_SIZE];
 static unsigned int chosenTransfersInvocationsAndQuestionSizes[NUMBER_OF_COMPUTORS];
 
-static Entity* initialSpectrum = NULL;
-static unsigned char initialSpectrumDigests[SPECTRUM_CAPACITY * 2 - 1][32];
+static Entity* initSpectrum = NULL;
+static unsigned char initSpectrumDigests[SPECTRUM_CAPACITY * 2 - 1][32];
 static volatile char spectrumLock = 0;
 static Entity* spectrum = NULL;
 static unsigned int numberOfEntities = 0;
@@ -5531,12 +5538,13 @@ static void saveSolution()
 }
 #endif
 
-static void getInitialSpectrumDigest()
+#if NUMBER_OF_COMPUTING_PROCESSORS
+static void getInitSpectrumDigest()
 {
     unsigned int digestIndex;
     for (digestIndex = 0; digestIndex < SPECTRUM_CAPACITY; digestIndex++)
     {
-        KangarooTwelve((unsigned char*)&initialSpectrum[digestIndex], sizeof(Entity), initialSpectrumDigests[digestIndex], 32);
+        KangarooTwelve((unsigned char*)&initSpectrum[digestIndex], sizeof(Entity), initSpectrumDigests[digestIndex], 32);
     }
     unsigned int previousLevelBeginning = 0;
     unsigned int numberOfLeafs = SPECTRUM_CAPACITY;
@@ -5544,13 +5552,14 @@ static void getInitialSpectrumDigest()
     {
         for (unsigned int i = 0; i < numberOfLeafs; i += 2)
         {
-            KangarooTwelve(initialSpectrumDigests[previousLevelBeginning + i], 64, initialSpectrumDigests[digestIndex++], 32);
+            KangarooTwelve(initSpectrumDigests[previousLevelBeginning + i], 64, initSpectrumDigests[digestIndex++], 32);
         }
 
         previousLevelBeginning += numberOfLeafs;
         numberOfLeafs >>= 1;
     }
 }
+#endif
 
 static BOOLEAN initialize()
 {
@@ -5743,7 +5752,7 @@ static BOOLEAN initialize()
         bs->SetMem(numberOfBufferedTransfers, sizeof(numberOfBufferedTransfers), 0);
         bs->SetMem(chosenTransfersInvocationsAndQuestionSizes, sizeof(chosenTransfersInvocationsAndQuestionSizes), 0);
 
-        if ((status = bs->AllocatePool(EfiRuntimeServicesData, SPECTRUM_CAPACITY * sizeof(Entity), (void**)&initialSpectrum))
+        if ((status = bs->AllocatePool(EfiRuntimeServicesData, SPECTRUM_CAPACITY * sizeof(Entity), (void**)&initSpectrum))
             || (status = bs->AllocatePool(EfiRuntimeServicesData, SPECTRUM_CAPACITY * sizeof(Entity), (void**)&spectrum)))
         {
             logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status, __LINE__);
@@ -5793,10 +5802,10 @@ static BOOLEAN initialize()
         }
         else
         {
-            bs->SetMem(initialSpectrum, SPECTRUM_CAPACITY * sizeof(Entity), 0);
+            bs->SetMem(initSpectrum, SPECTRUM_CAPACITY * sizeof(Entity), 0);
 
             unsigned long long size = SPECTRUM_CAPACITY * sizeof(Entity);
-            status = dataFile->Read(dataFile, &size, initialSpectrum);
+            status = dataFile->Read(dataFile, &size, initSpectrum);
             dataFile->Close(dataFile);
             if (status)
             {
@@ -5805,19 +5814,19 @@ static BOOLEAN initialize()
                 return FALSE;
             }
 
-            bs->CopyMem(spectrum, initialSpectrum, SPECTRUM_CAPACITY * sizeof(Entity));
+            bs->CopyMem(spectrum, initSpectrum, SPECTRUM_CAPACITY * sizeof(Entity));
 
             CHAR16 digest[64 + 1];
             unsigned long long totalAmount = 0;
 
             const unsigned long long beginningTick = __rdtsc();
-            getInitialSpectrumDigest();
+            getInitSpectrumDigest();
             setNumber(message, SPECTRUM_CAPACITY * sizeof(Entity), TRUE);
             appendText(message, L" bytes of the spectrum data are hashed (");
             appendNumber(message, (__rdtsc() - beginningTick) * 1000 / frequency, TRUE);
             appendText(message, L" ms).");
             log(message);
-            getHash(initialSpectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1], digest);
+            getHash(initSpectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1], digest);
 
             for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
             {
@@ -5978,9 +5987,9 @@ static void deinitialize()
     {
         bs->FreePool(spectrum);
     }
-    if (initialSpectrum)
+    if (initSpectrum)
     {
-        bs->FreePool(initialSpectrum);
+        bs->FreePool(initSpectrum);
     }
 #endif
 
@@ -6268,16 +6277,23 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         broadcastedTick.broadcastTick.tick.month = 0;// time.Month;
                                         broadcastedTick.broadcastTick.tick.year = 0;// time.Year - 2000;
 
-                                        *((__m256i*)broadcastedTick.broadcastTick.tick.prevStateDigest) = ZERO;
+                                        *((__m256i*)broadcastedTick.broadcastTick.tick.prevSpectrumDigest) = *((__m256i*)broadcastedTick.broadcastTick.tick.initSpectrumDigest) = *((__m256i*)initSpectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1]);
+                                        *((__m256i*)broadcastedTick.broadcastTick.tick.prevComputerDigest) = *((__m256i*)broadcastedTick.broadcastTick.tick.initComputerDigest) = ZERO;
+                                        *((__m256i*)broadcastedTick.broadcastTick.tick.prevUniverseDigest) = *((__m256i*)broadcastedTick.broadcastTick.tick.initUniverseDigest) = ZERO;
+
                                         *((__m256i*)broadcastedTick.broadcastTick.tick.nextTickChosenTransfersInvocationsAndQuestionsDigest) = ZERO;
 
                                         for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
                                         {
                                             broadcastedTick.broadcastTick.tick.computorIndex = ownComputorIndices[i] ^ BROADCAST_TICK;
-                                            unsigned char publicKeyAndStateDigest[32 + 32];
-                                            *((__m256i*)&publicKeyAndStateDigest[0]) = *((__m256i*)ownPublicKeys[ownComputorIndicesMapping[i]]);
-                                            *((__m256i*)&publicKeyAndStateDigest[32]) = ZERO;
-                                            KangarooTwelve(publicKeyAndStateDigest, sizeof(publicKeyAndStateDigest), broadcastedTick.broadcastTick.tick.saltedStateDigest, sizeof(broadcastedTick.broadcastTick.tick.saltedStateDigest));
+                                            unsigned char saltedData[32 + 32];
+                                            *((__m256i*)&saltedData[0]) = *((__m256i*)ownPublicKeys[ownComputorIndicesMapping[i]]);
+                                            *((__m256i*)&saltedData[32]) = *((__m256i*)broadcastedTick.broadcastTick.tick.prevSpectrumDigest);
+                                            KangarooTwelve(saltedData, sizeof(saltedData), broadcastedTick.broadcastTick.tick.saltedSpectrumDigest, sizeof(broadcastedTick.broadcastTick.tick.saltedSpectrumDigest));
+                                            *((__m256i*)&saltedData[32]) = *((__m256i*)broadcastedTick.broadcastTick.tick.prevComputerDigest);
+                                            KangarooTwelve(saltedData, sizeof(saltedData), broadcastedTick.broadcastTick.tick.saltedComputerDigest, sizeof(broadcastedTick.broadcastTick.tick.saltedComputerDigest));
+                                            *((__m256i*)&saltedData[32]) = *((__m256i*)broadcastedTick.broadcastTick.tick.prevUniverseDigest);
+                                            KangarooTwelve(saltedData, sizeof(saltedData), broadcastedTick.broadcastTick.tick.saltedUniverseDigest, sizeof(broadcastedTick.broadcastTick.tick.saltedUniverseDigest));
 
                                             unsigned char digest[32];
                                             KangarooTwelve((unsigned char*)&broadcastedTick.broadcastTick.tick, broadcastedTick.header.size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
@@ -6316,19 +6332,36 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if (actualTicks[j].epoch == system.epoch
                                                 && actualTicks[j].tick == system.tick + 1
                                                 && *((unsigned long long*)&actualTicks[j].millisecond) == *((unsigned long long*)&actualTicks[ownComputorIndices[0]].millisecond)
-                                                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].prevStateDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].prevStateDigest))) == 0xFFFFFFFF
+                                                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].prevSpectrumDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].prevSpectrumDigest))) == 0xFFFFFFFF
+                                                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].prevComputerDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].prevComputerDigest))) == 0xFFFFFFFF
+                                                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].prevUniverseDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].prevUniverseDigest))) == 0xFFFFFFFF
+                                                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].initSpectrumDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].initSpectrumDigest))) == 0xFFFFFFFF
+                                                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].initComputerDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].initComputerDigest))) == 0xFFFFFFFF
+                                                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].initUniverseDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].initUniverseDigest))) == 0xFFFFFFFF
                                                 && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].nextTickChosenTransfersInvocationsAndQuestionsDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].nextTickChosenTransfersInvocationsAndQuestionsDigest))) == 0xFFFFFFFF)
                                             {
-                                                unsigned char publicKeyAndStateDigest[32 + 32];
-                                                *((__m256i*)&publicKeyAndStateDigest[0]) = *((__m256i*)broadcastedComputors.broadcastComputors.computors.publicKeys[actualTicks[j].computorIndex]);
-                                                *((__m256i*)&publicKeyAndStateDigest[32]) = ZERO;
-                                                unsigned char saltedStateDigest[32];
-                                                KangarooTwelve(publicKeyAndStateDigest, sizeof(publicKeyAndStateDigest), saltedStateDigest, sizeof(saltedStateDigest));
-                                                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].saltedStateDigest), *((__m256i*)saltedStateDigest))) == 0xFFFFFFFF)
+                                                unsigned char saltedData[32 + 32];
+                                                *((__m256i*)&saltedData[0]) = *((__m256i*)broadcastedComputors.broadcastComputors.computors.publicKeys[actualTicks[j].computorIndex]);
+                                                *((__m256i*)&saltedData[32]) = *((__m256i*)actualTicks[ownComputorIndices[0]].prevSpectrumDigest);
+                                                unsigned char saltedDigest[32];
+                                                KangarooTwelve(saltedData, sizeof(saltedData), saltedDigest, sizeof(saltedDigest));
+                                                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].saltedSpectrumDigest), *((__m256i*)saltedDigest))) == 0xFFFFFFFF)
                                                 {
-                                                    tickNumberOfComputors++;
+                                                    *((__m256i*)&saltedData[32]) = *((__m256i*)actualTicks[ownComputorIndices[0]].prevComputerDigest);
+                                                    unsigned char saltedDigest[32];
+                                                    KangarooTwelve(saltedData, sizeof(saltedData), saltedDigest, sizeof(saltedDigest));
+                                                    if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].saltedComputerDigest), *((__m256i*)saltedDigest))) == 0xFFFFFFFF)
+                                                    {
+                                                        *((__m256i*)&saltedData[32]) = *((__m256i*)actualTicks[ownComputorIndices[0]].prevUniverseDigest);
+                                                        unsigned char saltedDigest[32];
+                                                        KangarooTwelve(saltedData, sizeof(saltedData), saltedDigest, sizeof(saltedDigest));
+                                                        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].saltedUniverseDigest), *((__m256i*)saltedDigest))) == 0xFFFFFFFF)
+                                                        {
+                                                            tickNumberOfComputors++;
 
-                                                    counters[j] = 1;
+                                                            counters[j] = 1;
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
