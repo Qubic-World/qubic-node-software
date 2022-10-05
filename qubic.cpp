@@ -16,12 +16,13 @@ static const unsigned char defaultRouteGateway[4] = { 0, 0, 0, 0 };
 static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 #define OPERATOR "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-#define COMPUTOR "EEHHKLAELFGOMOEILMMPEAMGBHPNHJBKEAIINBIJDKGFPCABKGJEKLMGANFADFMJFCDFAL"
-#define SYSTEM_DATA_FILE_NAME L"system.data"
-#define SPECTRUM_DATA_FILE_NAME L"spectrum.data"
+#define COMPUTOR "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 #define SOLUTION_DATA_FILE_NAME L"solution.data"
+#define SPECTRUM_DATA_FILE_NAME L"spectrum.data"
+#define SYSTEM_DATA_FILE_NAME L"system.data"
+#define TICKS_DATA_FILE_NAME L"ticks.data"
 
-static unsigned char resourceTestingSolutionIdspectrumToBroadcast[][70 + 1] = {
+static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
     "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 };
 
@@ -30,7 +31,7 @@ static unsigned char resourceTestingSolutionIdspectrumToBroadcast[][70 + 1] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 39
+#define VERSION_B 40
 #define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
@@ -38,7 +39,7 @@ static unsigned char resourceTestingSolutionIdspectrumToBroadcast[][70 + 1] = {
 static const unsigned char knownPublicPeers[][4] = {
 };
 
-#define EPOCH 24
+#define EPOCH 25
 #define TICK 2654296
 
 #include <intrin.h>
@@ -3782,6 +3783,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define SIGNATURE_SIZE 64
 #define SOLUTION_THRESHOLD 27
 #define SPECTRUM_CAPACITY 0x1000000 // Must be 2^N
+#define SPECTRUM_DEPTH 24 // Is derived from SPECTRUM_CAPACITY (=N)
 #define SYSTEM_DATA_SAVING_PERIOD 300
 #define VOLUME_LABEL L"Qubic"
 
@@ -4112,11 +4114,21 @@ static unsigned int numberOfBufferedTransfers[sizeof(ownSeeds) / sizeof(ownSeeds
 static unsigned char bufferedTransferBytes[sizeof(ownSeeds) / sizeof(ownSeeds[0])][MAX_NUMBER_OF_TRANSFERS_PER_TICK][sizeof(Transfer) + MAX_TRANSFER_DESCRIPTION_SIZE + SIGNATURE_SIZE];
 static unsigned int chosenTransfersInvocationsAndQuestionSizes[NUMBER_OF_COMPUTORS];
 
+static struct QuorumTick
+{
+    // TODO
+} quorumTick;
+
 static Entity* initSpectrum = NULL;
-static unsigned char initSpectrumDigests[SPECTRUM_CAPACITY * 2 - 1][32];
+static __m256i* initSpectrumDigests = NULL;
 static volatile char spectrumLock = 0;
 static Entity* spectrum = NULL;
 static unsigned int numberOfEntities = 0;
+static unsigned long long spectrumDigestCalculationBeginningTick = 0;
+static volatile char spectrumDigestLock = 0;
+static volatile unsigned char spectrumDigestLevel = 0;
+static volatile short spectrumDigestLevelCompleteness;
+static __m256i* spectrumDigests = NULL;
 #endif
 static char chosenTransfersInvocationsAndQuestionBytes[NUMBER_OF_COMPUTORS][sizeof(BroadcastChosenTransfersInvocationsAndQuestions) + (sizeof(Transfer) + MAX_TRANSFER_DESCRIPTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_TRANSFERS_PER_TICK + (sizeof(Invocation) + MAX_INVOCATION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_INVOCATIONS_PER_TICK + (sizeof(Question) + MAX_QUESTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_QUESTIONS_PER_TICK + SIGNATURE_SIZE];
 
@@ -4594,9 +4606,9 @@ static void requestProcessor(void* ProcedureArgument)
                         bool shouldBeBroadcasted = !(dayIndex(time.Year - 2000, time.Month, time.Day) % 7);
                         if (!shouldBeBroadcasted)
                         {
-                            for (unsigned int j = 0; j < sizeof(resourceTestingSolutionIdspectrumToBroadcast) / sizeof(resourceTestingSolutionIdspectrumToBroadcast[0]); j++)
+                            for (unsigned int j = 0; j < sizeof(resourceTestingSolutionIdentitiesToBroadcast) / sizeof(resourceTestingSolutionIdentitiesToBroadcast[0]); j++)
                             {
-                                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->resourceTestingSolution.computorPublicKey), *((__m256i*)resourceTestingSolutionIdspectrumToBroadcast[j]))) == 0xFFFFFFFF)
+                                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->resourceTestingSolution.computorPublicKey), *((__m256i*)resourceTestingSolutionIdentitiesToBroadcast[j]))) == 0xFFFFFFFF)
                                 {
                                     shouldBeBroadcasted = true;
 
@@ -5344,14 +5356,12 @@ static void computorProcessor(void* ProcedureArgument)
 {
     enableAVX2();
 
-    // TODO
-}
+    const unsigned int computingProcessorIndex = (unsigned int)((unsigned long long)ProcedureArgument);
 
-static void computorShutdownCallback(EFI_EVENT Event, void* Context)
-{
-    bs->CloseEvent(Event);
-
-    // TODO
+    while (!state)
+    {
+        _mm_pause();
+    }
 }
 #endif
 
@@ -5440,12 +5450,12 @@ static void minerProcessor(void* ProcedureArgument)
         _InterlockedIncrement64(&numberOfMiningIterations);
     }
 }
+#endif
 
-static void minerShutdownCallback(EFI_EVENT Event, void* Context)
+static void shutdownCallback(EFI_EVENT Event, void* Context)
 {
     bs->CloseEvent(Event);
 }
-#endif
 
 static void emptyCallback(EFI_EVENT Event, void* Context)
 {
@@ -5544,7 +5554,7 @@ static void getInitSpectrumDigest()
     unsigned int digestIndex;
     for (digestIndex = 0; digestIndex < SPECTRUM_CAPACITY; digestIndex++)
     {
-        KangarooTwelve((unsigned char*)&initSpectrum[digestIndex], sizeof(Entity), initSpectrumDigests[digestIndex], 32);
+        KangarooTwelve((unsigned char*)&initSpectrum[digestIndex], sizeof(Entity), (unsigned char*)&initSpectrumDigests[digestIndex], 32);
     }
     unsigned int previousLevelBeginning = 0;
     unsigned int numberOfLeafs = SPECTRUM_CAPACITY;
@@ -5552,7 +5562,7 @@ static void getInitSpectrumDigest()
     {
         for (unsigned int i = 0; i < numberOfLeafs; i += 2)
         {
-            KangarooTwelve(initSpectrumDigests[previousLevelBeginning + i], 64, initSpectrumDigests[digestIndex++], 32);
+            KangarooTwelve((unsigned char*)&initSpectrumDigests[previousLevelBeginning + i], 64, (unsigned char*)&initSpectrumDigests[digestIndex++], 32);
         }
 
         previousLevelBeginning += numberOfLeafs;
@@ -5580,9 +5590,9 @@ static BOOLEAN initialize()
     getPublicKeyFromIdentity((const unsigned char*)COMPUTOR, computorPublicKey);
     getPublicKeyFromIdentity((const unsigned char*)ADMIN, adminPublicKey);
 
-    for (unsigned int i = 0; i < sizeof(resourceTestingSolutionIdspectrumToBroadcast) / sizeof(resourceTestingSolutionIdspectrumToBroadcast[0]); i++)
+    for (unsigned int i = 0; i < sizeof(resourceTestingSolutionIdentitiesToBroadcast) / sizeof(resourceTestingSolutionIdentitiesToBroadcast[0]); i++)
     {
-        getPublicKeyFromIdentity(resourceTestingSolutionIdspectrumToBroadcast[i], resourceTestingSolutionIdspectrumToBroadcast[i]);
+        getPublicKeyFromIdentity(resourceTestingSolutionIdentitiesToBroadcast[i], resourceTestingSolutionIdentitiesToBroadcast[i]);
     }
 
     frequency = __rdtsc();
@@ -5753,7 +5763,9 @@ static BOOLEAN initialize()
         bs->SetMem(chosenTransfersInvocationsAndQuestionSizes, sizeof(chosenTransfersInvocationsAndQuestionSizes), 0);
 
         if ((status = bs->AllocatePool(EfiRuntimeServicesData, SPECTRUM_CAPACITY * sizeof(Entity), (void**)&initSpectrum))
-            || (status = bs->AllocatePool(EfiRuntimeServicesData, SPECTRUM_CAPACITY * sizeof(Entity), (void**)&spectrum)))
+            || (status = bs->AllocatePool(EfiRuntimeServicesData, SPECTRUM_CAPACITY * sizeof(Entity), (void**)&spectrum))
+            || (status = bs->AllocatePool(EfiRuntimeServicesData, (SPECTRUM_CAPACITY * 2 - 1) * 32, (void**)&initSpectrumDigests))
+            || (status = bs->AllocatePool(EfiRuntimeServicesData, (SPECTRUM_CAPACITY * 2 - 1) * 32, (void**)&spectrumDigests)))
         {
             logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status, __LINE__);
 
@@ -5816,7 +5828,7 @@ static BOOLEAN initialize()
 
             bs->CopyMem(spectrum, initSpectrum, SPECTRUM_CAPACITY * sizeof(Entity));
 
-            CHAR16 digest[64 + 1];
+            CHAR16 hash[64 + 1];
             unsigned long long totalAmount = 0;
 
             const unsigned long long beginningTick = __rdtsc();
@@ -5826,7 +5838,7 @@ static BOOLEAN initialize()
             appendNumber(message, (__rdtsc() - beginningTick) * 1000 / frequency, TRUE);
             appendText(message, L" ms).");
             log(message);
-            getHash(initSpectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1], digest);
+            getHash((unsigned char*)&initSpectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1], hash);
 
             for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
             {
@@ -5841,7 +5853,7 @@ static BOOLEAN initialize()
             appendText(message, L" qus in ");
             appendNumber(message, numberOfEntities, TRUE);
             appendText(message, L" entities (digest = ");
-            appendText(message, digest);
+            appendText(message, hash);
             appendText(message, L").");
             log(message);
         }
@@ -5849,9 +5861,9 @@ static BOOLEAN initialize()
 
 #if NUMBER_OF_MINING_PROCESSORS
         miningData[0] = 804;
-        miningData[1] = 477;
+        miningData[1] = 3;
         miningData[2] = 826;
-        miningData[3] = 73;
+        miningData[3] = 0;
         miningData[4] = 53;
         KangarooTwelve((unsigned char*)miningData, 5 * sizeof(unsigned long long), (unsigned char*)miningData, sizeof(miningData));
 
@@ -5983,6 +5995,14 @@ static void deinitialize()
 #endif
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
+    if (spectrumDigests)
+    {
+        bs->FreePool(spectrumDigests);
+    }
+    if (initSpectrumDigests)
+    {
+        bs->FreePool(initSpectrumDigests);
+    }
     if (spectrum)
     {
         bs->FreePool(spectrum);
@@ -6186,7 +6206,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                 for (unsigned int i = 0; i < numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS); i++)
                 {
-                    EFI_STATUS status;
                     if (status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, emptyCallback, NULL, &processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].event))
                     {
                         logStatus(L"EFI_BOOT_SERVICES.CreateEvent() fails", status, __LINE__);
@@ -6207,7 +6226,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                     appendText(message, L".");
                     log(message);
 
-                    EFI_STATUS status;
                     if (status = bs->LocateProtocol(&tcp4ServiceBindingProtocolGuid, NULL, (void**)&tcp4ServiceBindingProtocol))
                     {
                         logStatus(L"EFI_TCP4_SERVICE_BINDING_PROTOCOL is not located", status, __LINE__);
@@ -6224,11 +6242,23 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 #endif
                             )
                         {
+#if NUMBER_OF_COMPUTING_PROCESSORS
+                            for (unsigned int i = 0; i < NUMBER_OF_COMPUTING_PROCESSORS; i++)
+                            {
+                                if (status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, shutdownCallback, NULL, &computorEvents[i]))
+                                {
+                                    logStatus(L"EFI_BOOT_SERVICES.CreateEvent() fails", status, __LINE__);
+                                }
+                                else
+                                {
+                                    mpServicesProtocol->StartupThisAP(mpServicesProtocol, computorProcessor, processors[i].number, computorEvents[i], 0, (void*)((unsigned long long)i), NULL);
+                                }
+                            }
+#endif
 #if NUMBER_OF_MINING_PROCESSORS
                             for (unsigned int i = 0; i < NUMBER_OF_MINING_PROCESSORS; i++)
                             {
-                                EFI_STATUS status;
-                                if (status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, minerShutdownCallback, NULL, &minerEvents[i]))
+                                if (status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, shutdownCallback, NULL, &minerEvents[i]))
                                 {
                                     logStatus(L"EFI_BOOT_SERVICES.CreateEvent() fails", status, __LINE__);
                                 }
@@ -6277,7 +6307,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         broadcastedTick.broadcastTick.tick.month = 0;// time.Month;
                                         broadcastedTick.broadcastTick.tick.year = 0;// time.Year - 2000;
 
-                                        *((__m256i*)broadcastedTick.broadcastTick.tick.prevSpectrumDigest) = *((__m256i*)broadcastedTick.broadcastTick.tick.initSpectrumDigest) = *((__m256i*)initSpectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1]);
+                                        *((__m256i*)broadcastedTick.broadcastTick.tick.prevSpectrumDigest) = *((__m256i*)broadcastedTick.broadcastTick.tick.initSpectrumDigest) = initSpectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1];
                                         *((__m256i*)broadcastedTick.broadcastTick.tick.prevComputerDigest) = *((__m256i*)broadcastedTick.broadcastTick.tick.initComputerDigest) = ZERO;
                                         *((__m256i*)broadcastedTick.broadcastTick.tick.prevUniverseDigest) = *((__m256i*)broadcastedTick.broadcastTick.tick.initUniverseDigest) = ZERO;
 
@@ -6311,7 +6341,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                             for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
                                             {
-                                                push(&peers[j], &broadcastedTick.header, true);
+                                                //push(&peers[j], &broadcastedTick.header, true);
                                             }
                                         }
                                     }
@@ -6817,7 +6847,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 }
                                                 else
                                                 {
-                                                    EFI_STATUS status;
                                                     if (status = bs->OpenProtocol(peers[i].connectAcceptToken.NewChildHandle, &tcp4ProtocolGuid, (void**)&peers[i].tcp4Protocol, ih, NULL, EFI_OPEN_PROTOCOL_GET_PROTOCOL))
                                                     {
                                                         logStatus(L"EFI_BOOT_SERVICES.OpenProtocol() fails", status, __LINE__);
@@ -6976,17 +7005,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                         addPublicPeer(request->peers[j]);
                                                                     }
 
-                                                                    unsigned char* software = ((unsigned char*)peers[i].receiveBuffer) + (sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers));
-                                                                    char peerSoftware[512];
-                                                                    bs->SetMem(peerSoftware, sizeof(peerSoftware), 0);
-                                                                    for (unsigned int j = 0; j < software[0]; j++)
-                                                                    {
-                                                                        peerSoftware[j << 1] = software[1 + j];
-                                                                    }
-                                                                    setText(message, (const CHAR16*)peerSoftware);
-                                                                    appendText(message, L" connects.");
-                                                                    log(message);
-
                                                                     _InterlockedIncrement64(&numberOfProcessedRequests);
                                                                 }
                                                                 break;
@@ -7113,7 +7131,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 peers[i].receiveData.DataLength = peers[i].receiveData.FragmentTable[0].FragmentLength = BUFFER_SIZE - (unsigned int)((unsigned long long)peers[i].receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peers[i].receiveBuffer);
                                                 if (peers[i].receiveData.DataLength)
                                                 {
-                                                    EFI_STATUS status;
                                                     if (status = peers[i].tcp4Protocol->Receive(peers[i].tcp4Protocol, &peers[i].receiveToken))
                                                     {
                                                         logStatus(L"EFI_TCP4_PROTOCOL.Receive() fails", status, __LINE__);
@@ -7161,7 +7178,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             bs->CopyMem(peers[i].transmitData.FragmentTable[0].FragmentBuffer, peers[i].dataToTransmit, size);
                                             bs->CopyMem(peers[i].dataToTransmit, &peers[i].dataToTransmit[size], peers[i].dataToTransmitSize -= size);
                                             peers[i].transmitData.DataLength = peers[i].transmitData.FragmentTable[0].FragmentLength = size;
-                                            EFI_STATUS status;
                                             if (status = peers[i].tcp4Protocol->Transmit(peers[i].tcp4Protocol, &peers[i].transmitToken))
                                             {
                                                 logStatus(L"EFI_TCP4_PROTOCOL.Transmit() fails", status, __LINE__);
@@ -7202,7 +7218,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     peers[i].exchangedPublicPeers = FALSE;
                                                     peers[i].isClosing = FALSE;
 
-                                                    EFI_STATUS status;
                                                     if (status = peers[i].tcp4Protocol->Connect(peers[i].tcp4Protocol, (EFI_TCP4_CONNECTION_TOKEN*)&peers[i].connectAcceptToken))
                                                     {
                                                         logStatus(L"EFI_TCP4_PROTOCOL.Connect() fails", status, __LINE__);
@@ -7231,7 +7246,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             peers[i].exchangedPublicPeers = FALSE;
                                             peers[i].isClosing = FALSE;
 
-                                            EFI_STATUS status;
                                             if (status = peerTcp4Protocol->Accept(peerTcp4Protocol, &peers[i].connectAcceptToken))
                                             {
                                                 logStatus(L"EFI_TCP4_PROTOCOL.Accept() fails", status, __LINE__);
@@ -7268,7 +7282,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             }
                                             else
                                             {
-                                                EFI_STATUS status;
                                                 if (status = bs->OpenProtocol(clients[i].acceptToken.NewChildHandle, &tcp4ProtocolGuid, (void**)&clients[i].tcp4Protocol, ih, NULL, EFI_OPEN_PROTOCOL_GET_PROTOCOL))
                                                 {
                                                     logStatus(L"EFI_BOOT_SERVICES.OpenProtocol() fails", status, __LINE__);
@@ -7627,7 +7640,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 clients[i].receiveData.DataLength = clients[i].receiveData.FragmentTable[0].FragmentLength = BUFFER_SIZE - (unsigned int)((unsigned long long)clients[i].receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)clients[i].receiveBuffer);
                                                 if (clients[i].receiveData.DataLength)
                                                 {
-                                                    EFI_STATUS status;
                                                     if (status = clients[i].tcp4Protocol->Receive(clients[i].tcp4Protocol, &clients[i].receiveToken))
                                                     {
                                                         logStatus(L"EFI_TCP4_PROTOCOL.Receive() fails", status, __LINE__);
@@ -7713,7 +7725,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             }
 
                                             clients[i].transmitData.DataLength = clients[i].transmitData.FragmentTable[0].FragmentLength = size;
-                                            EFI_STATUS status;
                                             if (status = clients[i].tcp4Protocol->Transmit(clients[i].tcp4Protocol, &clients[i].transmitToken))
                                             {
                                                 logStatus(L"EFI_TCP4_PROTOCOL.Transmit() fails", status, __LINE__);
@@ -7736,7 +7747,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         clients[i].isTransmitting = FALSE;
                                         clients[i].isClosing = FALSE;
 
-                                        EFI_STATUS status;
                                         if (status = clientTcp4Protocol->Accept(clientTcp4Protocol, &clients[i].acceptToken))
                                         {
                                             logStatus(L"EFI_TCP4_PROTOCOL.Accept() fails", status, __LINE__);
@@ -7779,9 +7789,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     bool shouldBeBroadcasted = !(dayIndex(time.Year - 2000, time.Month, time.Day) % 7);
                                     if (!shouldBeBroadcasted)
                                     {
-                                        for (unsigned int i = 0; i < sizeof(resourceTestingSolutionIdspectrumToBroadcast) / sizeof(resourceTestingSolutionIdspectrumToBroadcast[0]); i++)
+                                        for (unsigned int i = 0; i < sizeof(resourceTestingSolutionIdentitiesToBroadcast) / sizeof(resourceTestingSolutionIdentitiesToBroadcast[0]); i++)
                                         {
-                                            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)broadcastedSolution.broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey), *((__m256i*)resourceTestingSolutionIdspectrumToBroadcast[i]))) == 0xFFFFFFFF)
+                                            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)broadcastedSolution.broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey), *((__m256i*)resourceTestingSolutionIdentitiesToBroadcast[i]))) == 0xFFFFFFFF)
                                             {
                                                 shouldBeBroadcasted = true;
 
@@ -7900,9 +7910,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
     deinitialize();
 
+    bs->Stall(1000000);
     if (!state)
     {
-        bs->Stall(1000000);
         st->ConIn->Reset(st->ConIn, FALSE);
         unsigned long long eventIndex;
         bs->WaitForEvent(1, &st->ConIn->WaitForKey, &eventIndex);
