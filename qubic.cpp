@@ -32,7 +32,7 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 
 #define VERSION_A 1
 #define VERSION_B 40
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -40,7 +40,7 @@ static const unsigned char knownPublicPeers[][4] = {
 };
 
 #define EPOCH 25
-#define TICK 2654296
+#define TICK 3225252
 
 #include <intrin.h>
 
@@ -4125,9 +4125,8 @@ static volatile char spectrumLock = 0;
 static Entity* spectrum = NULL;
 static unsigned int numberOfEntities = 0;
 static unsigned long long spectrumDigestCalculationBeginningTick = 0;
-static volatile char spectrumDigestLock = 0;
 static volatile unsigned char spectrumDigestLevel = 0;
-static volatile short spectrumDigestLevelCompleteness;
+static volatile short spectrumDigestLevelCompleteness = 0;
 static __m256i* spectrumDigests = NULL;
 #endif
 static char chosenTransfersInvocationsAndQuestionBytes[NUMBER_OF_COMPUTORS][sizeof(BroadcastChosenTransfersInvocationsAndQuestions) + (sizeof(Transfer) + MAX_TRANSFER_DESCRIPTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_TRANSFERS_PER_TICK + (sizeof(Invocation) + MAX_INVOCATION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_INVOCATIONS_PER_TICK + (sizeof(Question) + MAX_QUESTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_QUESTIONS_PER_TICK + SIGNATURE_SIZE];
@@ -5358,9 +5357,85 @@ static void computorProcessor(void* ProcedureArgument)
 
     const unsigned int computingProcessorIndex = (unsigned int)((unsigned long long)ProcedureArgument);
 
+    unsigned int spectrumDigestInputOffset, spectrumDigestOutputOffset;
     while (!state)
     {
-        _mm_pause();
+        const unsigned char spectrumDigestLevel = ::spectrumDigestLevel;
+
+        switch (spectrumDigestLevel)
+        {
+        case 0:
+        {
+            _mm_pause();
+        }
+        break;
+
+        case 1:
+        {
+            constexpr unsigned int worksetLength = SPECTRUM_CAPACITY / NUMBER_OF_COMPUTING_PROCESSORS;
+            for (unsigned int i = computingProcessorIndex * worksetLength; i < (computingProcessorIndex == (NUMBER_OF_COMPUTING_PROCESSORS - 1) ? SPECTRUM_CAPACITY : (computingProcessorIndex + 1) * worksetLength); i++)
+            {
+                KangarooTwelve((unsigned char*)&spectrum[i], sizeof(Entity), (unsigned char*)&spectrumDigests[i], 32);
+            }
+
+            if (_InterlockedIncrement16(&spectrumDigestLevelCompleteness) == NUMBER_OF_COMPUTING_PROCESSORS)
+            {
+                spectrumDigestLevelCompleteness = 0;
+                ::spectrumDigestLevel = 2;
+            }
+            else
+            {
+                while (::spectrumDigestLevel == spectrumDigestLevel)
+                {
+                    _mm_pause();
+                }
+            }
+
+            spectrumDigestInputOffset = 0;
+            spectrumDigestOutputOffset = SPECTRUM_CAPACITY;
+        }
+        break;
+
+        case SPECTRUM_DEPTH + 2:
+        {
+            _InterlockedIncrement16(&spectrumDigestLevelCompleteness);
+            while (::spectrumDigestLevel == spectrumDigestLevel)
+            {
+                _mm_pause();
+            }
+        }
+        break;
+
+        default:
+        {
+            const unsigned int numberOfLeafPairs = SPECTRUM_CAPACITY >> (spectrumDigestLevel - 1);
+            if (computingProcessorIndex < numberOfLeafPairs)
+            {
+                const unsigned int numberOfFragments = (numberOfLeafPairs >= NUMBER_OF_COMPUTING_PROCESSORS ? NUMBER_OF_COMPUTING_PROCESSORS : numberOfLeafPairs);
+                const unsigned int worksetLength = numberOfLeafPairs / numberOfFragments;
+                for (unsigned int i = computingProcessorIndex * worksetLength; i < (computingProcessorIndex == (numberOfFragments - 1) ? numberOfLeafPairs : (computingProcessorIndex + 1) * worksetLength); i++)
+                {
+                    KangarooTwelve((unsigned char*)&spectrumDigests[spectrumDigestInputOffset + (i << 1)], 64, (unsigned char*)&spectrumDigests[spectrumDigestOutputOffset + i], 32);
+                }
+            }
+
+            spectrumDigestInputOffset = spectrumDigestOutputOffset;
+            spectrumDigestOutputOffset += numberOfLeafPairs;
+
+            if (_InterlockedIncrement16(&spectrumDigestLevelCompleteness) == NUMBER_OF_COMPUTING_PROCESSORS)
+            {
+                spectrumDigestLevelCompleteness = 0;
+                ::spectrumDigestLevel++;
+            }
+            else
+            {
+                while (::spectrumDigestLevel == spectrumDigestLevel)
+                {
+                    _mm_pause();
+                }
+            }
+        }
+        }
     }
 }
 #endif
@@ -6292,6 +6367,29 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 #if NUMBER_OF_COMPUTING_PROCESSORS
                                 if (numberOfOwnComputorIndices)
                                 {
+                                    if (!spectrumDigestLevel)
+                                    {
+                                        spectrumDigestCalculationBeginningTick = __rdtsc();
+                                        spectrumDigestLevel = 1;
+                                    }
+                                    else
+                                    {
+                                        if (spectrumDigestLevel == SPECTRUM_DEPTH + 2)
+                                        {
+                                            setText(message, L">>>>>>>>>> ");
+                                            appendNumber(message, (__rdtsc() - spectrumDigestCalculationBeginningTick) * 1000 / frequency, TRUE);
+                                            appendText(message, L" ms <<<<<<<<<<");
+                                            log(message);
+
+                                            while (spectrumDigestLevelCompleteness != NUMBER_OF_COMPUTING_PROCESSORS)
+                                            {
+                                                _mm_pause();
+                                            }
+                                            spectrumDigestLevelCompleteness = 0;
+                                            spectrumDigestLevel = 0;
+                                        }
+                                    }
+
                                     if (latestOwnTick != system.tick)
                                     {
                                         latestOwnTick = system.tick;
@@ -6341,7 +6439,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                             for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
                                             {
-                                                //push(&peers[j], &broadcastedTick.header, true);
+                                                push(&peers[j], &broadcastedTick.header, true);
                                             }
                                         }
                                     }
