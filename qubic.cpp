@@ -32,7 +32,7 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 
 #define VERSION_A 1
 #define VERSION_B 41
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -4803,7 +4803,32 @@ static unsigned int chosenTransfersInvocationsAndQuestionSizes[NUMBER_OF_COMPUTO
 
 static struct QuorumTick
 {
-    // TODO
+    unsigned short nonce;
+
+    unsigned short epoch;
+    unsigned int tick;
+
+    unsigned short millisecond;
+    unsigned char second;
+    unsigned char minute;
+    unsigned char hour;
+    unsigned char day;
+    unsigned char month;
+    unsigned char year;
+
+    unsigned char initSpectrumDigest[32];
+    unsigned char initComputerDigest[32];
+    unsigned char initUniverseDigest[32];
+    unsigned char prevSpectrumDigest[32];
+    unsigned char prevComputerDigest[32];
+    unsigned char prevUniverseDigest[32];
+    unsigned char spectrumDigest[32];
+    unsigned char computerDigest[32];
+    unsigned char universeDigest[32];
+
+    unsigned char nextTickChosenTransfersInvocationsAndQuestionsDigest[32];
+
+    unsigned char signatures[NUMBER_OF_COMPUTORS][SIGNATURE_SIZE];
 } quorumTick;
 
 static Entity* initSpectrum = NULL;
@@ -6224,19 +6249,21 @@ static void emptyCallback(EFI_EVENT Event, void* Context)
 {
 }
 
-#if NUMBER_OF_COMPUTING_PROCESSORS
-static void saveSystem()
+#if NUMBER_OF_MINING_PROCESSORS
+static void saveSolution()
 {
+    const unsigned long long beginningTick = __rdtsc();
+
     EFI_FILE_PROTOCOL* dataFile;
     EFI_STATUS status;
-    if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SYSTEM_DATA_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0))
+    if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SOLUTION_DATA_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0))
     {
         logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status, __LINE__);
     }
     else
     {
-        unsigned long long size = sizeof(system);
-        status = dataFile->Write(dataFile, &size, &system);
+        unsigned long long size = sizeof(broadcastedSolution.broadcastResourceTestingSolution.resourceTestingSolution);
+        status = dataFile->Write(dataFile, &size, &broadcastedSolution.broadcastResourceTestingSolution.resourceTestingSolution);
         dataFile->Close(dataFile);
         if (status)
         {
@@ -6245,12 +6272,16 @@ static void saveSystem()
         else
         {
             setNumber(message, size, TRUE);
-            appendText(message, L" bytes of the system data are saved.");
+            appendText(message, L" bytes of the solution data are saved (");
+            appendNumber(message, (__rdtsc() - beginningTick) * 1000 / frequency, TRUE);
+            appendText(message, L" ms).");
             log(message);
         }
     }
 }
+#endif
 
+#if NUMBER_OF_COMPUTING_PROCESSORS
 static void saveSpectrum()
 {
     const unsigned long long beginningTick = __rdtsc();
@@ -6287,31 +6318,75 @@ static void saveSpectrum()
         _InterlockedCompareExchange8(&spectrumLock, 0, 1);
     }
 }
-#endif
 
-#if NUMBER_OF_MINING_PROCESSORS
-static void saveSolution()
+static void saveSystem()
 {
+    const unsigned long long beginningTick = __rdtsc();
+
     EFI_FILE_PROTOCOL* dataFile;
     EFI_STATUS status;
-    if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SOLUTION_DATA_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0))
+    if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SYSTEM_DATA_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0))
     {
         logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status, __LINE__);
     }
     else
     {
-        unsigned long long size = sizeof(broadcastedSolution.broadcastResourceTestingSolution.resourceTestingSolution);
-        status = dataFile->Write(dataFile, &size, &broadcastedSolution.broadcastResourceTestingSolution.resourceTestingSolution);
+        unsigned long long size = sizeof(system);
+        status = dataFile->Write(dataFile, &size, &system);
         dataFile->Close(dataFile);
         if (status)
         {
             logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status, __LINE__);
         }
+        else
+        {
+            setNumber(message, size, TRUE);
+            appendText(message, L" bytes of the system data are saved (");
+            appendNumber(message, (__rdtsc() - beginningTick) * 1000 / frequency, TRUE);
+            appendText(message, L" ms).");
+            log(message);
+        }
     }
 }
-#endif
 
-#if NUMBER_OF_COMPUTING_PROCESSORS
+static void saveTick()
+{
+    const unsigned long long beginningTick = __rdtsc();
+
+    EFI_FILE_PROTOCOL* dataFile;
+    EFI_STATUS status;
+    if (status = root->Open(root, (void**)&dataFile, (CHAR16*)TICKS_DATA_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0))
+    {
+        logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status, __LINE__);
+    }
+    else
+    {
+        if (status = dataFile->SetPosition(dataFile, 0xFFFFFFFFFFFFFFFF))
+        {
+            dataFile->Close(dataFile);
+            logStatus(L"EFI_FILE_PROTOCOL.SetPosition() fails", status, __LINE__);
+        }
+        else
+        {
+            unsigned long long size = sizeof(quorumTick);
+            status = dataFile->Write(dataFile, &size, &quorumTick);
+            dataFile->Close(dataFile);
+            if (status)
+            {
+                logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status, __LINE__);
+            }
+            else
+            {
+                setNumber(message, size, TRUE);
+                appendText(message, L" bytes of the tick data are saved (");
+                appendNumber(message, (__rdtsc() - beginningTick) * 1000 / frequency, TRUE);
+                appendText(message, L" ms).");
+                log(message);
+            }
+        }
+    }
+}
+
 static void getInitSpectrumDigest()
 {
     unsigned int digestIndex;
@@ -7146,6 +7221,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     nextTickNumberOfComputors = 0;
                                     for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
                                     {
+                                        *((__m256i*)&quorumTick.signatures[j][0]) = ZERO;
+                                        *((__m256i*)&quorumTick.signatures[j][32]) = ZERO;
+
                                         while (_InterlockedCompareExchange8(&tickLocks[j], 1, 0))
                                         {
                                             _mm_pause();
@@ -7184,6 +7262,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                             tickNumberOfComputors++;
 
                                                             counters[j] = 1;
+
+                                                            *((__m256i*)&quorumTick.signatures[j][0]) = *((__m256i*)&actualTicks[j].signature[0]);
+                                                            *((__m256i*)&quorumTick.signatures[j][32]) = *((__m256i*)&actualTicks[j].signature[32]);
                                                         }
                                                     }
                                                 }
@@ -7199,6 +7280,22 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     }
                                     if (tickNumberOfComputors >= QUORUM)
                                     {
+                                        quorumTick.nonce = 0;
+                                        quorumTick.epoch = actualTicks[ownComputorIndices[0]].epoch;
+                                        quorumTick.tick = actualTicks[ownComputorIndices[0]].tick;
+                                        *((unsigned long long*)&quorumTick.millisecond) = *((unsigned long long*)&actualTicks[ownComputorIndices[0]].millisecond);
+                                        *((__m256i*)quorumTick.initSpectrumDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].initSpectrumDigest);
+                                        *((__m256i*)quorumTick.initComputerDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].initComputerDigest);
+                                        *((__m256i*)quorumTick.initUniverseDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].initUniverseDigest);
+                                        *((__m256i*)quorumTick.prevSpectrumDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].prevSpectrumDigest);
+                                        *((__m256i*)quorumTick.prevComputerDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].prevComputerDigest);
+                                        *((__m256i*)quorumTick.prevUniverseDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].prevUniverseDigest);
+                                        *((__m256i*)quorumTick.spectrumDigest) = *((__m256i*)&spectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1]);
+                                        *((__m256i*)quorumTick.computerDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].prevComputerDigest);
+                                        *((__m256i*)quorumTick.universeDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].prevUniverseDigest);
+                                        *((__m256i*)quorumTick.nextTickChosenTransfersInvocationsAndQuestionsDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].nextTickChosenTransfersInvocationsAndQuestionsDigest);
+                                        saveTick();
+
                                         tickNumberOfComputors = 0;
                                         nextTickNumberOfComputors = 0;
 
