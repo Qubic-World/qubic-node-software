@@ -31,8 +31,8 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 40
-#define VERSION_C 2
+#define VERSION_B 41
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -1953,7 +1953,7 @@ static void KangarooTwelve(unsigned char* input, unsigned long long inputByteLen
     KangarooTwelve_F_Squeeze(&ktInstance.finalNode, output, outputByteLen);
 }
 
-static void merkleTreeKangarooTwelve(unsigned char* input, unsigned char* output)
+static void KangarooTwelve64To32(unsigned char* input, unsigned char* output)
 {
     unsigned long long Aba, Abe, Abi, Abo, Abu;
     unsigned long long Aga, Age, Agi, Ago, Agu;
@@ -4811,6 +4811,7 @@ static __m256i* initSpectrumDigests = NULL;
 static volatile char spectrumLock = 0;
 static Entity* spectrum = NULL;
 static unsigned int numberOfEntities = 0;
+static unsigned long long spectrumUpdatingBeginningTick = 0;
 static unsigned long long spectrumDigestCalculationBeginningTick = 0;
 static volatile unsigned char spectrumDigestLevel = 0;
 static volatile short spectrumDigestLevelCompleteness = 0;
@@ -6062,7 +6063,7 @@ static void computorProcessor(void* ProcedureArgument)
             constexpr unsigned int worksetLength = SPECTRUM_CAPACITY / NUMBER_OF_COMPUTING_PROCESSORS;
             for (unsigned int i = computingProcessorIndex * worksetLength; i < (computingProcessorIndex == (NUMBER_OF_COMPUTING_PROCESSORS - 1) ? SPECTRUM_CAPACITY : (computingProcessorIndex + 1) * worksetLength); i++)
             {
-                merkleTreeKangarooTwelve((unsigned char*)&spectrum[i], (unsigned char*)&spectrumDigests[i]);
+                KangarooTwelve64To32((unsigned char*)&spectrum[i], (unsigned char*)&spectrumDigests[i]);
             }
 
             if (_InterlockedIncrement16(&spectrumDigestLevelCompleteness) == NUMBER_OF_COMPUTING_PROCESSORS)
@@ -6102,7 +6103,7 @@ static void computorProcessor(void* ProcedureArgument)
                 const unsigned int worksetLength = numberOfLeafPairs / numberOfFragments;
                 for (unsigned int i = computingProcessorIndex * worksetLength; i < (computingProcessorIndex == (numberOfFragments - 1) ? numberOfLeafPairs : (computingProcessorIndex + 1) * worksetLength); i++)
                 {
-                    merkleTreeKangarooTwelve((unsigned char*)&spectrumDigests[spectrumDigestInputOffset + (i << 1)], (unsigned char*)&spectrumDigests[spectrumDigestOutputOffset + i]);
+                    KangarooTwelve64To32((unsigned char*)&spectrumDigests[spectrumDigestInputOffset + (i << 1)], (unsigned char*)&spectrumDigests[spectrumDigestOutputOffset + i]);
                 }
             }
 
@@ -6316,7 +6317,7 @@ static void getInitSpectrumDigest()
     unsigned int digestIndex;
     for (digestIndex = 0; digestIndex < SPECTRUM_CAPACITY; digestIndex++)
     {
-        merkleTreeKangarooTwelve((unsigned char*)&initSpectrum[digestIndex], (unsigned char*)&initSpectrumDigests[digestIndex]);
+        KangarooTwelve64To32((unsigned char*)&initSpectrum[digestIndex], (unsigned char*)&initSpectrumDigests[digestIndex]);
     }
     unsigned int previousLevelBeginning = 0;
     unsigned int numberOfLeafs = SPECTRUM_CAPACITY;
@@ -6324,7 +6325,7 @@ static void getInitSpectrumDigest()
     {
         for (unsigned int i = 0; i < numberOfLeafs; i += 2)
         {
-            merkleTreeKangarooTwelve((unsigned char*)&initSpectrumDigests[previousLevelBeginning + i], (unsigned char*)&initSpectrumDigests[digestIndex++]);
+            KangarooTwelve64To32((unsigned char*)&initSpectrumDigests[previousLevelBeginning + i], (unsigned char*)&initSpectrumDigests[digestIndex++]);
         }
 
         previousLevelBeginning += numberOfLeafs;
@@ -7054,32 +7055,40 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 #if NUMBER_OF_COMPUTING_PROCESSORS
                                 if (numberOfOwnComputorIndices)
                                 {
-                                    if (!spectrumDigestLevel)
-                                    {
-                                        spectrumDigestCalculationBeginningTick = __rdtsc();
-                                        spectrumDigestLevel = 1;
-                                    }
-                                    else
-                                    {
-                                        if (spectrumDigestLevel == SPECTRUM_DEPTH + 2)
-                                        {
-                                            setText(message, L">>>>>>>>>> ");
-                                            appendNumber(message, (__rdtsc() - spectrumDigestCalculationBeginningTick) * 1000 / frequency, TRUE);
-                                            appendText(message, L" ms <<<<<<<<<<");
-                                            log(message);
-
-                                            while (spectrumDigestLevelCompleteness != NUMBER_OF_COMPUTING_PROCESSORS)
-                                            {
-                                                _mm_pause();
-                                            }
-                                            spectrumDigestLevelCompleteness = 0;
-                                            spectrumDigestLevel = 0;
-                                        }
-                                    }
-
                                     if (latestOwnTick != system.tick)
                                     {
                                         latestOwnTick = system.tick;
+
+                                        if (!spectrumDigestLevel)
+                                        {
+                                            spectrumUpdatingBeginningTick = __rdtsc();
+                                            for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
+                                            {
+                                                spectrum[i].numberOfIncomingTransfers = latestOwnTick + 1;
+                                            }
+                                            setText(message, L"Spectrum updating takes ");
+                                            appendNumber(message, (__rdtsc() - spectrumUpdatingBeginningTick) * 1000 / frequency, TRUE);
+                                            appendText(message, L" ms.");
+                                            log(message);
+
+                                            spectrumDigestCalculationBeginningTick = __rdtsc();
+                                            spectrumDigestLevel = 1;
+                                        }
+                                    }
+
+                                    if (spectrumDigestLevel == SPECTRUM_DEPTH + 2)
+                                    {
+                                        setText(message, L"Spectrum HASHING takes ");
+                                        appendNumber(message, (__rdtsc() - spectrumDigestCalculationBeginningTick) * 1000 / frequency, TRUE);
+                                        appendText(message, L" ms.");
+                                        log(message);
+
+                                        while (spectrumDigestLevelCompleteness != NUMBER_OF_COMPUTING_PROCESSORS)
+                                        {
+                                            _mm_pause();
+                                        }
+                                        spectrumDigestLevelCompleteness = 0;
+                                        spectrumDigestLevel = 0;
 
                                         broadcastedTick.broadcastTick.tick.epoch = system.epoch;
                                         broadcastedTick.broadcastTick.tick.tick = system.tick + 1;
@@ -7102,13 +7111,13 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         {
                                             broadcastedTick.broadcastTick.tick.computorIndex = ownComputorIndices[i] ^ BROADCAST_TICK;
                                             unsigned char saltedData[32 + 32];
-                                            *((__m256i*)&saltedData[0]) = *((__m256i*)ownPublicKeys[ownComputorIndicesMapping[i]]);
-                                            *((__m256i*)&saltedData[32]) = *((__m256i*)broadcastedTick.broadcastTick.tick.prevSpectrumDigest);
-                                            KangarooTwelve(saltedData, sizeof(saltedData), broadcastedTick.broadcastTick.tick.saltedSpectrumDigest, sizeof(broadcastedTick.broadcastTick.tick.saltedSpectrumDigest));
-                                            *((__m256i*)&saltedData[32]) = *((__m256i*)broadcastedTick.broadcastTick.tick.prevComputerDigest);
-                                            KangarooTwelve(saltedData, sizeof(saltedData), broadcastedTick.broadcastTick.tick.saltedComputerDigest, sizeof(broadcastedTick.broadcastTick.tick.saltedComputerDigest));
-                                            *((__m256i*)&saltedData[32]) = *((__m256i*)broadcastedTick.broadcastTick.tick.prevUniverseDigest);
-                                            KangarooTwelve(saltedData, sizeof(saltedData), broadcastedTick.broadcastTick.tick.saltedUniverseDigest, sizeof(broadcastedTick.broadcastTick.tick.saltedUniverseDigest));
+                                            *((__m256i*) & saltedData[0]) = *((__m256i*)ownPublicKeys[ownComputorIndicesMapping[i]]);
+                                            *((__m256i*) & saltedData[32]) = *((__m256i*) & spectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1]);
+                                            KangarooTwelve64To32(saltedData, broadcastedTick.broadcastTick.tick.saltedSpectrumDigest);
+                                            *((__m256i*) & saltedData[32]) = *((__m256i*)broadcastedTick.broadcastTick.tick.prevComputerDigest);
+                                            KangarooTwelve64To32(saltedData, broadcastedTick.broadcastTick.tick.saltedComputerDigest);
+                                            *((__m256i*) & saltedData[32]) = *((__m256i*)broadcastedTick.broadcastTick.tick.prevUniverseDigest);
+                                            KangarooTwelve64To32(saltedData, broadcastedTick.broadcastTick.tick.saltedUniverseDigest);
 
                                             unsigned char digest[32];
                                             KangarooTwelve((unsigned char*)&broadcastedTick.broadcastTick.tick, broadcastedTick.header.size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
@@ -7157,19 +7166,19 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             {
                                                 unsigned char saltedData[32 + 32];
                                                 *((__m256i*)&saltedData[0]) = *((__m256i*)broadcastedComputors.broadcastComputors.computors.publicKeys[actualTicks[j].computorIndex]);
-                                                *((__m256i*)&saltedData[32]) = *((__m256i*)actualTicks[ownComputorIndices[0]].prevSpectrumDigest);
+                                                *((__m256i*)&saltedData[32]) = *((__m256i*)&spectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1]);
                                                 unsigned char saltedDigest[32];
-                                                KangarooTwelve(saltedData, sizeof(saltedData), saltedDigest, sizeof(saltedDigest));
+                                                KangarooTwelve64To32(saltedData, saltedDigest);
                                                 if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].saltedSpectrumDigest), *((__m256i*)saltedDigest))) == 0xFFFFFFFF)
                                                 {
                                                     *((__m256i*)&saltedData[32]) = *((__m256i*)actualTicks[ownComputorIndices[0]].prevComputerDigest);
                                                     unsigned char saltedDigest[32];
-                                                    KangarooTwelve(saltedData, sizeof(saltedData), saltedDigest, sizeof(saltedDigest));
+                                                    KangarooTwelve64To32(saltedData, saltedDigest);
                                                     if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].saltedComputerDigest), *((__m256i*)saltedDigest))) == 0xFFFFFFFF)
                                                     {
                                                         *((__m256i*)&saltedData[32]) = *((__m256i*)actualTicks[ownComputorIndices[0]].prevUniverseDigest);
                                                         unsigned char saltedDigest[32];
-                                                        KangarooTwelve(saltedData, sizeof(saltedData), saltedDigest, sizeof(saltedDigest));
+                                                        KangarooTwelve64To32(saltedData, saltedDigest);
                                                         if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].saltedUniverseDigest), *((__m256i*)saltedDigest))) == 0xFFFFFFFF)
                                                         {
                                                             tickNumberOfComputors++;
