@@ -32,7 +32,7 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 
 #define VERSION_A 1
 #define VERSION_B 41
-#define VERSION_C 2
+#define VERSION_C 3
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -4790,6 +4790,7 @@ static struct System
     unsigned short epoch;
     unsigned int tick;
     unsigned int tickCounters[NUMBER_OF_COMPUTORS];
+    unsigned char faultyStatuses[NUMBER_OF_COMPUTORS];
 } system;
 static unsigned int tickNumberOfComputors = 0, nextTickNumberOfComputors = 0;
 static unsigned long long latestRevenuePublicationTick = 0;
@@ -7299,6 +7300,17 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         tickNumberOfComputors = 0;
                                         nextTickNumberOfComputors = 0;
 
+                                        if (system.tick == 3248648)
+                                        {
+                                            for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                                            {
+                                                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)quorumTick.signatures[i]), ZERO)) == 0xFFFFFFFF)
+                                                {
+                                                    system.faultyStatuses[i] = 1;
+                                                }
+                                            }
+                                        }
+
                                         system.tick++;
                                         totalNumberOfTicks++;
 
@@ -7436,6 +7448,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
                                                 {
                                                     broadcastedRevenues.broadcastRevenues.revenues.revenues[j] = (system.tickCounters[j] >= maxCounter) ? (ISSUANCE_RATE / NUMBER_OF_COMPUTORS) : (system.tickCounters[j] * ((unsigned long long)(ISSUANCE_RATE / NUMBER_OF_COMPUTORS)) / maxCounter);
+                                                    if (system.faultyStatuses[j])
+                                                    {
+                                                        broadcastedRevenues.broadcastRevenues.revenues.revenues[j] = 0;
+                                                    }
                                                 }
                                                 for (unsigned int j = 0; j < numberOfOwnComputorIndices; j++)
                                                 {
@@ -7675,46 +7691,23 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     }
 
                                                     RequestResponseHeader* requestHeader = (RequestResponseHeader*)peers[i].dataToTransmit;
-                                                    requestHeader->size = sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers) + 1 + 8 + (VERSION_A > 9 ? 2 : 1) + (VERSION_B > 9 ? 2 : 1) + (VERSION_C > 9 ? 2 : 1);
+                                                    requestHeader->size = sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers);
                                                     requestHeader->protocol = VERSION_B;
                                                     requestHeader->type = EXCHANGE_PUBLIC_PEERS;
-                                                    char* software = (char*)&peers[i].dataToTransmit[sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers)];
-                                                    *software++ = 8 + (VERSION_A > 9 ? 2 : 1) + (VERSION_B > 9 ? 2 : 1) + (VERSION_C > 9 ? 2 : 1);
-                                                    *software++ = 'Q';
-                                                    *software++ = 'u';
-                                                    *software++ = 'b';
-                                                    *software++ = 'i';
-                                                    *software++ = 'c';
-                                                    *software++ = ' ';
-                                                    if (VERSION_A > 9)
-                                                    {
-                                                        *software++ = (VERSION_A / 10) + '0';
-                                                    }
-                                                    *software++ = (VERSION_A % 10) + '0';
-                                                    *software++ = '.';
-                                                    if (VERSION_B > 9)
-                                                    {
-                                                        *software++ = (VERSION_B / 10) + '0';
-                                                    }
-                                                    *software++ = (VERSION_B % 10) + '0';
-                                                    *software++ = '.';
-                                                    if (VERSION_C > 9)
-                                                    {
-                                                        *software++ = (VERSION_C / 10) + '0';
-                                                    }
-                                                    *software++ = (VERSION_C % 10) + '0';
 
+                                                    char* ptr = (char*)&peers[i].dataToTransmit[sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers)];
+                                                    
                                                     peers[i].dataToTransmitSize = requestHeader->size;
 
                                                     if (!broadcastedComputors.broadcastComputors.computors.epoch || !(dayIndex(time.Year - 2000, time.Month, time.Day) % 7))
                                                     {
-                                                        bs->CopyMem(software, &requestedComputors, requestedComputors.header.size);
-                                                        software += requestedComputors.header.size;
+                                                        bs->CopyMem(ptr, &requestedComputors, requestedComputors.header.size);
+                                                        ptr += requestedComputors.header.size;
                                                         peers[i].dataToTransmitSize += requestedComputors.header.size;
                                                         _InterlockedIncrement64(&numberOfDisseminatedRequests);
                                                     }
 
-                                                    bs->CopyMem(software, &requestedTicks, requestedTicks.header.size);
+                                                    bs->CopyMem(ptr, &requestedTicks, requestedTicks.header.size);
                                                     peers[i].dataToTransmitSize += requestedTicks.header.size;
                                                     _InterlockedIncrement64(&numberOfDisseminatedRequests);
 
@@ -7842,47 +7835,23 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                             }
 
                                                                             RequestResponseHeader* responseHeader = (RequestResponseHeader*)responseBuffer;
-                                                                            responseHeader->size = sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers) + 1 + 8 + (VERSION_A > 9 ? 2 : 1) + (VERSION_B > 9 ? 2 : 1) + (VERSION_C > 9 ? 2 : 1);
+                                                                            responseHeader->size = sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers);
                                                                             responseHeader->protocol = VERSION_B;
                                                                             responseHeader->type = EXCHANGE_PUBLIC_PEERS;
 
-                                                                            char* software = ((char*)responseBuffer) + (sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers));
-                                                                            *software++ = 8 + (VERSION_A > 9 ? 2 : 1) + (VERSION_B > 9 ? 2 : 1) + (VERSION_C > 9 ? 2 : 1);
-                                                                            *software++ = 'Q';
-                                                                            *software++ = 'u';
-                                                                            *software++ = 'b';
-                                                                            *software++ = 'i';
-                                                                            *software++ = 'c';
-                                                                            *software++ = ' ';
-                                                                            if (VERSION_A > 9)
-                                                                            {
-                                                                                *software++ = (VERSION_A / 10) + '0';
-                                                                            }
-                                                                            *software++ = (VERSION_A % 10) + '0';
-                                                                            *software++ = '.';
-                                                                            if (VERSION_B > 9)
-                                                                            {
-                                                                                *software++ = (VERSION_B / 10) + '0';
-                                                                            }
-                                                                            *software++ = (VERSION_B % 10) + '0';
-                                                                            *software++ = '.';
-                                                                            if (VERSION_C > 9)
-                                                                            {
-                                                                                *software++ = (VERSION_C / 10) + '0';
-                                                                            }
-                                                                            *software++ = (VERSION_C % 10) + '0';
+                                                                            char* ptr = ((char*)responseBuffer) + (sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers));
 
                                                                             peers[i].dataToTransmitSize += responseHeader->size;
 
                                                                             if (!broadcastedComputors.broadcastComputors.computors.epoch || !(dayIndex(time.Year - 2000, time.Month, time.Day) % 7))
                                                                             {
-                                                                                bs->CopyMem(software, &requestedComputors, requestedComputors.header.size);
-                                                                                software += requestedComputors.header.size;
+                                                                                bs->CopyMem(ptr, &requestedComputors, requestedComputors.header.size);
+                                                                                ptr += requestedComputors.header.size;
                                                                                 peers[i].dataToTransmitSize += requestedComputors.header.size;
                                                                                 _InterlockedIncrement64(&numberOfDisseminatedRequests);
                                                                             }
 
-                                                                            bs->CopyMem(software, &requestedTicks, requestedTicks.header.size);
+                                                                            bs->CopyMem(ptr, &requestedTicks, requestedTicks.header.size);
                                                                             peers[i].dataToTransmitSize += requestedTicks.header.size;
                                                                             _InterlockedIncrement64(&numberOfDisseminatedRequests);
 
