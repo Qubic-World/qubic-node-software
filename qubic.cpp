@@ -32,7 +32,7 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 
 #define VERSION_A 1
 #define VERSION_B 42
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -7215,184 +7215,101 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         }
                                     }
 
-                                    unsigned int counters[NUMBER_OF_COMPUTORS];
-                                    bs->SetMem(counters, sizeof(counters), 0);
                                     tickNumberOfComputors = 0;
                                     nextTickNumberOfComputors = 0;
-                                    for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
+                                    if (!spectrumDigestLevel)
                                     {
-                                        *((__m256i*)&quorumTick.signatures[j][0]) = ZERO;
-                                        *((__m256i*)&quorumTick.signatures[j][32]) = ZERO;
-
-                                        while (_InterlockedCompareExchange8(&tickLocks[j], 1, 0))
+                                        unsigned int counters[NUMBER_OF_COMPUTORS];
+                                        bs->SetMem(counters, sizeof(counters), 0);
+                                        tickNumberOfComputors = 0;
+                                        nextTickNumberOfComputors = 0;
+                                        for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
                                         {
-                                            _mm_pause();
-                                        }
+                                            *((__m256i*)&quorumTick.signatures[j][0]) = ZERO;
+                                            *((__m256i*)&quorumTick.signatures[j][32]) = ZERO;
 
-                                        if (actualTicks[j].epoch)
-                                        {
-                                            if (actualTicks[j].epoch == system.epoch
-                                                && actualTicks[j].tick == system.tick + 1
-                                                && *((unsigned long long*)&actualTicks[j].millisecond) == *((unsigned long long*)&actualTicks[ownComputorIndices[0]].millisecond)
-                                                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].prevSpectrumDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].prevSpectrumDigest))) == 0xFFFFFFFF
-                                                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].prevComputerDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].prevComputerDigest))) == 0xFFFFFFFF
-                                                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].prevUniverseDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].prevUniverseDigest))) == 0xFFFFFFFF
-                                                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].initSpectrumDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].initSpectrumDigest))) == 0xFFFFFFFF
-                                                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].initComputerDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].initComputerDigest))) == 0xFFFFFFFF
-                                                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].initUniverseDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].initUniverseDigest))) == 0xFFFFFFFF
-                                                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].nextTickDataDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].nextTickDataDigest))) == 0xFFFFFFFF)
+                                            while (_InterlockedCompareExchange8(&tickLocks[j], 1, 0))
                                             {
-                                                unsigned char saltedData[32 + 32];
-                                                *((__m256i*)&saltedData[0]) = *((__m256i*)broadcastedComputors.broadcastComputors.computors.publicKeys[actualTicks[j].computorIndex]);
-                                                *((__m256i*)&saltedData[32]) = *((__m256i*)&spectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1]);
-                                                unsigned char saltedDigest[32];
-                                                KangarooTwelve64To32(saltedData, saltedDigest);
-                                                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].saltedSpectrumDigest), *((__m256i*)saltedDigest))) == 0xFFFFFFFF)
+                                                _mm_pause();
+                                            }
+
+                                            if (actualTicks[j].epoch)
+                                            {
+                                                if (actualTicks[j].epoch == system.epoch
+                                                    && actualTicks[j].tick == system.tick + 1
+                                                    && *((unsigned long long*)&actualTicks[j].millisecond) == *((unsigned long long*)&actualTicks[ownComputorIndices[0]].millisecond)
+                                                    && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].prevSpectrumDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].prevSpectrumDigest))) == 0xFFFFFFFF
+                                                    && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].prevComputerDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].prevComputerDigest))) == 0xFFFFFFFF
+                                                    && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].prevUniverseDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].prevUniverseDigest))) == 0xFFFFFFFF
+                                                    && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].initSpectrumDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].initSpectrumDigest))) == 0xFFFFFFFF
+                                                    && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].initComputerDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].initComputerDigest))) == 0xFFFFFFFF
+                                                    && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].initUniverseDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].initUniverseDigest))) == 0xFFFFFFFF
+                                                    && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].nextTickDataDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].nextTickDataDigest))) == 0xFFFFFFFF)
                                                 {
-                                                    *((__m256i*)&saltedData[32]) = *((__m256i*)actualTicks[ownComputorIndices[0]].prevComputerDigest);
+                                                    unsigned char saltedData[32 + 32];
+                                                    *((__m256i*)&saltedData[0]) = *((__m256i*)broadcastedComputors.broadcastComputors.computors.publicKeys[actualTicks[j].computorIndex]);
+                                                    *((__m256i*)&saltedData[32]) = *((__m256i*)&spectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1]);
                                                     unsigned char saltedDigest[32];
                                                     KangarooTwelve64To32(saltedData, saltedDigest);
-                                                    if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].saltedComputerDigest), *((__m256i*)saltedDigest))) == 0xFFFFFFFF)
+                                                    if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].saltedSpectrumDigest), *((__m256i*)saltedDigest))) == 0xFFFFFFFF)
                                                     {
-                                                        *((__m256i*)&saltedData[32]) = *((__m256i*)actualTicks[ownComputorIndices[0]].prevUniverseDigest);
+                                                        *((__m256i*)&saltedData[32]) = *((__m256i*)actualTicks[ownComputorIndices[0]].prevComputerDigest);
                                                         unsigned char saltedDigest[32];
                                                         KangarooTwelve64To32(saltedData, saltedDigest);
-                                                        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].saltedUniverseDigest), *((__m256i*)saltedDigest))) == 0xFFFFFFFF)
+                                                        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].saltedComputerDigest), *((__m256i*)saltedDigest))) == 0xFFFFFFFF)
                                                         {
-                                                            tickNumberOfComputors++;
+                                                            *((__m256i*)&saltedData[32]) = *((__m256i*)actualTicks[ownComputorIndices[0]].prevUniverseDigest);
+                                                            unsigned char saltedDigest[32];
+                                                            KangarooTwelve64To32(saltedData, saltedDigest);
+                                                            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].saltedUniverseDigest), *((__m256i*)saltedDigest))) == 0xFFFFFFFF)
+                                                            {
+                                                                tickNumberOfComputors++;
 
-                                                            counters[j] = 1;
+                                                                counters[j] = 1;
 
-                                                            *((__m256i*)&quorumTick.signatures[j][0]) = *((__m256i*)&actualTicks[j].signature[0]);
-                                                            *((__m256i*)&quorumTick.signatures[j][32]) = *((__m256i*)&actualTicks[j].signature[32]);
+                                                                *((__m256i*)&quorumTick.signatures[j][0]) = *((__m256i*)&actualTicks[j].signature[0]);
+                                                                *((__m256i*)&quorumTick.signatures[j][32]) = *((__m256i*)&actualTicks[j].signature[32]);
+                                                            }
                                                         }
                                                     }
                                                 }
                                             }
-                                        }
 
-                                        if (latestTicks[j].tick >= system.tick + 2)
-                                        {
-                                            nextTickNumberOfComputors++;
-                                        }
-
-                                        _InterlockedCompareExchange8(&tickLocks[j], 0, 1);
-                                    }
-                                    if (tickNumberOfComputors >= QUORUM)
-                                    {
-                                        quorumTick.nonce = 0;
-                                        quorumTick.epoch = actualTicks[ownComputorIndices[0]].epoch;
-                                        quorumTick.tick = actualTicks[ownComputorIndices[0]].tick;
-                                        *((unsigned long long*)&quorumTick.millisecond) = *((unsigned long long*)&actualTicks[ownComputorIndices[0]].millisecond);
-                                        *((__m256i*)quorumTick.initSpectrumDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].initSpectrumDigest);
-                                        *((__m256i*)quorumTick.initComputerDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].initComputerDigest);
-                                        *((__m256i*)quorumTick.initUniverseDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].initUniverseDigest);
-                                        *((__m256i*)quorumTick.prevSpectrumDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].prevSpectrumDigest);
-                                        *((__m256i*)quorumTick.prevComputerDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].prevComputerDigest);
-                                        *((__m256i*)quorumTick.prevUniverseDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].prevUniverseDigest);
-                                        *((__m256i*)quorumTick.spectrumDigest) = *((__m256i*)&spectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1]);
-                                        *((__m256i*)quorumTick.computerDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].prevComputerDigest);
-                                        *((__m256i*)quorumTick.universeDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].prevUniverseDigest);
-                                        *((__m256i*)quorumTick.nextTickDataDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].nextTickDataDigest);
-                                        saveTick();
-
-                                        tickNumberOfComputors = 0;
-                                        nextTickNumberOfComputors = 0;
-
-                                        system.tick++;
-                                        totalNumberOfTicks++;
-
-                                        for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
-                                        {
-                                            system.tickCounters[i] += counters[i];
-                                        }
-
-                                        for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
-                                        {
-                                            while (_InterlockedCompareExchange8(&tickLocks[i], 1, 0))
+                                            if (latestTicks[j].tick >= system.tick + 2)
                                             {
-                                                _mm_pause();
+                                                nextTickNumberOfComputors++;
                                             }
-                                            if (latestTicks[i].tick == system.tick + 1)
-                                            {
-                                                bs->CopyMem(&previousTicks[i], &actualTicks[i], sizeof(Tick));
-                                                bs->CopyMem(&actualTicks[i], &latestTicks[i], sizeof(Tick));
-                                            }
-                                            _InterlockedCompareExchange8(&tickLocks[i], 0, 1);
+
+                                            _InterlockedCompareExchange8(&tickLocks[j], 0, 1);
                                         }
-
-                                        for (unsigned int i = 0; i < sizeof(tickTicks) / sizeof(tickTicks[0]) - 1; i++)
+                                        if (tickNumberOfComputors >= QUORUM)
                                         {
-                                            tickTicks[i] = tickTicks[i + 1];
-                                        }
-                                        tickTicks[sizeof(tickTicks) / sizeof(tickTicks[0]) - 1] = __rdtsc();
+                                            quorumTick.nonce = 0;
+                                            quorumTick.epoch = actualTicks[ownComputorIndices[0]].epoch;
+                                            quorumTick.tick = actualTicks[ownComputorIndices[0]].tick;
+                                            *((unsigned long long*)&quorumTick.millisecond) = *((unsigned long long*)&actualTicks[ownComputorIndices[0]].millisecond);
+                                            *((__m256i*)quorumTick.initSpectrumDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].initSpectrumDigest);
+                                            *((__m256i*)quorumTick.initComputerDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].initComputerDigest);
+                                            *((__m256i*)quorumTick.initUniverseDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].initUniverseDigest);
+                                            *((__m256i*)quorumTick.prevSpectrumDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].prevSpectrumDigest);
+                                            *((__m256i*)quorumTick.prevComputerDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].prevComputerDigest);
+                                            *((__m256i*)quorumTick.prevUniverseDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].prevUniverseDigest);
+                                            *((__m256i*)quorumTick.spectrumDigest) = *((__m256i*)&spectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1]);
+                                            *((__m256i*)quorumTick.computerDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].prevComputerDigest);
+                                            *((__m256i*)quorumTick.universeDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].prevUniverseDigest);
+                                            *((__m256i*)quorumTick.nextTickDataDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].nextTickDataDigest);
+                                            saveTick();
 
-                                        for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
-                                        {
-                                            if (numberOfBufferedTransfers[i])
-                                            {
-                                                if (((Transfer*)bufferedTransferBytes[i][0])->tick <= system.tick)
-                                                {
-                                                    numberOfBufferedTransfers[i] = 0;
-                                                }
-                                            }
-                                        }
+                                            tickNumberOfComputors = 0;
+                                            nextTickNumberOfComputors = 0;
 
-                                        /*
-
-
-                                        for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
-                                        {
-                                            if (request->transfer.tick % NUMBER_OF_COMPUTORS == ownComputorIndices[i])
-                                            {
-                                                if (numberOfBufferedTransfers[i] < MAX_NUMBER_OF_TRANSFERS_PER_TICK)
-                                                {
-                                                    bs->CopyMem(bufferedTransferBytes[i][numberOfBufferedTransfers[i]++], &request->transfer, sizeof(Transfer) + request->transfer.descriptionSize + SIGNATURE_SIZE);
-                                                }
-
-                                                break;
-                                            }
-                                        }*/
-                                    }
-                                    else
-                                    {
-                                        unsigned short numberOfTicks = 0;
-                                        unsigned int ticks[NUMBER_OF_COMPUTORS];
-                                        unsigned short tickQuantities[NUMBER_OF_COMPUTORS];
-                                        for (unsigned short i = 0; i < NUMBER_OF_COMPUTORS; i++)
-                                        {
-                                            unsigned short j;
-                                            for (j = 0; j < numberOfTicks; j++)
-                                            {
-                                                if (latestTicks[i].tick == ticks[j])
-                                                {
-                                                    tickQuantities[j]++;
-
-                                                    break;
-                                                }
-                                            }
-                                            if (j == numberOfTicks)
-                                            {
-                                                ticks[numberOfTicks] = latestTicks[i].tick;
-                                                tickQuantities[numberOfTicks++] = 1;
-                                            }
-                                        }
-
-                                        unsigned short bestTickIndex = 0;
-
-                                        for (unsigned short i = 1; i < numberOfTicks; i++)
-                                        {
-                                            if (tickQuantities[i] > tickQuantities[bestTickIndex])
-                                            {
-                                                bestTickIndex = i;
-                                            }
-                                        }
-
-                                        if (ticks[bestTickIndex] >= system.tick + 2)
-                                        {
                                             system.tick++;
                                             totalNumberOfTicks++;
-                                            numberOfLostTicks++;
+
+                                            for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                                            {
+                                                system.tickCounters[i] += counters[i];
+                                            }
 
                                             for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
                                             {
@@ -7414,7 +7331,95 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             }
                                             tickTicks[sizeof(tickTicks) / sizeof(tickTicks[0]) - 1] = __rdtsc();
 
-                                            bs->SetMem(numberOfBufferedTransfers, sizeof(numberOfBufferedTransfers), 0);
+                                            for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
+                                            {
+                                                if (numberOfBufferedTransfers[i])
+                                                {
+                                                    if (((Transfer*)bufferedTransferBytes[i][0])->tick <= system.tick)
+                                                    {
+                                                        numberOfBufferedTransfers[i] = 0;
+                                                    }
+                                                }
+                                            }
+
+                                            /*
+
+
+                                            for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
+                                            {
+                                                if (request->transfer.tick % NUMBER_OF_COMPUTORS == ownComputorIndices[i])
+                                                {
+                                                    if (numberOfBufferedTransfers[i] < MAX_NUMBER_OF_TRANSFERS_PER_TICK)
+                                                    {
+                                                        bs->CopyMem(bufferedTransferBytes[i][numberOfBufferedTransfers[i]++], &request->transfer, sizeof(Transfer) + request->transfer.descriptionSize + SIGNATURE_SIZE);
+                                                    }
+
+                                                    break;
+                                                }
+                                            }*/
+                                        }
+                                        else
+                                        {
+                                            unsigned short numberOfTicks = 0;
+                                            unsigned int ticks[NUMBER_OF_COMPUTORS];
+                                            unsigned short tickQuantities[NUMBER_OF_COMPUTORS];
+                                            for (unsigned short i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                                            {
+                                                unsigned short j;
+                                                for (j = 0; j < numberOfTicks; j++)
+                                                {
+                                                    if (latestTicks[i].tick == ticks[j])
+                                                    {
+                                                        tickQuantities[j]++;
+
+                                                        break;
+                                                    }
+                                                }
+                                                if (j == numberOfTicks)
+                                                {
+                                                    ticks[numberOfTicks] = latestTicks[i].tick;
+                                                    tickQuantities[numberOfTicks++] = 1;
+                                                }
+                                            }
+
+                                            unsigned short bestTickIndex = 0;
+
+                                            for (unsigned short i = 1; i < numberOfTicks; i++)
+                                            {
+                                                if (tickQuantities[i] > tickQuantities[bestTickIndex])
+                                                {
+                                                    bestTickIndex = i;
+                                                }
+                                            }
+
+                                            if (ticks[bestTickIndex] >= system.tick + 2)
+                                            {
+                                                system.tick++;
+                                                totalNumberOfTicks++;
+                                                numberOfLostTicks++;
+
+                                                for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                                                {
+                                                    while (_InterlockedCompareExchange8(&tickLocks[i], 1, 0))
+                                                    {
+                                                        _mm_pause();
+                                                    }
+                                                    if (latestTicks[i].tick == system.tick + 1)
+                                                    {
+                                                        bs->CopyMem(&previousTicks[i], &actualTicks[i], sizeof(Tick));
+                                                        bs->CopyMem(&actualTicks[i], &latestTicks[i], sizeof(Tick));
+                                                    }
+                                                    _InterlockedCompareExchange8(&tickLocks[i], 0, 1);
+                                                }
+
+                                                for (unsigned int i = 0; i < sizeof(tickTicks) / sizeof(tickTicks[0]) - 1; i++)
+                                                {
+                                                    tickTicks[i] = tickTicks[i + 1];
+                                                }
+                                                tickTicks[sizeof(tickTicks) / sizeof(tickTicks[0]) - 1] = __rdtsc();
+
+                                                bs->SetMem(numberOfBufferedTransfers, sizeof(numberOfBufferedTransfers), 0);
+                                            }
                                         }
                                     }
 
@@ -7771,7 +7776,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 else
                                                 {
                                                     numberOfReceivedBytes += peers[i].receiveData.DataLength;
-                                                    *((unsigned long long*) & peers[i].receiveData.FragmentTable[0].FragmentBuffer) += peers[i].receiveData.DataLength;
+                                                    *((unsigned long long*)&peers[i].receiveData.FragmentTable[0].FragmentBuffer) += peers[i].receiveData.DataLength;
 
                                                 iteration:
                                                     unsigned int receivedDataSize = (unsigned int)((unsigned long long)peers[i].receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)peers[i].receiveBuffer);
@@ -7779,7 +7784,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     if (receivedDataSize >= sizeof(RequestResponseHeader))
                                                     {
                                                         RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                        if (requestResponseHeader->protocol < VERSION_B || requestResponseHeader->protocol > VERSION_B + 1)
+                                                        if (requestResponseHeader->protocol < VERSION_B - 1 || requestResponseHeader->protocol > VERSION_B + 1)
                                                         {
                                                             closePeer(i);
                                                         }
@@ -8181,7 +8186,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 else
                                                 {
                                                     numberOfReceivedBytes += clients[i].receiveData.DataLength;
-                                                    *((unsigned long long*) & clients[i].receiveData.FragmentTable[0].FragmentBuffer) += clients[i].receiveData.DataLength;
+                                                    *((unsigned long long*)&clients[i].receiveData.FragmentTable[0].FragmentBuffer) += clients[i].receiveData.DataLength;
 
                                                 iteration2:
                                                     unsigned int receivedDataSize = (unsigned int)((unsigned long long)clients[i].receiveData.FragmentTable[0].FragmentBuffer - (unsigned long long)clients[i].receiveBuffer);
@@ -8262,25 +8267,25 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     ABCD_SAVE = *((__m128i*)acceptBytes);
                                                                     E0_SAVE = E0;
 
-                                                                    MSG0 = _mm_shuffle_epi8(*((__m128i*) & ((char*)clients[i].receiveBuffer)[j + (ptr += 16)]), MASK);
+                                                                    MSG0 = _mm_shuffle_epi8(*((__m128i*)&((char*)clients[i].receiveBuffer)[j + (ptr += 16)]), MASK);
                                                                     E0 = _mm_add_epi32(E0, MSG0);
                                                                     E1 = *((__m128i*)acceptBytes);
                                                                     *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 0);
 
-                                                                    MSG1 = _mm_shuffle_epi8(*((__m128i*) & ((char*)clients[i].receiveBuffer)[j + (ptr += 16)]), MASK);
+                                                                    MSG1 = _mm_shuffle_epi8(*((__m128i*)&((char*)clients[i].receiveBuffer)[j + (ptr += 16)]), MASK);
                                                                     E1 = _mm_sha1nexte_epu32(E1, MSG1);
                                                                     E0 = *((__m128i*)acceptBytes);
                                                                     *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E1, 0);
                                                                     MSG0 = _mm_sha1msg1_epu32(MSG0, MSG1);
 
-                                                                    MSG2 = _mm_shuffle_epi8(*((__m128i*) & ((char*)clients[i].receiveBuffer)[j + (ptr += 16)]), MASK);
+                                                                    MSG2 = _mm_shuffle_epi8(*((__m128i*)&((char*)clients[i].receiveBuffer)[j + (ptr += 16)]), MASK);
                                                                     E0 = _mm_sha1nexte_epu32(E0, MSG2);
                                                                     E1 = *((__m128i*)acceptBytes);
                                                                     *((__m128i*)acceptBytes) = _mm_sha1rnds4_epu32(*((__m128i*)acceptBytes), E0, 0);
                                                                     MSG1 = _mm_sha1msg1_epu32(MSG1, MSG2);
                                                                     MSG0 = _mm_xor_si128(MSG0, MSG2);
 
-                                                                    MSG3 = _mm_shuffle_epi8(*((__m128i*) & ((char*)clients[i].receiveBuffer)[j + (ptr += 16)]), MASK);
+                                                                    MSG3 = _mm_shuffle_epi8(*((__m128i*)&((char*)clients[i].receiveBuffer)[j + (ptr += 16)]), MASK);
                                                                     E1 = _mm_sha1nexte_epu32(E1, MSG3);
                                                                     E0 = *((__m128i*)acceptBytes);
                                                                     MSG0 = _mm_sha1msg2_epu32(MSG0, MSG3);
@@ -8451,7 +8456,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                                 unsigned int ptr = ((size <= 125) ? 2 : 4) + (((char*)clients[i].receiveBuffer)[1] < 0 ? 4 : 0);
                                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)&((char*)clients[i].receiveBuffer)[ptr];
-                                                                if (requestResponseHeader->protocol < VERSION_B || requestResponseHeader->protocol > VERSION_B + 1
+                                                                if (requestResponseHeader->protocol < VERSION_B - 1 || requestResponseHeader->protocol > VERSION_B + 1
                                                                     || receivedDataSize < ptr + requestResponseHeader->size)
                                                                 {
                                                                     closeClient(i);
