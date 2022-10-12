@@ -31,16 +31,16 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 42
-#define VERSION_C 1
+#define VERSION_B 43
+#define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
 static const unsigned char knownPublicPeers[][4] = {
 };
 
-#define EPOCH 25
-#define TICK 3248650
+#define EPOCH 26
+#define TICK 3261663
 
 #include <intrin.h>
 
@@ -4551,8 +4551,9 @@ typedef struct
 typedef struct
 {
     unsigned int size;
-    unsigned short protocol;
-    unsigned short type;
+    unsigned char protocol;
+    unsigned char type;
+    unsigned short nonce;
 } RequestResponseHeader;
 
 #define EXCHANGE_PUBLIC_PEERS 0
@@ -5670,6 +5671,7 @@ static void requestProcessor(void* ProcedureArgument)
                 {
                     responseSize = sizeof(RequestResponseHeader) + sizeof(ComputerState);
                     responseHeader->type = GET_COMPUTER_STATE;
+                    responseHeader->nonce = 0;
 
                     ComputerState* computerState = (ComputerState*)((char*)processor->cache + sizeof(RequestResponseHeader));
                     bs->CopyMem(&computerState->computors, &broadcastedComputors.broadcastComputors.computors, sizeof(Computors));
@@ -6698,8 +6700,8 @@ static BOOLEAN initialize()
 #endif
 
 #if NUMBER_OF_MINING_PROCESSORS
-        miningData[0] = 804;
-        miningData[1] = 3;
+        miningData[0] = 555;
+        miningData[1] = 26;
         miningData[2] = 826;
         miningData[3] = 0;
         miningData[4] = 53;
@@ -7208,6 +7210,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             bs->CopyMem(&actualTicks[ownComputorIndices[i]], &broadcastedTick.broadcastTick.tick, sizeof(Tick));
                                             _InterlockedCompareExchange8(&tickLocks[ownComputorIndices[i]], 0, 1);
 
+                                            _rdrand16_step(&broadcastedTick.header.nonce);
                                             for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
                                             {
                                                 push(&peers[j], &broadcastedTick.header, true);
@@ -7474,6 +7477,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             broadcastedRevenues.broadcastRevenues.revenues.computorIndex ^= BROADCAST_REVENUES;
                                             sign(ownSubseeds[ownComputorIndicesMapping[i]], ownPublicKeys[ownComputorIndicesMapping[i]], digest, broadcastedRevenues.broadcastRevenues.revenues.signature);
 
+                                            _rdrand16_step(&broadcastedRevenues.header.nonce);
                                             for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
                                             {
                                                 push(&peers[j], &broadcastedRevenues.header, true);
@@ -7699,6 +7703,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     requestHeader->size = sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers);
                                                     requestHeader->protocol = VERSION_B;
                                                     requestHeader->type = EXCHANGE_PUBLIC_PEERS;
+                                                    requestHeader->nonce = 0;
 
                                                     char* ptr = (char*)&peers[i].dataToTransmit[sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers)];
                                                     
@@ -7843,6 +7848,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                             responseHeader->size = sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers);
                                                                             responseHeader->protocol = VERSION_B;
                                                                             responseHeader->type = EXCHANGE_PUBLIC_PEERS;
+                                                                            responseHeader->nonce = 0;
 
                                                                             char* ptr = ((char*)responseBuffer) + (sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers));
 
@@ -7878,6 +7884,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                 {
                                                                     if (broadcastedComputors.broadcastComputors.computors.epoch)
                                                                     {
+                                                                        _rdrand16_step(&broadcastedComputors.header.nonce);
                                                                         push(&peers[i], &broadcastedComputors.header, true);
                                                                     }
 
@@ -7893,6 +7900,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     {
                                                                         computorIndices[j] = j;
                                                                     }
+                                                                    _rdrand16_step(&broadcastedTick.header.nonce);
                                                                     while (numberOfComputorIndices)
                                                                     {
                                                                         unsigned short random;
@@ -8667,6 +8675,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                     if (shouldBeBroadcasted)
                                     {
+                                        _rdrand16_step(&broadcastedSolution.header.nonce);
                                         for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
                                         {
                                             push(&peers[i], &broadcastedSolution.header, true);
