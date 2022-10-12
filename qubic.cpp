@@ -32,7 +32,7 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 
 #define VERSION_A 1
 #define VERSION_B 43
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -6457,6 +6457,7 @@ static BOOLEAN initialize()
     broadcastedComputors.header.size = sizeof(broadcastedComputors.header) + sizeof(broadcastedComputors.broadcastComputors);
     broadcastedComputors.header.protocol = VERSION_B;
     broadcastedComputors.header.type = BROADCAST_COMPUTORS;
+    broadcastedComputors.header.nonce = 0;
     broadcastedComputors.broadcastComputors.computors.epoch = 0;
     for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
     {
@@ -6481,9 +6482,11 @@ static BOOLEAN initialize()
     requestedComputors.header.size = sizeof(requestedComputors);
     requestedComputors.header.protocol = VERSION_B;
     requestedComputors.header.type = REQUEST_COMPUTORS;
+    requestedComputors.header.nonce = 0;
     requestedTicks.header.size = sizeof(requestedTicks);
     requestedTicks.header.protocol = VERSION_B;
     requestedTicks.header.type = REQUEST_TICKS;
+    requestedTicks.header.nonce = 0;
 
     EFI_STATUS status;
 
@@ -7184,6 +7187,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                         *((__m256i*)broadcastedTick.broadcastTick.tick.nextTickDataDigest) = ZERO;
 
+                                        _rdrand16_step(&broadcastedTick.header.nonce);
                                         for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
                                         {
                                             broadcastedTick.broadcastTick.tick.computorIndex = ownComputorIndices[i] ^ BROADCAST_TICK;
@@ -7210,7 +7214,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             bs->CopyMem(&actualTicks[ownComputorIndices[i]], &broadcastedTick.broadcastTick.tick, sizeof(Tick));
                                             _InterlockedCompareExchange8(&tickLocks[ownComputorIndices[i]], 0, 1);
 
-                                            _rdrand16_step(&broadcastedTick.header.nonce);
                                             for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
                                             {
                                                 push(&peers[j], &broadcastedTick.header, true);
@@ -7346,8 +7349,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             }
 
                                             /*
-
-
                                             for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
                                             {
                                                 if (request->transfer.tick % NUMBER_OF_COMPUTORS == ownComputorIndices[i])
@@ -7361,69 +7362,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 }
                                             }*/
                                         }
-                                        else
-                                        {
-                                            unsigned short numberOfTicks = 0;
-                                            unsigned int ticks[NUMBER_OF_COMPUTORS];
-                                            unsigned short tickQuantities[NUMBER_OF_COMPUTORS];
-                                            for (unsigned short i = 0; i < NUMBER_OF_COMPUTORS; i++)
-                                            {
-                                                unsigned short j;
-                                                for (j = 0; j < numberOfTicks; j++)
-                                                {
-                                                    if (latestTicks[i].tick == ticks[j])
-                                                    {
-                                                        tickQuantities[j]++;
-
-                                                        break;
-                                                    }
-                                                }
-                                                if (j == numberOfTicks)
-                                                {
-                                                    ticks[numberOfTicks] = latestTicks[i].tick;
-                                                    tickQuantities[numberOfTicks++] = 1;
-                                                }
-                                            }
-
-                                            unsigned short bestTickIndex = 0;
-
-                                            for (unsigned short i = 1; i < numberOfTicks; i++)
-                                            {
-                                                if (tickQuantities[i] > tickQuantities[bestTickIndex])
-                                                {
-                                                    bestTickIndex = i;
-                                                }
-                                            }
-
-                                            if (ticks[bestTickIndex] >= system.tick + 2)
-                                            {
-                                                system.tick++;
-                                                totalNumberOfTicks++;
-                                                numberOfLostTicks++;
-
-                                                for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
-                                                {
-                                                    while (_InterlockedCompareExchange8(&tickLocks[i], 1, 0))
-                                                    {
-                                                        _mm_pause();
-                                                    }
-                                                    if (latestTicks[i].tick == system.tick + 1)
-                                                    {
-                                                        bs->CopyMem(&previousTicks[i], &actualTicks[i], sizeof(Tick));
-                                                        bs->CopyMem(&actualTicks[i], &latestTicks[i], sizeof(Tick));
-                                                    }
-                                                    _InterlockedCompareExchange8(&tickLocks[i], 0, 1);
-                                                }
-
-                                                for (unsigned int i = 0; i < sizeof(tickTicks) / sizeof(tickTicks[0]) - 1; i++)
-                                                {
-                                                    tickTicks[i] = tickTicks[i + 1];
-                                                }
-                                                tickTicks[sizeof(tickTicks) / sizeof(tickTicks[0]) - 1] = __rdtsc();
-
-                                                bs->SetMem(numberOfBufferedTransfers, sizeof(numberOfBufferedTransfers), 0);
-                                            }
-                                        }
                                     }
 
                                     if (curTimeTick - latestRevenuePublicationTick >= REVENUE_PUBLICATION_PERIOD * frequency)
@@ -7432,6 +7370,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                         broadcastedRevenues.broadcastRevenues.revenues.epoch = system.epoch;
 
+                                        _rdrand16_step(&broadcastedRevenues.header.nonce);
                                         for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
                                         {
                                             broadcastedRevenues.broadcastRevenues.revenues.computorIndex = ownComputorIndices[i];
@@ -7477,7 +7416,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             broadcastedRevenues.broadcastRevenues.revenues.computorIndex ^= BROADCAST_REVENUES;
                                             sign(ownSubseeds[ownComputorIndicesMapping[i]], ownPublicKeys[ownComputorIndicesMapping[i]], digest, broadcastedRevenues.broadcastRevenues.revenues.signature);
 
-                                            _rdrand16_step(&broadcastedRevenues.header.nonce);
                                             for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
                                             {
                                                 push(&peers[j], &broadcastedRevenues.header, true);
@@ -7884,7 +7822,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                 {
                                                                     if (broadcastedComputors.broadcastComputors.computors.epoch)
                                                                     {
-                                                                        _rdrand16_step(&broadcastedComputors.header.nonce);
                                                                         push(&peers[i], &broadcastedComputors.header, true);
                                                                     }
 
@@ -7900,7 +7837,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     {
                                                                         computorIndices[j] = j;
                                                                     }
-                                                                    _rdrand16_step(&broadcastedTick.header.nonce);
+                                                                    broadcastedTick.header.nonce = 0;
                                                                     while (numberOfComputorIndices)
                                                                     {
                                                                         unsigned short random;
