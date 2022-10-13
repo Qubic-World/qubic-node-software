@@ -31,8 +31,8 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 43
-#define VERSION_C 1
+#define VERSION_B 45
+#define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -40,7 +40,7 @@ static const unsigned char knownPublicPeers[][4] = {
 };
 
 #define EPOCH 26
-#define TICK 3261663
+#define TICK 3262500
 
 #include <intrin.h>
 
@@ -6476,6 +6476,7 @@ static BOOLEAN initialize()
     broadcastedTick.header.size = sizeof(broadcastedTick);
     broadcastedTick.header.protocol = VERSION_B;
     broadcastedTick.header.type = BROADCAST_TICK;
+    broadcastedTick.header.nonce = 0;
     broadcastedRevenues.header.size = sizeof(broadcastedRevenues);
     broadcastedRevenues.header.protocol = VERSION_B;
     broadcastedRevenues.header.type = BROADCAST_REVENUES;
@@ -7187,7 +7188,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                         *((__m256i*)broadcastedTick.broadcastTick.tick.nextTickDataDigest) = ZERO;
 
-                                        _rdrand16_step(&broadcastedTick.header.nonce);
                                         for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
                                         {
                                             broadcastedTick.broadcastTick.tick.computorIndex = ownComputorIndices[i] ^ BROADCAST_TICK;
@@ -7727,7 +7727,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     if (receivedDataSize >= sizeof(RequestResponseHeader))
                                                     {
                                                         RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                        if (requestResponseHeader->protocol < VERSION_B - 1 || requestResponseHeader->protocol > VERSION_B + 1)
+                                                        if (requestResponseHeader->protocol < VERSION_B || requestResponseHeader->protocol > VERSION_B + 1)
                                                         {
                                                             closePeer(i);
                                                         }
@@ -7837,7 +7837,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     {
                                                                         computorIndices[j] = j;
                                                                     }
-                                                                    broadcastedTick.header.nonce = 0;
                                                                     while (numberOfComputorIndices)
                                                                     {
                                                                         unsigned short random;
@@ -8401,7 +8400,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                                 unsigned int ptr = ((size <= 125) ? 2 : 4) + (((char*)clients[i].receiveBuffer)[1] < 0 ? 4 : 0);
                                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)&((char*)clients[i].receiveBuffer)[ptr];
-                                                                if (requestResponseHeader->protocol < VERSION_B - 1 || requestResponseHeader->protocol > VERSION_B + 1
+                                                                if (requestResponseHeader->protocol < VERSION_B || requestResponseHeader->protocol > VERSION_B + 1
                                                                     || receivedDataSize < ptr + requestResponseHeader->size)
                                                                 {
                                                                     closeClient(i);
