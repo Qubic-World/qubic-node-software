@@ -32,7 +32,7 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 
 #define VERSION_A 1
 #define VERSION_B 46
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -4464,6 +4464,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define PEER_REFRESHING_PERIOD 60
 #define PORT 21841
 #define QUORUM (NUMBER_OF_COMPUTORS * 2 / 3 + 1)
+#define REQUEST_QUORUM_TICK_BROADCASTING_LIMIT 1
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 300
 #define REVENUE_PUBLICATION_PERIOD 300
 #define SIGNATURE_SIZE 64
@@ -4876,6 +4877,7 @@ static Tick actualTicks[NUMBER_OF_COMPUTORS];
 static Tick previousTicks[NUMBER_OF_COMPUTORS];
 static unsigned long long tickTicks[11];
 static unsigned int totalNumberOfTicks = 0, numberOfLostTicks = 0;
+static unsigned long long latestBroadcastedRequestQuorumTickTick = 0;
 
 static unsigned long long* dejavu0 = NULL;
 static unsigned long long* dejavu1 = NULL;
@@ -6726,7 +6728,7 @@ static BOOLEAN initialize()
         bs->SetMem(numberOfBufferedTransfers, sizeof(numberOfBufferedTransfers), 0);
         /**///bs->SetMem(chosenTransfersInvocationsAndQuestionSizes, sizeof(chosenTransfersInvocationsAndQuestionSizes), 0);
 
-        if (status = bs->AllocatePool(EfiRuntimeServicesData, MAX_NUMBER_OF_TICKS_PER_EPOCH * sizeof(QuorumTick), (void**)&quorumTicks))
+        if (status = bs->AllocatePool(EfiRuntimeServicesData, ((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * sizeof(QuorumTick), (void**)&quorumTicks))
         {
             logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status, __LINE__);
 
@@ -6842,7 +6844,7 @@ static BOOLEAN initialize()
         }
         else
         {
-            unsigned long long size = MAX_NUMBER_OF_TICKS_PER_EPOCH * sizeof(QuorumTick);
+            unsigned long long size = ((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * sizeof(QuorumTick);
 
             status = dataFile->Read(dataFile, &size, quorumTicks);
             dataFile->Close(dataFile);
@@ -8068,22 +8070,28 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                                 case REQUEST_QUORUM_TICK:
                                                                 {
+                                                                    if (__rdtsc() - latestBroadcastedRequestQuorumTickTick >= REQUEST_QUORUM_TICK_BROADCASTING_LIMIT * frequency)
+                                                                    {
+                                                                        latestBroadcastedRequestQuorumTickTick = __rdtsc();
 #if NUMBER_OF_COMPUTING_PROCESSORS
-                                                                    RequestQuorumTick* request = (RequestQuorumTick*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader));
-                                                                    if (request->quorumTick.tick <= TICK)
-                                                                    {
-                                                                        break;
-                                                                    }
-                                                                    if (request->quorumTick.tick <= system.tick)
-                                                                    {
-                                                                        bs->CopyMem(&broadcastedQuorumTick.BroadcastQuorumTick.quorumTick, &quorumTicks[request->quorumTick.tick - TICK - 1], sizeof(QuorumTick));
-                                                                        pushToSome(&broadcastedQuorumTick.header);
-                                                                    }
-                                                                    else
+                                                                        RequestQuorumTick* request = (RequestQuorumTick*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader));
+                                                                        if (request->quorumTick.tick <= TICK)
+                                                                        {
+                                                                            break;
+                                                                        }
+                                                                        if (request->quorumTick.tick <= system.tick)
+                                                                        {
+                                                                            bs->CopyMem(&broadcastedQuorumTick.BroadcastQuorumTick.quorumTick, &quorumTicks[request->quorumTick.tick - TICK - 1], sizeof(QuorumTick));
+                                                                            pushToSome(&broadcastedQuorumTick.header);
+                                                                        }
+                                                                        else
 #endif
-                                                                    {
-                                                                        pushToSome(requestResponseHeader);
+                                                                        {
+                                                                            pushToSome(requestResponseHeader);
+                                                                        }
                                                                     }
+
+                                                                    _InterlockedIncrement64(&numberOfProcessedRequests);
                                                                 }
                                                                 break;
 
