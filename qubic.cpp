@@ -32,7 +32,7 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 
 #define VERSION_A 1
 #define VERSION_B 46
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -4464,7 +4464,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define PEER_REFRESHING_PERIOD 60
 #define PORT 21841
 #define QUORUM (NUMBER_OF_COMPUTORS * 2 / 3 + 1)
-#define REQUEST_QUORUM_TICK_BROADCASTING_LIMIT 1
+#define REQUEST_QUORUM_TICK_BROADCASTING_LIMIT 5
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 300
 #define REVENUE_PUBLICATION_PERIOD 300
 #define SIGNATURE_SIZE 64
@@ -4854,6 +4854,7 @@ static unsigned int numberOfBufferedTransfers[sizeof(ownSeeds) / sizeof(ownSeeds
 static unsigned char bufferedTransferBytes[sizeof(ownSeeds) / sizeof(ownSeeds[0])][MAX_NUMBER_OF_TRANSACTIONS_PER_TICK][sizeof(Transfer) + MAX_TRANSFER_DESCRIPTION_SIZE + SIGNATURE_SIZE];
 
 static QuorumTick* quorumTicks = NULL;
+static unsigned long long requestedQuorumTickTicks[MAX_NUMBER_OF_TICKS_PER_EPOCH];
 
 static Entity* initSpectrum = NULL;
 static __m256i* initSpectrumDigests = NULL;
@@ -4877,7 +4878,6 @@ static Tick actualTicks[NUMBER_OF_COMPUTORS];
 static Tick previousTicks[NUMBER_OF_COMPUTORS];
 static unsigned long long tickTicks[11];
 static unsigned int totalNumberOfTicks = 0, numberOfLostTicks = 0;
-static unsigned long long latestBroadcastedRequestQuorumTickTick = 0;
 
 static unsigned long long* dejavu0 = NULL;
 static unsigned long long* dejavu1 = NULL;
@@ -6874,6 +6874,8 @@ static BOOLEAN initialize()
                     }
                     size -= sizeof(QuorumTick);
                 }
+
+                bs->SetMem(requestedQuorumTickTicks, sizeof(requestedQuorumTickTicks), 0);
             }
         }
 #endif
@@ -8070,15 +8072,12 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                                 case REQUEST_QUORUM_TICK:
                                                                 {
-                                                                    if (__rdtsc() - latestBroadcastedRequestQuorumTickTick >= REQUEST_QUORUM_TICK_BROADCASTING_LIMIT * frequency)
+                                                                    RequestQuorumTick* request = (RequestQuorumTick*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader));
+                                                                    if (request->quorumTick.tick > TICK && request->quorumTick.tick <= TICK + MAX_NUMBER_OF_TICKS_PER_EPOCH
+                                                                        && __rdtsc() - requestedQuorumTickTicks[request->quorumTick.tick - TICK - 1] >= REQUEST_QUORUM_TICK_BROADCASTING_LIMIT * frequency)
                                                                     {
-                                                                        latestBroadcastedRequestQuorumTickTick = __rdtsc();
+                                                                        requestedQuorumTickTicks[request->quorumTick.tick - TICK - 1] = __rdtsc();
 #if NUMBER_OF_COMPUTING_PROCESSORS
-                                                                        RequestQuorumTick* request = (RequestQuorumTick*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader));
-                                                                        if (request->quorumTick.tick <= TICK)
-                                                                        {
-                                                                            break;
-                                                                        }
                                                                         if (request->quorumTick.tick <= system.tick)
                                                                         {
                                                                             bs->CopyMem(&broadcastedQuorumTick.BroadcastQuorumTick.quorumTick, &quorumTicks[request->quorumTick.tick - TICK - 1], sizeof(QuorumTick));
