@@ -31,8 +31,8 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 46
-#define VERSION_C 2
+#define VERSION_B 47
+#define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -40,7 +40,7 @@ static const unsigned char knownPublicPeers[][4] = {
 };
 
 #define EPOCH 26 // Do NOT change!
-#define TICK 3262500 // Do NOT change!
+#define TICK 3262522 // Do NOT change!
 
 #include <intrin.h>
 
@@ -4854,7 +4854,6 @@ static unsigned int numberOfBufferedTransfers[sizeof(ownSeeds) / sizeof(ownSeeds
 static unsigned char bufferedTransferBytes[sizeof(ownSeeds) / sizeof(ownSeeds[0])][MAX_NUMBER_OF_TRANSACTIONS_PER_TICK][sizeof(Transfer) + MAX_TRANSFER_DESCRIPTION_SIZE + SIGNATURE_SIZE];
 
 static QuorumTick* quorumTicks = NULL;
-static unsigned long long requestedQuorumTickTicks[MAX_NUMBER_OF_TICKS_PER_EPOCH];
 
 static Entity* initSpectrum = NULL;
 static __m256i* initSpectrumDigests = NULL;
@@ -4867,6 +4866,7 @@ static volatile unsigned char spectrumDigestLevel = 0;
 static volatile short spectrumDigestLevelCompleteness = 0;
 static __m256i* spectrumDigests = NULL;
 #endif
+static unsigned long long requestedQuorumTickTicks[MAX_NUMBER_OF_TICKS_PER_EPOCH];
 /**///static unsigned int chosenTransfersInvocationsAndQuestionSizes[NUMBER_OF_COMPUTORS];
 /**///static char chosenTransfersInvocationsAndQuestionBytes[NUMBER_OF_COMPUTORS][sizeof(BroadcastNextTickData) + (sizeof(Transfer) + MAX_TRANSFER_DESCRIPTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_TRANSFERS_PER_TICK + (sizeof(Invocation) + MAX_INVOCATION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_INVOCATIONS_PER_TICK + (sizeof(Question) + MAX_QUESTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_QUESTIONS_PER_TICK + SIGNATURE_SIZE];
 
@@ -5354,7 +5354,7 @@ static void requestProcessor(void* ProcedureArgument)
                     if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->resourceTestingSolution.computorPublicKey), ZERO)) != 0xFFFFFFFF)
                     {
                         bool shouldBeBroadcasted = !(dayIndex(time.Year - 2000, time.Month, time.Day) % 7);
-                        if (!shouldBeBroadcasted)
+                        //if (!shouldBeBroadcasted)
                         {
                             for (unsigned int j = 0; j < sizeof(resourceTestingSolutionIdentitiesToBroadcast) / sizeof(resourceTestingSolutionIdentitiesToBroadcast[0]); j++)
                             {
@@ -7921,7 +7921,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     if (receivedDataSize >= sizeof(RequestResponseHeader))
                                                     {
                                                         RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                        if (requestResponseHeader->protocol < VERSION_B - 1 || requestResponseHeader->protocol > VERSION_B + 1)
+                                                        if (requestResponseHeader->protocol < VERSION_B || requestResponseHeader->protocol > VERSION_B + 1)
                                                         {
                                                             closePeer(i);
                                                         }
@@ -8814,7 +8814,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     resourceTestingSolutionPublicationTick = curTimeTick;
 
                                     bool shouldBeBroadcasted = !(dayIndex(time.Year - 2000, time.Month, time.Day) % 7);
-                                    if (!shouldBeBroadcasted)
+                                    //if (!shouldBeBroadcasted)
                                     {
                                         for (unsigned int i = 0; i < sizeof(resourceTestingSolutionIdentitiesToBroadcast) / sizeof(resourceTestingSolutionIdentitiesToBroadcast[0]); i++)
                                         {
