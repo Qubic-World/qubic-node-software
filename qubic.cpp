@@ -32,7 +32,7 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 
 #define VERSION_A 1
 #define VERSION_B 47
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -6609,7 +6609,6 @@ static BOOLEAN initialize()
     requestedQuorumTick.header.size = sizeof(requestedQuorumTick);
     requestedQuorumTick.header.protocol = VERSION_B;
     requestedQuorumTick.header.type = REQUEST_QUORUM_TICK;
-    requestedQuorumTick.header.nonce = 0;
     requestedQuorumTick.requestQuorumTick.quorumTick.tick = 0;
     broadcastedQuorumTick.header.size = sizeof(broadcastedQuorumTick);
     broadcastedQuorumTick.header.protocol = VERSION_B;
@@ -7546,13 +7545,16 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         }
                                         else
                                         {
-                                            if (nextTickNumberOfComputors >= QUORUM && requestedQuorumTick.requestQuorumTick.quorumTick.tick != actualTicks[ownComputorIndices[0]].tick)
+                                            if (nextTickNumberOfComputors > (NUMBER_OF_COMPUTORS - QUORUM) && requestedQuorumTick.requestQuorumTick.quorumTick.tick != actualTicks[ownComputorIndices[0]].tick)
                                             {
+                                                _rdrand16_step(&requestedQuorumTick.header.nonce);
                                                 requestedQuorumTick.requestQuorumTick.quorumTick.tick = actualTicks[ownComputorIndices[0]].tick;
                                                 for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
                                                 {
                                                     push(&peers[j], &requestedQuorumTick.header, true);
                                                 }
+
+                                                numberOfLostTicks++;
                                             }
                                         }
                                     }
@@ -8079,7 +8081,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 #if NUMBER_OF_COMPUTING_PROCESSORS
                                                                         if (request->quorumTick.tick <= system.tick)
                                                                         {
-                                                                            _rdrand16_step(&broadcastedQuorumTick.header.nonce);
+                                                                            broadcastedQuorumTick.header.nonce = requestResponseHeader->nonce;
                                                                             bs->CopyMem(&broadcastedQuorumTick.BroadcastQuorumTick.quorumTick, &quorumTicks[request->quorumTick.tick - TICK - 1], sizeof(QuorumTick));
                                                                             pushToSome(&broadcastedQuorumTick.header);
                                                                         }
