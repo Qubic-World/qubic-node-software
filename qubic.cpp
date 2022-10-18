@@ -32,9 +32,11 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 
 #define VERSION_A 1
 #define VERSION_B 47
-#define VERSION_C 2
+#define VERSION_C 3
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
+
+#define AVX512 1
 
 static const unsigned char knownPublicPeers[][4] = {
 };
@@ -1291,6 +1293,50 @@ static EFI_BOOT_SERVICES* bs;
 #define ROL64(a, offset) ((((unsigned long long)a) << offset) ^ (((unsigned long long)a) >> (64 - offset)))
 #endif
 
+#if AVX512
+static __m512i zero, moveThetaPrev, moveThetaNext, rhoB, rhoG, rhoK, rhoM, rhoS, pi1B, pi1G, pi1K, pi1M, pi1S, pi2S1, pi2S2, pi2BG, pi2KM, pi2S3, padding;
+
+static const unsigned long long K12RoundConstants[12]
+= {
+    0x000000008000808bULL,
+    0x800000000000008bULL,
+    0x8000000000008089ULL,
+    0x8000000000008003ULL,
+    0x8000000000008002ULL,
+    0x8000000000000080ULL,
+    0x000000000000800aULL,
+    0x800000008000000aULL,
+    0x8000000080008081ULL,
+    0x8000000000008080ULL,
+    0x0000000080000001ULL,
+    0x8000000080008008ULL
+};
+
+#define KeccakP_Round(i) \
+    __m512i b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96); \
+    __m512i b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0); \
+    b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1); \
+    __m512i b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK)); \
+    __m512i b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM)); \
+    __m512i b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS)); \
+    __m512i b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG)); \
+    b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB)); \
+    Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), _mm512_maskz_loadu_epi64(0x01, &K12RoundConstants[i])); \
+    Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2); \
+    Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2); \
+    Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2); \
+    Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2); \
+    b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou); \
+    b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou); \
+    b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou); \
+    b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou); \
+    Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1); \
+    Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3); \
+    Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1); \
+    Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3); \
+    Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou)
+#endif
+
 #define KeccakF1600RoundConstant0   0x000000008000808bULL
 #define KeccakF1600RoundConstant1   0x800000000000008bULL
 #define KeccakF1600RoundConstant2   0x8000000000008089ULL
@@ -1609,11 +1655,29 @@ typedef struct
 
 static void KeccakP1600_Permute_12rounds(void* state)
 {
-    declareABCDE
+#if AVX512
     unsigned long long* stateAsLanes = (unsigned long long*)state;
+    __m512i Baeiou = _mm512_maskz_loadu_epi64(0x1F, stateAsLanes);
+    __m512i Gaeiou = _mm512_maskz_loadu_epi64(0x1F, stateAsLanes + 5);
+    __m512i Kaeiou = _mm512_maskz_loadu_epi64(0x1F, stateAsLanes + 10);
+    __m512i Maeiou = _mm512_maskz_loadu_epi64(0x1F, stateAsLanes + 15);
+    __m512i Saeiou = _mm512_maskz_loadu_epi64(0x01, stateAsLanes + 20);
+    for (unsigned __int8 i = 0; i < 12; )
+    {
+        KeccakP_Round(i++);
+    }
+    _mm512_mask_storeu_epi64(stateAsLanes, 0x1F, Baeiou);
+    _mm512_mask_storeu_epi64(stateAsLanes + 5, 0x1F, Gaeiou);
+    _mm512_mask_storeu_epi64(stateAsLanes + 10, 0x1F, Kaeiou);
+    _mm512_mask_storeu_epi64(stateAsLanes + 15, 0x1F, Maeiou);
+    _mm512_mask_storeu_epi64(stateAsLanes + 20, 0x01, Saeiou);
+#else
+    declareABCDE
+        unsigned long long* stateAsLanes = (unsigned long long*)state;
     copyFromState(stateAsLanes)
-    rounds12
-    copyToState(stateAsLanes)
+        rounds12
+        copyToState(stateAsLanes)
+#endif
 }
 
 static void KeccakP1600_ExtractBytes(const void* state, unsigned char* data, unsigned int offset, unsigned int length)
@@ -1653,9 +1717,9 @@ static void KangarooTwelve_F_Absorb(KangarooTwelve_F* instance, unsigned char* d
         if (!instance->byteIOIndex && dataByteLen >= i + K12_rateInBytes)
         {
             declareABCDE
-            unsigned long long* stateAsLanes = (unsigned long long*)instance->state;
+                unsigned long long* stateAsLanes = (unsigned long long*)instance->state;
             copyFromState(stateAsLanes)
-            unsigned long long modifiedDataByteLen = dataByteLen - i;
+                unsigned long long modifiedDataByteLen = dataByteLen - i;
             while (modifiedDataByteLen >= K12_rateInBytes)
             {
                 Aba ^= ((unsigned long long*)data)[0];
@@ -1680,11 +1744,11 @@ static void KangarooTwelve_F_Absorb(KangarooTwelve_F* instance, unsigned char* d
                 Amu ^= ((unsigned long long*)data)[19];
                 Asa ^= ((unsigned long long*)data)[20];
                 rounds12
-                data += K12_rateInBytes;
+                    data += K12_rateInBytes;
                 modifiedDataByteLen -= K12_rateInBytes;
             }
             copyToState(stateAsLanes)
-            i = dataByteLen - modifiedDataByteLen;
+                i = dataByteLen - modifiedDataByteLen;
         }
         else
         {
@@ -5248,10 +5312,14 @@ static void addPublicPeer(unsigned char address[4])
     }
 }
 
-static void enableAVX2()
+static void enableAVX()
 {
-    __writecr4(__readcr4() | 0x40600);
-    _xsetbv(_XCR_XFEATURE_ENABLED_MASK, (_xgetbv(_XCR_XFEATURE_ENABLED_MASK) & 0xFFFB) | 7);
+    __writecr4(__readcr4() | 0x40000);
+    _xsetbv(_XCR_XFEATURE_ENABLED_MASK, _xgetbv(_XCR_XFEATURE_ENABLED_MASK) | (7
+#if AVX512
+        | 224
+#endif
+        ));
 }
 
 inline int dayIndex(unsigned int year, unsigned int month, unsigned int day) // 0 = Wednesday
@@ -5321,7 +5389,7 @@ static void push(Client* client, RequestResponseHeader* requestResponseHeader)
 
 static void requestProcessor(void* ProcedureArgument)
 {
-    enableAVX2();
+    enableAVX();
 
     Processor* processor = (Processor*)ProcedureArgument;
     while (!state)
@@ -6174,7 +6242,7 @@ static void closeClient(const unsigned int clientIndex)
 #if NUMBER_OF_COMPUTING_PROCESSORS
 static void computorProcessor(void* ProcedureArgument)
 {
-    enableAVX2();
+    enableAVX();
 
     const unsigned int computingProcessorIndex = (unsigned int)((unsigned long long)ProcedureArgument);
 
@@ -6264,7 +6332,7 @@ static void computorProcessor(void* ProcedureArgument)
 #if NUMBER_OF_MINING_PROCESSORS
 static void minerProcessor(void* ProcedureArgument)
 {
-    enableAVX2();
+    enableAVX();
 
     const unsigned int miningProcessorIndex = (unsigned int)((unsigned long long)ProcedureArgument);
 
@@ -6500,7 +6568,7 @@ static void getInitSpectrumDigest()
     unsigned int digestIndex;
     for (digestIndex = 0; digestIndex < SPECTRUM_CAPACITY; digestIndex++)
     {
-        KangarooTwelve64To32((unsigned char*)&initSpectrum[digestIndex], (unsigned char*)&initSpectrumDigests[digestIndex]);
+        KangarooTwelve((unsigned char*)&initSpectrum[digestIndex], 64, (unsigned char*)&initSpectrumDigests[digestIndex], 32);
     }
     unsigned int previousLevelBeginning = 0;
     unsigned int numberOfLeafs = SPECTRUM_CAPACITY;
@@ -6526,7 +6594,29 @@ static bool processTick(QuorumTick* quorumTick)
 
 static BOOLEAN initialize()
 {
-    enableAVX2();
+    enableAVX();
+
+#if AVX512
+    zero = _mm512_maskz_set1_epi64(0, 0);
+    moveThetaPrev = _mm512_setr_epi64(4, 0, 1, 2, 3, 5, 6, 7);
+    moveThetaNext = _mm512_setr_epi64(1, 2, 3, 4, 0, 5, 6, 7);
+    rhoB = _mm512_setr_epi64(0, 1, 62, 28, 27, 0, 0, 0);
+    rhoG = _mm512_setr_epi64(36, 44, 6, 55, 20, 0, 0, 0);
+    rhoK = _mm512_setr_epi64(3, 10, 43, 25, 39, 0, 0, 0);
+    rhoM = _mm512_setr_epi64(41, 45, 15, 21, 8, 0, 0, 0);
+    rhoS = _mm512_setr_epi64(18, 2, 61, 56, 14, 0, 0, 0);
+    pi1B = _mm512_setr_epi64(0, 3, 1, 4, 2, 5, 6, 7);
+    pi1G = _mm512_setr_epi64(1, 4, 2, 0, 3, 5, 6, 7);
+    pi1K = _mm512_setr_epi64(2, 0, 3, 1, 4, 5, 6, 7);
+    pi1M = _mm512_setr_epi64(3, 1, 4, 2, 0, 5, 6, 7);
+    pi1S = _mm512_setr_epi64(4, 2, 0, 3, 1, 5, 6, 7);
+    pi2S1 = _mm512_setr_epi64(0, 1, 2, 3, 4, 5, 8, 10);
+    pi2S2 = _mm512_setr_epi64(0, 1, 2, 3, 4, 5, 9, 11);
+    pi2BG = _mm512_setr_epi64(0, 1, 8, 9, 6, 5, 6, 7);
+    pi2KM = _mm512_setr_epi64(2, 3, 10, 11, 7, 5, 6, 7);
+    pi2S3 = _mm512_setr_epi64(4, 5, 12, 13, 4, 5, 6, 7);
+    padding = _mm512_maskz_set1_epi64(1, 0x8000000000000000);
+#endif
 
     ZERO = _mm256_setzero_si256();
 
