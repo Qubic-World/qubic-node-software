@@ -32,7 +32,7 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 
 #define VERSION_A 1
 #define VERSION_B 47
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -5354,7 +5354,7 @@ static void requestProcessor(void* ProcedureArgument)
                     if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->resourceTestingSolution.computorPublicKey), ZERO)) != 0xFFFFFFFF)
                     {
                         bool shouldBeBroadcasted = !(dayIndex(time.Year - 2000, time.Month, time.Day) % 7);
-                        //if (!shouldBeBroadcasted)
+                        if (!shouldBeBroadcasted)
                         {
                             for (unsigned int j = 0; j < sizeof(resourceTestingSolutionIdentitiesToBroadcast) / sizeof(resourceTestingSolutionIdentitiesToBroadcast[0]); j++)
                             {
@@ -5367,7 +5367,7 @@ static void requestProcessor(void* ProcedureArgument)
                             }
                         }
 
-                        if (shouldBeBroadcasted)
+                        //if (shouldBeBroadcasted)
                         {
                             responseSize = requestHeader->size;
                         }
@@ -5744,7 +5744,7 @@ static void requestProcessor(void* ProcedureArgument)
                                 tick.computorIndex ^= BROADCAST_TICK;
                                 KangarooTwelve((unsigned char*)&tick, sizeof(Tick) - SIGNATURE_SIZE, digest, sizeof(digest));
                                 tick.computorIndex ^= BROADCAST_TICK;
-                                if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[tick.computorIndex], digest, request->quorumTick.signatures[tick.computorIndex]))
+                                //if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[tick.computorIndex], digest, request->quorumTick.signatures[tick.computorIndex]))
                                 {
                                     *((__m256i*)&tick.signature[0]) = *((__m256i*)&request->quorumTick.signatures[tick.computorIndex][0]);
                                     *((__m256i*)&tick.signature[32]) = *((__m256i*)&request->quorumTick.signatures[tick.computorIndex][32]);
@@ -5760,10 +5760,10 @@ static void requestProcessor(void* ProcedureArgument)
                                     }
                                     _InterlockedCompareExchange8(&tickLocks[tick.computorIndex], 0, 1);
                                 }
-                                else
+                                /*else
                                 {
                                     goto doNotBroadcast;
-                                }
+                                }*/
                             }
                         }
                     }
@@ -6614,7 +6614,6 @@ static BOOLEAN initialize()
     broadcastedQuorumTick.header.size = sizeof(broadcastedQuorumTick);
     broadcastedQuorumTick.header.protocol = VERSION_B;
     broadcastedQuorumTick.header.type = BROADCAST_QUORUM_TICK;
-    broadcastedQuorumTick.header.nonce = 0;
 
     EFI_STATUS status;
 
@@ -8080,6 +8079,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 #if NUMBER_OF_COMPUTING_PROCESSORS
                                                                         if (request->quorumTick.tick <= system.tick)
                                                                         {
+                                                                            _rdrand16_step(&broadcastedQuorumTick.header.nonce);
                                                                             bs->CopyMem(&broadcastedQuorumTick.BroadcastQuorumTick.quorumTick, &quorumTicks[request->quorumTick.tick - TICK - 1], sizeof(QuorumTick));
                                                                             pushToSome(&broadcastedQuorumTick.header);
                                                                         }
@@ -8814,7 +8814,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     resourceTestingSolutionPublicationTick = curTimeTick;
 
                                     bool shouldBeBroadcasted = !(dayIndex(time.Year - 2000, time.Month, time.Day) % 7);
-                                    //if (!shouldBeBroadcasted)
+                                    if (!shouldBeBroadcasted)
                                     {
                                         for (unsigned int i = 0; i < sizeof(resourceTestingSolutionIdentitiesToBroadcast) / sizeof(resourceTestingSolutionIdentitiesToBroadcast[0]); i++)
                                         {
@@ -8827,7 +8827,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         }
                                     }
 
-                                    if (shouldBeBroadcasted)
+                                    //if (shouldBeBroadcasted)
                                     {
                                         _rdrand16_step(&broadcastedSolution.header.nonce);
                                         for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
