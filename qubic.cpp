@@ -31,7 +31,7 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 48
+#define VERSION_B 49
 #define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
@@ -2702,6 +2702,26 @@ static void KangarooTwelve64To32(unsigned char* input, unsigned char* output)
     ((unsigned long long*)output)[1] = Bbe ^ _andn_u64(Bbi, Bbo);
     ((unsigned long long*)output)[2] = Bbi ^ _andn_u64(Bbo, Bbu);
     ((unsigned long long*)output)[3] = Bbo ^ _andn_u64(Bbu, Bba);
+}
+
+void random(unsigned char* publicKey, unsigned char* nonce, unsigned char* output, unsigned int outputSize)
+{
+    unsigned char state[200];
+    *((__m256i*)&state[0]) = *((__m256i*)publicKey);
+    *((__m256i*)&state[32]) = *((__m256i*)nonce);
+    bs->SetMem(&state[64], sizeof(state) - 64, 0);
+
+    for (unsigned int i = 0; i < outputSize / sizeof(state); i++)
+    {
+        KeccakP1600_Permute_12rounds(state);
+        bs->CopyMem(output, state, sizeof(state));
+        output += sizeof(state);
+    }
+    if (outputSize % sizeof(state))
+    {
+        KeccakP1600_Permute_12rounds(state);
+        bs->CopyMem(output, state, outputSize % sizeof(state));
+    }
 }
 
 
@@ -6360,16 +6380,15 @@ static void minerProcessor(void* ProcedureArgument)
 
     const unsigned int miningProcessorIndex = (unsigned int)((unsigned long long)ProcedureArgument);
 
-    unsigned char extendedNonce[64];
-    bs->CopyMem(&extendedNonce[32], computorPublicKey, sizeof(computorPublicKey));
+    unsigned char nonce[32];
     while (!state)
     {
-        _rdrand64_step((unsigned long long*)&extendedNonce[0]);
-        _rdrand64_step((unsigned long long*)&extendedNonce[8]);
-        _rdrand64_step((unsigned long long*)&extendedNonce[16]);
-        _rdrand64_step((unsigned long long*)&extendedNonce[24]);
+        _rdrand64_step((unsigned long long*)&nonce[0]);
+        _rdrand64_step((unsigned long long*)&nonce[8]);
+        _rdrand64_step((unsigned long long*)&nonce[16]);
+        _rdrand64_step((unsigned long long*)&nonce[24]);
 
-        KangarooTwelve(extendedNonce, sizeof(extendedNonce), (unsigned char*)&neuronLinks[miningProcessorIndex], sizeof(neuronLinks[0]));
+        random(computorPublicKey, nonce, (unsigned char*)&neuronLinks[miningProcessorIndex], sizeof(neuronLinks[0]));
         for (unsigned int i = 0; i < NUMBER_OF_NEURONS; i++)
         {
             neuronLinks[miningProcessorIndex][i][0] %= NUMBER_OF_NEURONS;
@@ -6428,7 +6447,7 @@ static void minerProcessor(void* ProcedureArgument)
             {
                 if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)broadcastedSolution.broadcastResourceTestingSolution.resourceTestingSolution.nonces[i]), ZERO)) == 0xFFFFFFFF)
                 {
-                    *((__m256i*)broadcastedSolution.broadcastResourceTestingSolution.resourceTestingSolution.nonces[i]) = *((__m256i*)&extendedNonce[0]);
+                    *((__m256i*)broadcastedSolution.broadcastResourceTestingSolution.resourceTestingSolution.nonces[i]) = *((__m256i*)nonce);
 
                     break;
                 }
@@ -8035,7 +8054,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     if (receivedDataSize >= sizeof(RequestResponseHeader))
                                                     {
                                                         RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                        if (requestResponseHeader->protocol < VERSION_B || requestResponseHeader->protocol > VERSION_B + 1)
+                                                        if (requestResponseHeader->protocol < VERSION_B - 1 || requestResponseHeader->protocol > VERSION_B + 1)
                                                         {
                                                             closePeer(i);
                                                         }
