@@ -31,18 +31,18 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 47
-#define VERSION_C 3
+#define VERSION_B 48
+#define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
-#define AVX512 1
+#define AVX512 0 // Do NOT change!
 
 static const unsigned char knownPublicPeers[][4] = {
 };
 
-#define EPOCH 26 // Do NOT change!
-#define TICK 3262522 // Do NOT change!
+#define EPOCH 27 // Do NOT change!
+#define TICK 3271162 // Do NOT change!
 
 #include <intrin.h>
 
@@ -2708,33 +2708,45 @@ static void KangarooTwelve64To32(unsigned char* input, unsigned char* output)
 
 ////////// FourQ \\\\\\\\\\
 
+static __m256i ZERO;
+
 #define CURVE_ORDER_0 0x2FB2540EC7768CE7
 #define CURVE_ORDER_1 0xDFBD004DFE0F7999
 #define CURVE_ORDER_2 0xF05397829CBC14E5
 #define CURVE_ORDER_3 0x0029CBC14E5E0A72
+#define MONTGOMERY_SMALL_R_PRIME_0 0xE12FE5F079BC3929
+#define MONTGOMERY_SMALL_R_PRIME_1 0xD75E78B8D1FCDCF3
+#define MONTGOMERY_SMALL_R_PRIME_2 0xBCE409ED76B5DB21
+#define MONTGOMERY_SMALL_R_PRIME_3 0xF32702FDAFC1C074
 
-// Fixed integer constants for the decomposition
-// Close "offset" vector
+#define B11 0xF6F900D81F5F5E6A
+#define B12 0x1363E862C22A2DA0
+#define B13 0xF8BD9FCE1337FCF1
+#define B14 0x084F739986B9E651
+#define B21 0xE2B6A4157B033D2C
+#define B22 0x0000000000000001
+#define B23 0xFFFFFFFFFFFFFFFF
+#define B24 0xDA243A43722E9830
+#define B31 0xE85452E2DCE0FCFE
+#define B32 0xFD3BDEE51C7725AF
+#define B33 0x2E4D21C98927C49F
+#define B34 0xF56190BB3FD13269
+#define B41 0xEC91CBF56EF737C1
+#define B42 0xCEDD20D23C1F00CE
+#define B43 0x068A49F02AA8A9B5
+#define B44 0x18D5087896DE0AEA
 #define C1 0x72482C5251A4559C
 #define C2 0x59F95B0ADD276F6C
 #define C3 0x7DD2D17C4625FA78
 #define C4 0x6BC57DEF56CE8877
 
-// Optimal basis vectors 
-#define B11 0x0906FF27E0A0A196
-#define B12 0x1363E862C22A2DA0
-#define B13 0x07426031ECC8030F
-#define B14 0x084F739986B9E651
-#define B21 0x1D495BEA84FCC2D4
-#define B24 0x25DBC5BC8DD167D0
-#define B31 0x17ABAD1D231F0302
-#define B32 0x02C4211AE388DA51
-#define B33 0x2E4D21C98927C49F
-#define B34 0x0A9E6F44C02ECD97
-#define B41 0x136E340A9108C83F
-#define B42 0x3122DF2DC3E0FF32
-#define B43 0x068A49F02AA8A9B5
-#define B44 0x18D5087896DE0AEA
+#if AVX512
+const __m256i B1 = _mm256_set_epi64x(B14, B13, B12, B11);
+const __m256i B2 = _mm256_set_epi64x(B24, B23, B22, B21);
+const __m256i B3 = _mm256_set_epi64x(B34, B33, B32, B31);
+const __m256i B4 = _mm256_set_epi64x(B44, B43, B42, B41);
+const __m256i C = _mm256_set_epi64x(C4, C3, C2, C1);
+#endif
 
 typedef unsigned long long felm_t[2]; // Datatype for representing 128-bit field elements
 typedef felm_t f2elm_t[2]; // Datatype for representing quadratic extension field elements
@@ -2774,9 +2786,8 @@ typedef struct
 typedef point_precomp point_precomp_t[1];
 
 static const unsigned long long PARAMETER_d[4] = { 0x0000000000000142, 0x00000000000000E4, 0xB3821488F1FC0C8D, 0x5E472F846657E0FC };
-static const unsigned long long curve_order[4] = { 0x2FB2540EC7768CE7, 0xDFBD004DFE0F7999, 0xF05397829CBC14E5, 0x0029CBC14E5E0A72 };
+static const unsigned long long curve_order[4] = { CURVE_ORDER_0, CURVE_ORDER_1, CURVE_ORDER_2, CURVE_ORDER_3 };
 static const unsigned long long Montgomery_Rprime[4] = { 0xC81DB8795FF3D621, 0x173EA5AAEA6B387D, 0x3D01B7C72136F61C, 0x0006A5F16AC8F9D3 };
-static const unsigned long long Montgomery_rprime[4] = { 0xE12FE5F079BC3929, 0xD75E78B8D1FCDCF3, 0xBCE409ED76B5DB21, 0xF32702FDAFC1C074 };
 static const unsigned long long ONE[4] = { 1, 0, 0, 0 };
 
 // Fixed GF(p^2) constants for the endomorphisms 
@@ -3176,7 +3187,7 @@ static void fpneg1271(felm_t a)
 
 static void fpmul1271(felm_t a, felm_t b, felm_t c)
 { // Field multiplication, c = a*b mod (2^127-1)
-    unsigned long long tt1[2], tt2[2], tt3[2], tt4[2];
+    unsigned long long tt1[2], tt2[2], tt3[2];
 
     tt1[0] = _umul128(a[0], b[0], &tt3[0]);
     tt2[0] = _umul128(a[0], b[1], &tt2[1]);
@@ -3184,37 +3195,25 @@ static void fpmul1271(felm_t a, felm_t b, felm_t c)
     tt3[0] = _umul128(a[1], b[0], &tt3[1]);
     _addcarry_u64(_addcarry_u64(0, tt2[0], tt3[0], &tt2[0]), tt2[1], tt3[1], &tt2[1]);
     tt3[0] = _umul128(a[1], b[1], &tt3[1]);
-    tt4[0] = __shiftright128(tt2[0], tt2[1], 63);
-    tt4[1] = tt2[1] >> 63;
     tt3[1] = __shiftleft128(tt3[0], tt3[1], 1);
-    tt3[0] = tt3[0] << 1;
-    _addcarry_u64(_addcarry_u64(0, tt4[0], tt3[0], &tt3[0]), tt4[1], tt3[1], &tt3[1]);
-    tt1[1] = tt2[0] & 0x7FFFFFFFFFFFFFFF;
-    _addcarry_u64(_addcarry_u64(0, tt1[0], tt3[0], &tt1[0]), tt1[1], tt3[1], &tt1[1]);
-    tt3[0] = tt1[1] >> 63;
-    tt1[1] &= 0x7FFFFFFFFFFFFFFF;
-    _addcarry_u64(_addcarry_u64(0, tt1[0], tt3[0], &c[0]), tt1[1], 0, &c[1]);
+    _addcarry_u64(_addcarry_u64(0, __shiftright128(tt2[0], tt2[1], 63), tt3[0] << 1, &tt3[0]), tt2[1] >> 63, tt3[1], &tt3[1]);
+    _addcarry_u64(_addcarry_u64(0, tt1[0], tt3[0], &tt1[0]), tt2[0] & 0x7FFFFFFFFFFFFFFF, tt3[1], &tt1[1]);
+    _addcarry_u64(_addcarry_u64(0, tt1[0], tt1[1] >> 63, &c[0]), tt1[1] & 0x7FFFFFFFFFFFFFFF, 0, &c[1]);
 }
 
 static void fpsqr1271(felm_t a, felm_t c)
 { // Field squaring, c = a^2 mod (2^127-1)
-    unsigned long long tt1[2], tt2[2], tt3[2], tt4[2];
+    unsigned long long tt1[2], tt2[2], tt3[2];
 
     tt1[0] = _umul128(a[0], a[0], &tt3[0]);
     tt2[0] = _umul128(a[0], a[1], &tt2[1]);
     _addcarry_u64(_addcarry_u64(0, tt2[0], tt3[0], &tt3[0]), tt2[1], 0, &tt3[1]);
     _addcarry_u64(_addcarry_u64(0, tt2[0], tt3[0], &tt2[0]), tt2[1], tt3[1], &tt2[1]);
     tt3[0] = _umul128(a[1], a[1], &tt3[1]);
-    tt4[0] = __shiftright128(tt2[0], tt2[1], 63);
-    tt4[1] = tt2[1] >> 63;
     tt3[1] = __shiftleft128(tt3[0], tt3[1], 1);
-    tt3[0] = tt3[0] << 1;
-    _addcarry_u64(_addcarry_u64(0, tt4[0], tt3[0], &tt3[0]), tt4[1], tt3[1], &tt3[1]);
-    tt1[1] = tt2[0] & 0x7FFFFFFFFFFFFFFF;
-    _addcarry_u64(_addcarry_u64(0, tt1[0], tt3[0], &tt1[0]), tt1[1], tt3[1], &tt1[1]);
-    tt3[0] = tt1[1] >> 63;
-    tt1[1] &= 0x7FFFFFFFFFFFFFFF;
-    _addcarry_u64(_addcarry_u64(0, tt1[0], tt3[0], &c[0]), tt1[1], 0, &c[1]);
+    _addcarry_u64(_addcarry_u64(0, __shiftright128(tt2[0], tt2[1], 63), tt3[0] << 1, &tt3[0]), tt2[1] >> 63, tt3[1], &tt3[1]);
+    _addcarry_u64(_addcarry_u64(0, tt1[0], tt3[0], &tt1[0]), tt2[0] & 0x7FFFFFFFFFFFFFFF, tt3[1], &tt1[1]);
+    _addcarry_u64(_addcarry_u64(0, tt1[0], tt1[1] >> 63, &c[0]), tt1[1] & 0x7FFFFFFFFFFFFFFF, 0, &c[1]);
 }
 
 static void fpexp1251(felm_t a, felm_t af)
@@ -3252,27 +3251,6 @@ static void fpexp1251(felm_t a, felm_t af)
     fpmul1271(a, t1, af);
 }
 
-static void fpinv1271(felm_t a)
-{ // Field inversion, af = a^-1 = a^(p-2) mod p
-  // Hardcoded for p = 2^127-1
-    felm_t t;
-
-    fpexp1251(a, t);
-    fpsqr1271(t, t);
-    fpsqr1271(t, t);
-    fpmul1271(a, t, a);
-}
-
-static void fpdiv1271(felm_t a)
-{ // Field division by two, c = a/2 mod p
-    unsigned long long mask, temp[2];
-
-    mask = (0 - (1 & a[0]));
-    _addcarry_u64(_addcarry_u64(0, a[0], mask, &temp[0]), a[1], (mask >> 1), &temp[1]);
-    a[0] = __shiftright128(temp[0], temp[1], 1);
-    a[1] = (temp[1] >> 1);
-}
-
 static void fp2div1271(f2elm_t a)
 { // GF(p^2) division by two c = a/2 mod p
     unsigned long long mask, temp[2];
@@ -3286,14 +3264,6 @@ static void fp2div1271(f2elm_t a)
     _addcarry_u64(_addcarry_u64(0, a[1][0], mask, &temp[0]), a[1][1], (mask >> 1), &temp[1]);
     a[1][0] = __shiftright128(temp[0], temp[1], 1);
     a[1][1] = (temp[1] >> 1);
-}
-
-static void fp2copy1271(f2elm_t a, f2elm_t c)
-{ // Copy of a GF(p^2) element, c = a
-    c[0][0] = a[0][0];
-    c[0][1] = a[0][1];
-    c[1][0] = a[1][0];
-    c[1][1] = a[1][1];
 }
 
 static void fp2neg1271(f2elm_t a)
@@ -3346,151 +3316,105 @@ static void fp2addsub1271(f2elm_t a, f2elm_t b, f2elm_t c)
     fp2sub1271(a, b, c);
 }
 
-static void fp2inv1271(f2elm_t a)
-{ // GF(p^2) inversion, a = (a0-i*a1)/(a0^2+a1^2)
-    f2elm_t t1;
-
-    fpsqr1271(a[0], t1[0]);             // t10 = a0^2
-    fpsqr1271(a[1], t1[1]);             // t11 = a1^2
-    fpadd1271(t1[0], t1[1], t1[0]);     // t10 = a0^2+a1^2
-    fpinv1271(t1[0]);                   // t10 = (a0^2+a1^2)^-1
-    fpneg1271(a[1]);                    // a = a0-i*a1
-    fpmul1271(a[0], t1[0], a[0]);
-    fpmul1271(a[1], t1[0], a[1]);       // a = (a0-i*a1)*(a0^2+a1^2)^-1
-}
-
-static void table_lookup_fixed_base(point_precomp_t* table, point_precomp_t P, unsigned int digit, unsigned int sign)
+static void table_lookup_fixed_base(point_precomp_t P, unsigned int digit, unsigned int sign)
 { // Table lookup to extract a point represented as (x+y,y-x,2t) corresponding to extended twisted Edwards coordinates (X:Y:Z:T) with Z=1
-    *((__m256i*)P->t2) = *((__m256i*)table[digit]->t2);
     if (sign)
     {
-        *((__m256i*)P->xy) = *((__m256i*)table[digit]->yx);
-        *((__m256i*)P->yx) = *((__m256i*)table[digit]->xy);
-        fp2neg1271(P->t2);
+        *((__m256i*)P->xy) = *((__m256i*)((point_precomp_t*)FIXED_BASE_TABLE)[digit]->yx);
+        *((__m256i*)P->yx) = *((__m256i*)((point_precomp_t*)FIXED_BASE_TABLE)[digit]->xy);
+        P->t2[0][0] = ~(((point_precomp_t*)FIXED_BASE_TABLE)[digit])->t2[0][0];
+        P->t2[0][1] = 0x7FFFFFFFFFFFFFFF - (((point_precomp_t*)FIXED_BASE_TABLE)[digit])->t2[0][1];
+        P->t2[1][0] = ~(((point_precomp_t*)FIXED_BASE_TABLE)[digit])->t2[1][0];
+        P->t2[1][1] = 0x7FFFFFFFFFFFFFFF - (((point_precomp_t*)FIXED_BASE_TABLE)[digit])->t2[1][1];
     }
     else
     {
-        *((__m256i*)P->xy) = *((__m256i*)table[digit]->xy);
-        *((__m256i*)P->yx) = *((__m256i*)table[digit]->yx);
+        *((__m256i*)P->xy) = *((__m256i*)((point_precomp_t*)FIXED_BASE_TABLE)[digit]->xy);
+        *((__m256i*)P->yx) = *((__m256i*)((point_precomp_t*)FIXED_BASE_TABLE)[digit]->yx);
+        *((__m256i*)P->t2) = *((__m256i*)((point_precomp_t*)FIXED_BASE_TABLE)[digit]->t2);
     }
 }
 
 static void multiply(const unsigned long long* a, const unsigned long long* b, unsigned long long* c)
-{ // Schoolbook multiprecision multiply, c = a*b   
-    unsigned long long u, v, UV0, UV1;
+{
+    unsigned long long u, v, uv;
 
     c[0] = _umul128(a[0], b[0], &u);
-    UV0 = _umul128(a[0], b[1], &UV1);
-    u = UV1 + _addcarry_u64(0, UV0, u, &v);
-    u += _addcarry_u64(0, 0, v, &c[1]);
-    UV0 = _umul128(a[0], b[2], &UV1);
-    u = UV1 + _addcarry_u64(0, UV0, u, &v);
-    u += _addcarry_u64(0, 0, v, &c[2]);
-    UV0 = _umul128(a[0], b[3], &UV1);
-    u = UV1 + _addcarry_u64(0, UV0, u, &v);
-    c[4] = u + _addcarry_u64(0, 0, v, &c[3]);
+    u = _addcarry_u64(0, _umul128(a[0], b[1], &uv), u, &c[1]) + uv;
+    u = _addcarry_u64(0, _umul128(a[0], b[2], &uv), u, &c[2]) + uv;
+    c[4] = _addcarry_u64(0, _umul128(a[0], b[3], &uv), u, &c[3]) + uv;
 
-    v = _umul128(a[1], b[0], &UV1);
-    u = UV1 + _addcarry_u64(0, c[1], v, &c[1]);
-    UV0 = _umul128(a[1], b[1], &UV1);
-    u = UV1 + _addcarry_u64(0, UV0, u, &v);
-    u += _addcarry_u64(0, c[2], v, &c[2]);
-    UV0 = _umul128(a[1], b[2], &UV1);
-    u = UV1 + _addcarry_u64(0, UV0, u, &v);
-    u += _addcarry_u64(0, c[3], v, &c[3]);
-    UV0 = _umul128(a[1], b[3], &UV1);
-    u = UV1 + _addcarry_u64(0, UV0, u, &v);
-    c[5] = u + _addcarry_u64(0, c[4], v, &c[4]);
+    u = _addcarry_u64(0, c[1], _umul128(a[1], b[0], &uv), &c[1]) + uv;
+    u = _addcarry_u64(0, _umul128(a[1], b[1], &uv), u, &v) + uv;
+    u = _addcarry_u64(_addcarry_u64(0, c[2], v, &c[2]), _umul128(a[1], b[2], &uv), u, &v) + uv;
+    c[5] = _addcarry_u64(_addcarry_u64(0, c[3], v, &c[3]), _umul128(a[1], b[3], &uv), u, &v) + uv + _addcarry_u64(0, c[4], v, &c[4]);
 
-    v = _umul128(a[2], b[0], &UV1);
-    u = UV1 + _addcarry_u64(0, c[2], v, &c[2]);
-    UV0 = _umul128(a[2], b[1], &UV1);
-    u = UV1 + _addcarry_u64(0, UV0, u, &v);
-    u += _addcarry_u64(0, c[3], v, &c[3]);
-    UV0 = _umul128(a[2], b[2], &UV1);
-    u = UV1 + _addcarry_u64(0, UV0, u, &v);
-    u += _addcarry_u64(0, c[4], v, &c[4]);
-    UV0 = _umul128(a[2], b[3], &UV1);
-    u = UV1 + _addcarry_u64(0, UV0, u, &v);
-    c[6] = u + _addcarry_u64(0, c[5], v, &c[5]);
+    u = _addcarry_u64(0, c[2], _umul128(a[2], b[0], &uv), &c[2]) + uv;
+    u = _addcarry_u64(0, _umul128(a[2], b[1], &uv), u, &v) + uv;
+    u = _addcarry_u64(_addcarry_u64(0, c[3], v, &c[3]), _umul128(a[2], b[2], &uv), u, &v) + uv;
+    c[6] = _addcarry_u64(_addcarry_u64(0, c[4], v, &c[4]), _umul128(a[2], b[3], &uv), u, &v) + uv + _addcarry_u64(0, c[5], v, &c[5]);
 
-    v = _umul128(a[3], b[0], &UV1);
-    u = UV1 + _addcarry_u64(0, c[3], v, &c[3]);
-    UV0 = _umul128(a[3], b[1], &UV1);
-    u = UV1 + _addcarry_u64(0, UV0, u, &v);
-    u += _addcarry_u64(0, c[4], v, &c[4]);
-    UV0 = _umul128(a[3], b[2], &UV1);
-    u = UV1 + _addcarry_u64(0, UV0, u, &v);
-    u += _addcarry_u64(0, c[5], v, &c[5]);
-    UV0 = _umul128(a[3], b[3], &UV1);
-    u = UV1 + _addcarry_u64(0, UV0, u, &v);
-    c[7] = u + _addcarry_u64(0, c[6], v, &c[6]);
-}
-
-static void subtract_mod_order(const unsigned long long* a, const unsigned long long* b, unsigned long long* c)
-{ // Subtraction modulo the curve order, c = a-b mod order
-    unsigned char bout = _subborrow_u64(0, a[0], b[0], &c[0]);
-    bout = _subborrow_u64(bout, a[1], b[1], &c[1]);
-    bout = _subborrow_u64(bout, a[2], b[2], &c[2]);
-    if (_subborrow_u64(bout, a[3], b[3], &c[3]))
-    {
-        unsigned char carry = _addcarry_u64(0, c[0], CURVE_ORDER_0, &c[0]);
-        carry = _addcarry_u64(carry, c[1], CURVE_ORDER_1, &c[1]);
-        carry = _addcarry_u64(carry, c[2], CURVE_ORDER_2, &c[2]);
-        _addcarry_u64(carry, c[3], CURVE_ORDER_3, &c[3]);
-    }
+    u = _addcarry_u64(0, c[3], _umul128(a[3], b[0], &uv), &c[3]) + uv;
+    u = _addcarry_u64(0, _umul128(a[3], b[1], &uv), u, &v) + uv;
+    u = _addcarry_u64(_addcarry_u64(0, c[4], v, &c[4]), _umul128(a[3], b[2], &uv), u, &v) + uv;
+    c[7] = _addcarry_u64(_addcarry_u64(0, c[5], v, &c[5]), _umul128(a[3], b[3], &uv), u, &v) + uv + _addcarry_u64(0, c[6], v, &c[6]);
 }
 
 static void Montgomery_multiply_mod_order(const unsigned long long* ma, const unsigned long long* mb, unsigned long long* mc)
 { // 256-bit Montgomery multiplication modulo the curve order, mc = ma*mb*r' mod order, where ma,mb,mc in [0, order-1]
   // ma, mb and mc are assumed to be in Montgomery representation
   // The Montgomery constant r' = -r^(-1) mod 2^(log_2(r)) is the global value "Montgomery_rprime", where r is the order   
-    unsigned long long P[2 * 4], Q[2 * 4], temp[2 * 4];
+    unsigned long long P[8], Q[4], temp[8];
 
-    multiply(ma, mb, P); // P = ma * mb
-    multiply(P, (unsigned long long*)&Montgomery_rprime, Q); // Q = P * r' mod 2^(log_2(r))
-    multiply(Q, (unsigned long long*)&curve_order, temp); // temp = Q * r
-
-    // (cout, temp) = P + Q * r
-    unsigned char cout = _addcarry_u64(0, P[0], temp[0], &temp[0]);
-    cout = _addcarry_u64(cout, P[1], temp[1], &temp[1]);
-    cout = _addcarry_u64(cout, P[2], temp[2], &temp[2]);
-    cout = _addcarry_u64(cout, P[3], temp[3], &temp[3]);
-    cout = _addcarry_u64(cout, P[4], temp[4], &temp[4]);
-    cout = _addcarry_u64(cout, P[5], temp[5], &temp[5]);
-    cout = _addcarry_u64(cout, P[6], temp[6], &temp[6]);
-    cout = _addcarry_u64(cout, P[7], temp[7], &temp[7]);
-
-    // (cout, mc) = (P + Q * r)/2^(log_2(r))
-    // (cout, mc) = (cout, mc) - r
-    unsigned char bout = _subborrow_u64(0, temp[4 + 0], CURVE_ORDER_0, &mc[0]);
-    bout = _subborrow_u64(bout, temp[4 + 1], CURVE_ORDER_1, &mc[1]);
-    bout = _subborrow_u64(bout, temp[4 + 2], CURVE_ORDER_2, &mc[2]);
-    bout = _subborrow_u64(bout, temp[4 + 3], CURVE_ORDER_3, &mc[3]);
-
-    if (cout - bout)
+    if (mb[0] == 1 && !mb[1] && !mb[2] && !mb[3])
     {
-        // mc = mc + r
-        cout = _addcarry_u64(0, mc[0], CURVE_ORDER_0, &mc[0]);
-        cout = _addcarry_u64(cout, mc[1], CURVE_ORDER_1, &mc[1]);
-        cout = _addcarry_u64(cout, mc[2], CURVE_ORDER_2, &mc[2]);
-        _addcarry_u64(cout, mc[3], CURVE_ORDER_3, &mc[3]);
+        *((__m256i*) & P[0]) = *((__m256i*)ma);
+        *((__m256i*) & P[4]) = ZERO;
     }
-}
+    else
+    {
+        multiply(ma, mb, P); // P = ma * mb
+    }
 
-static void modulo_order(unsigned long long* a, unsigned long long* c)
-{ // Reduction modulo the order using Montgomery arithmetic
-  // ma = a*Montgomery_Rprime mod r, where a,ma in [0, r-1], a,ma,r < 2^256
-  // c = ma*1*Montgomery_Rprime^(-1) mod r, where ma,c in [0, r-1], ma,c,r < 2^256
-    unsigned long long ma[4];
+    unsigned long long u, v, uv;
+    Q[0] = _umul128(P[0], MONTGOMERY_SMALL_R_PRIME_0, &u);
+    u = _addcarry_u64(0, _umul128(P[0], MONTGOMERY_SMALL_R_PRIME_1, &uv), u, &Q[1]) + uv;
+    u = _addcarry_u64(0, _umul128(P[0], MONTGOMERY_SMALL_R_PRIME_2, &uv), u, &Q[2]) + uv;
+    _addcarry_u64(0, P[0] * MONTGOMERY_SMALL_R_PRIME_3, u, &Q[3]);
+    u = _addcarry_u64(0, Q[1], _umul128(P[1], MONTGOMERY_SMALL_R_PRIME_0, &uv), &Q[1]) + uv;
+    u = _addcarry_u64(0, _umul128(P[1], MONTGOMERY_SMALL_R_PRIME_1, &uv), u, &v) + uv;
+    _addcarry_u64(_addcarry_u64(0, Q[2], v, &Q[2]), P[1] * MONTGOMERY_SMALL_R_PRIME_2, u, &v);
+    _addcarry_u64(0, Q[3], v, &Q[3]);
+    u = _addcarry_u64(0, Q[2], _umul128(P[2], MONTGOMERY_SMALL_R_PRIME_0, &uv), &Q[2]) + uv;
+    _addcarry_u64(0, P[2] * MONTGOMERY_SMALL_R_PRIME_1, u, &v);
+    _addcarry_u64(0, Q[3], v, &Q[3]);
+    _addcarry_u64(0, Q[3], P[3] * MONTGOMERY_SMALL_R_PRIME_0, &Q[3]);
 
-    Montgomery_multiply_mod_order(a, Montgomery_Rprime, ma);
-    Montgomery_multiply_mod_order(ma, ONE, c);
+    multiply(Q, curve_order, temp); // temp = Q * r
+
+    if (_addcarry_u64(_addcarry_u64(_addcarry_u64(_addcarry_u64(_addcarry_u64(_addcarry_u64(_addcarry_u64(_addcarry_u64(0, P[0], temp[0], &temp[0]), P[1], temp[1], &temp[1]), P[2], temp[2], &temp[2]), P[3], temp[3], &temp[3]), P[4], temp[4], &temp[4]), P[5], temp[5], &temp[5]), P[6], temp[6], &temp[6]), P[7], temp[7], &temp[7])
+        - _subborrow_u64(_subborrow_u64(_subborrow_u64(_subborrow_u64(0, temp[4], CURVE_ORDER_0, &mc[0]), temp[5], CURVE_ORDER_1, &mc[1]), temp[6], CURVE_ORDER_2, &mc[2]), temp[7], CURVE_ORDER_3, &mc[3]))
+    {
+        _addcarry_u64(_addcarry_u64(_addcarry_u64(_addcarry_u64(0, mc[0], CURVE_ORDER_0, &mc[0]), mc[1], CURVE_ORDER_1, &mc[1]), mc[2], CURVE_ORDER_2, &mc[2]), mc[3], CURVE_ORDER_3, &mc[3]);
+    }
 }
 
 static void eccnorm(point_extproj_t P, point_t Q)
 { // Normalize a projective point (X1:Y1:Z1), including full reduction
-    fp2inv1271(P->z);                      // Z1 = Z1^-1
+
+    // Z1 = Z1^-1
+    f2elm_t t1;
+    fpsqr1271(P->z[0], t1[0]);
+    fpsqr1271(P->z[1], t1[1]);
+    fpadd1271(t1[0], t1[1], t1[0]);
+    fpexp1251(t1[0], t1[1]);
+    fpsqr1271(t1[1], t1[1]);
+    fpsqr1271(t1[1], t1[1]);
+    fpmul1271(t1[0], t1[1], t1[0]);
+    fpneg1271(P->z[1]);
+    fpmul1271(P->z[0], t1[0], P->z[0]);
+    fpmul1271(P->z[1], t1[0], P->z[1]);
+
     fp2mul1271(P->x, P->z, Q->x);          // X1 = X1/Z1
     fp2mul1271(P->y, P->z, Q->y);          // Y1 = Y1/Z1
     mod1271(Q->x[0]);
@@ -3514,14 +3438,14 @@ static void R1_to_R3(point_extproj_t P, point_extproj_precomp_t Q)
     fp2add1271(P->x, P->y, Q->xy);         // XQ = (X1+Y1) 
     fp2sub1271(P->y, P->x, Q->yx);         // YQ = (Y1-X1) 
     fp2mul1271(P->ta, P->tb, Q->t2);       // TQ = T1
-    fp2copy1271(P->z, Q->z2);              // ZQ = Z1 
+    *((__m256i*) & Q->z2) = *((__m256i*) & P->z);              // ZQ = Z1 
 }
 
 static void R2_to_R4(point_extproj_precomp_t P, point_extproj_t Q)
 { // Conversion from representation (X+Y,Y-X,2Z,2dT) to (2X,2Y,2Z,2dT) 
     fp2sub1271(P->xy, P->yx, Q->x);        // XQ = 2*X1
     fp2add1271(P->xy, P->yx, Q->y);        // YQ = 2*Y1
-    fp2copy1271(P->z2, Q->z);              // ZQ = 2*Z1
+    *((__m256i*) & Q->z) = *((__m256i*) & P->z2);              // ZQ = 2*Z1
 }
 
 static void eccdouble(point_extproj_t P)
@@ -3568,11 +3492,11 @@ static void eccadd(point_extproj_precomp_t Q, point_extproj_t P)
 }
 
 static void point_setup(point_t P, point_extproj_t Q)
-{ // Point conversion to representation (X,Y,Z,Ta,Tb) 
-    fp2copy1271(P->x, Q->x);
-    fp2copy1271(P->y, Q->y);
-    fp2copy1271(Q->x, Q->ta);                                       // Ta = X1
-    fp2copy1271(Q->y, Q->tb);                                       // Tb = Y1
+{ // Point conversion to representation (X,Y,Z,Ta,Tb)
+    *((__m256i*) & Q->x) = *((__m256i*) & P->x);
+    *((__m256i*) & Q->y) = *((__m256i*) & P->y);
+    *((__m256i*) & Q->ta) = *((__m256i*) & Q->x);  // Ta = X1
+    *((__m256i*) & Q->tb) = *((__m256i*) & Q->y);  // Tb = Y1
     Q->z[0][0] = 1; Q->z[0][1] = 0; Q->z[1][0] = 0; Q->z[1][1] = 0; // Z1 = 1
 }
 
@@ -3584,24 +3508,13 @@ static BOOLEAN ecc_point_validate(point_extproj_t P)
     fp2sqr1271(P->x, t2);
     fp2sub1271(t1, t2, t3);                                 // -x^2 + y^2 
     fp2mul1271(t1, t2, t1);                                 // x^2*y^2
-    fp2mul1271((felm_t*)&PARAMETER_d, t1, t2);              // dx^2*y^2
+    fp2mul1271(t1, (felm_t*)&PARAMETER_d, t2);              // dx^2*y^2
     t1[0][0] = 1; t1[0][1] = 0; t1[1][0] = 0; t1[1][1] = 0; // t1 = 1
     fp2add1271(t2, t1, t2);                                 // 1 + dx^2*y^2
     fp2sub1271(t3, t2, t1);                                 // -x^2 + y^2 - 1 - dx^2*y^2
 
-    return (((t1[0][0] | t1[0][1]) == 0 || ((t1[0][0] + 1) | (t1[0][1] + 1)) == 0)
-        && ((t1[1][0] | t1[1][1]) == 0 || ((t1[1][0] + 1) | (t1[1][1] + 1)) == 0));
-}
-
-static void R5_to_R1(point_precomp_t P, point_extproj_t Q)
-{ // Conversion from representation (x+y,y-x,2dt) to (X,Y,Z,Ta,Tb) 
-    fp2sub1271(P->xy, P->yx, Q->x);                                 // 2*x1
-    fp2add1271(P->xy, P->yx, Q->y);                                 // 2*y1
-    fp2div1271(Q->x);                                               // XQ = x1
-    fp2div1271(Q->y);                                               // YQ = y1 
-    Q->z[0][0] = 1; Q->z[0][1] = 0; Q->z[1][0] = 0; Q->z[1][1] = 0; // ZQ = 1
-    fp2copy1271(Q->x, Q->ta);                                       // TaQ = x1
-    fp2copy1271(Q->y, Q->tb);                                       // TbQ = y1
+    return ((!(t1[0][0] | t1[0][1]) || !((t1[0][0] + 1) | (t1[0][1] + 1)))
+        && (!(t1[1][0] | t1[1][1]) || !((t1[1][0] + 1) | (t1[1][1] + 1))));
 }
 
 static void eccmadd(point_precomp_t Q, point_extproj_t P)
@@ -3624,12 +3537,24 @@ static void eccmadd(point_precomp_t Q, point_extproj_t P)
     fp2mul1271(P->ta, t1, P->y);            // Yfinal = alpha*omega
 }
 
-static void mLSB_set_recode(unsigned long long* scalar, unsigned int* digits)
-{ // Computes the modified LSB-set representation of a scalar
-    unsigned int i;
-    unsigned long long temp, carry;
+static void ecc_mul_fixed(unsigned long long* k, point_t Q)
+{ // Fixed-base scalar multiplication Q = k*G, where G is the generator. FIXED_BASE_TABLE stores v*2^(w-1) = 80 multiples of G.
+    unsigned int digits[250];
+    unsigned long long scalar[4];
 
-    digits[49] = 0;
+    Montgomery_multiply_mod_order(k, Montgomery_Rprime, scalar);
+    Montgomery_multiply_mod_order(scalar, ONE, scalar);
+
+
+    // Converting scalar to odd using the prime subgroup order
+    // If (k is odd) then k_odd = k else k_odd = k + r
+    if (!(scalar[0] & 1))
+    {
+        unsigned char carry = _addcarry_u64(0, scalar[0], CURVE_ORDER_0, &scalar[0]);
+        carry = _addcarry_u64(carry, scalar[1], CURVE_ORDER_1, &scalar[1]);
+        carry = _addcarry_u64(carry, scalar[2], CURVE_ORDER_2, &scalar[2]);
+        _addcarry_u64(carry, scalar[3], CURVE_ORDER_3, &scalar[3]);
+    }
 
     // Shift scalar to the right by 1
     scalar[0] = __shiftright128(scalar[0], scalar[1], 1);
@@ -3637,7 +3562,7 @@ static void mLSB_set_recode(unsigned long long* scalar, unsigned int* digits)
     scalar[2] = __shiftright128(scalar[2], scalar[3], 1);
     scalar[3] >>= 1;
 
-    for (i = 0; i < 49; i++)
+    for (unsigned int i = 0; i < 49; i++)
     {
         digits[i] = (unsigned int)((scalar[0] & 1) - 1);  // Convention for the "sign" row: if scalar_(i+1) = 0 then digit_i = -1 (negative), else if scalar_(i+1) = 1 then digit_i = 0 (positive)
 
@@ -3647,8 +3572,8 @@ static void mLSB_set_recode(unsigned long long* scalar, unsigned int* digits)
         scalar[2] = __shiftright128(scalar[2], scalar[3], 1);
         scalar[3] >>= 1;
     }
-
-    for (i = 50; i < 250; i++)
+    digits[49] = 0;
+    for (unsigned int i = 50; i < 250; i++)
     {
         digits[i] = (unsigned int)(scalar[0] & 1); // digits_i = k mod 2. Sign is determined by the "sign" row
 
@@ -3658,59 +3583,147 @@ static void mLSB_set_recode(unsigned long long* scalar, unsigned int* digits)
         scalar[2] = __shiftright128(scalar[2], scalar[3], 1);
         scalar[3] >>= 1;
 
-        temp = (0 - digits[i - (i / 50) * 50]) & digits[i]; // if (digits_i=0 \/ 1) then temp = 0, else if (digits_i=-1) then temp = 1 
+        const unsigned long long temp = (0 - digits[i - (i / 50) * 50]) & digits[i]; // if (digits_i=0 \/ 1) then temp = 0, else if (digits_i=-1) then temp = 1 
 
         // floor(scalar/2) + temp
         scalar[0] += temp;
-        carry = scalar[0] == 0 ? (temp & 1) : 0; // carry = (scalar[0] < temp);
+        unsigned long long carry = scalar[0] ? 0 : (temp & 1); // carry = (scalar[0] < temp);
         scalar[1] += carry;
-        carry = scalar[1] == 0 ? (carry & 1) : 0; // carry = (scalar[j] < temp);
+        carry = scalar[1] ? 0 : (carry & 1); // carry = (scalar[j] < temp);
         scalar[2] += carry;
-        scalar[3] += (scalar[2] == 0 ? (carry & 1) : 0); // carry = (scalar[j] < temp);
+        scalar[3] += (scalar[2] ? 0 : (carry & 1)); // carry = (scalar[j] < temp);
     }
-}
 
-static void ecc_mul_fixed(unsigned long long* k, point_t Q)
-{ // Fixed-base scalar multiplication Q = k*G, where G is the generator. FIXED_BASE_TABLE stores v*2^(w-1) = 80 multiples of G.
-    unsigned int digits[250];
-    unsigned long long temp[4];
     point_extproj_t R;
     point_precomp_t S;
 
-    modulo_order(k, temp); // temp = k mod (order)
+    table_lookup_fixed_base(S, 64 + (((((digits[249] << 1) + digits[199]) << 1) + digits[149]) << 1) + digits[99], 0);
+    // Conversion from representation (x+y,y-x,2dt) to (X,Y,Z,Ta,Tb) 
+    fp2sub1271(S->xy, S->yx, R->x);                                 // 2*x1
+    fp2add1271(S->xy, S->yx, R->y);                                 // 2*y1
+    fp2div1271(R->x);                                               // XQ = x1
+    fp2div1271(R->y);                                               // YQ = y1 
+    R->z[0][0] = 1; R->z[0][1] = 0; R->z[1][0] = 0; R->z[1][1] = 0; // ZQ = 1
+    *((__m256i*) & R->ta) = *((__m256i*) & R->x);     // TaQ = x1
+    *((__m256i*) & R->tb) = *((__m256i*) & R->y);     // TbQ = y1
 
-    // Converting scalar to odd using the prime subgroup order
-    // If (k is odd) then k_odd = k else k_odd = k + r
-    if (!(temp[0] & 1))
-    {
-        unsigned char carry = _addcarry_u64(0, temp[0], CURVE_ORDER_0, &temp[0]);
-        carry = _addcarry_u64(carry, temp[1], CURVE_ORDER_1, &temp[1]);
-        carry = _addcarry_u64(carry, temp[2], CURVE_ORDER_2, &temp[2]);
-        _addcarry_u64(carry, temp[3], CURVE_ORDER_3, &temp[3]);
-    }
-
-    mLSB_set_recode((unsigned long long*)temp, digits);
-
-    table_lookup_fixed_base(((point_precomp_t*)&FIXED_BASE_TABLE) + 64, S, (((((digits[249] << 1) + digits[199]) << 1) + digits[149]) << 1) + digits[99], 0);
-    R5_to_R1(S, R);
-    table_lookup_fixed_base(((point_precomp_t*)&FIXED_BASE_TABLE) + 48, S, (((((digits[239] << 1) + digits[189]) << 1) + digits[139]) << 1) + digits[89], digits[39]);
+    table_lookup_fixed_base(S, 48 + (((((digits[239] << 1) + digits[189]) << 1) + digits[139]) << 1) + digits[89], digits[39]);
     eccmadd(S, R);
-    table_lookup_fixed_base(((point_precomp_t*)&FIXED_BASE_TABLE) + 32, S, (((((digits[229] << 1) + digits[179]) << 1) + digits[129]) << 1) + digits[79], digits[29]);
+    table_lookup_fixed_base(S, 32 + (((((digits[229] << 1) + digits[179]) << 1) + digits[129]) << 1) + digits[79], digits[29]);
     eccmadd(S, R);
-    table_lookup_fixed_base(((point_precomp_t*)&FIXED_BASE_TABLE) + 16, S, (((((digits[219] << 1) + digits[169]) << 1) + digits[119]) << 1) + digits[69], digits[19]);
+    table_lookup_fixed_base(S, 16 + (((((digits[219] << 1) + digits[169]) << 1) + digits[119]) << 1) + digits[69], digits[19]);
     eccmadd(S, R);
-    table_lookup_fixed_base(((point_precomp_t*)&FIXED_BASE_TABLE), S, (((((digits[209] << 1) + digits[159]) << 1) + digits[109]) << 1) + digits[59], digits[9]);
+    table_lookup_fixed_base(S, 00 + (((((digits[209] << 1) + digits[159]) << 1) + digits[109]) << 1) + digits[59], digits[9]);
     eccmadd(S, R);
 
-    for (unsigned int i = 9; i--; )
-    {
-        eccdouble(R);
-        for (unsigned int j = 0; j < 5; j++)
-        {
-            table_lookup_fixed_base(((point_precomp_t*)&FIXED_BASE_TABLE) + (((unsigned long long)(4 - j)) << 4), S, (((((digits[5 * 50 - j * 10 + i - 10] << 1) + digits[5 * 50 - j * 10 + i - 10 - 50]) << 1) + digits[5 * 50 - j * 10 + i - 10 - 100]) << 1) + digits[5 * 50 - j * 10 + i - 10 - 150], digits[50 - j * 10 + i - 10]);
-            eccmadd(S, R);
-        }
-    }
+    eccdouble(R);
+    table_lookup_fixed_base(S, 64 + (((((digits[248] << 1) + digits[198]) << 1) + digits[148]) << 1) + digits[98], digits[48]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 48 + (((((digits[238] << 1) + digits[188]) << 1) + digits[138]) << 1) + digits[88], digits[38]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 32 + (((((digits[228] << 1) + digits[178]) << 1) + digits[128]) << 1) + digits[78], digits[28]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 16 + (((((digits[218] << 1) + digits[168]) << 1) + digits[118]) << 1) + digits[68], digits[18]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 00 + (((((digits[208] << 1) + digits[158]) << 1) + digits[108]) << 1) + digits[58], digits[8]);
+    eccmadd(S, R);
+
+    eccdouble(R);
+    table_lookup_fixed_base(S, 64 + (((((digits[247] << 1) + digits[197]) << 1) + digits[147]) << 1) + digits[97], digits[47]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 48 + (((((digits[237] << 1) + digits[187]) << 1) + digits[137]) << 1) + digits[87], digits[37]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 32 + (((((digits[227] << 1) + digits[177]) << 1) + digits[127]) << 1) + digits[77], digits[27]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 16 + (((((digits[217] << 1) + digits[167]) << 1) + digits[117]) << 1) + digits[67], digits[17]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 00 + (((((digits[207] << 1) + digits[157]) << 1) + digits[107]) << 1) + digits[57], digits[7]);
+    eccmadd(S, R);
+
+    eccdouble(R);
+    table_lookup_fixed_base(S, 64 + (((((digits[246] << 1) + digits[196]) << 1) + digits[146]) << 1) + digits[96], digits[46]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 48 + (((((digits[236] << 1) + digits[186]) << 1) + digits[136]) << 1) + digits[86], digits[36]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 32 + (((((digits[226] << 1) + digits[176]) << 1) + digits[126]) << 1) + digits[76], digits[26]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 16 + (((((digits[216] << 1) + digits[166]) << 1) + digits[116]) << 1) + digits[66], digits[16]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 00 + (((((digits[206] << 1) + digits[156]) << 1) + digits[106]) << 1) + digits[56], digits[6]);
+    eccmadd(S, R);
+
+    eccdouble(R);
+    table_lookup_fixed_base(S, 64 + (((((digits[245] << 1) + digits[195]) << 1) + digits[145]) << 1) + digits[95], digits[45]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 48 + (((((digits[235] << 1) + digits[185]) << 1) + digits[135]) << 1) + digits[85], digits[35]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 32 + (((((digits[225] << 1) + digits[175]) << 1) + digits[125]) << 1) + digits[75], digits[25]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 16 + (((((digits[215] << 1) + digits[165]) << 1) + digits[115]) << 1) + digits[65], digits[15]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 00 + (((((digits[205] << 1) + digits[155]) << 1) + digits[105]) << 1) + digits[55], digits[5]);
+    eccmadd(S, R);
+
+    eccdouble(R);
+    table_lookup_fixed_base(S, 64 + (((((digits[244] << 1) + digits[194]) << 1) + digits[144]) << 1) + digits[94], digits[44]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 48 + (((((digits[234] << 1) + digits[184]) << 1) + digits[134]) << 1) + digits[84], digits[34]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 32 + (((((digits[224] << 1) + digits[174]) << 1) + digits[124]) << 1) + digits[74], digits[24]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 16 + (((((digits[214] << 1) + digits[164]) << 1) + digits[114]) << 1) + digits[64], digits[14]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 00 + (((((digits[204] << 1) + digits[154]) << 1) + digits[104]) << 1) + digits[54], digits[4]);
+    eccmadd(S, R);
+
+    eccdouble(R);
+    table_lookup_fixed_base(S, 64 + (((((digits[243] << 1) + digits[193]) << 1) + digits[143]) << 1) + digits[93], digits[43]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 48 + (((((digits[233] << 1) + digits[183]) << 1) + digits[133]) << 1) + digits[83], digits[33]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 32 + (((((digits[223] << 1) + digits[173]) << 1) + digits[123]) << 1) + digits[73], digits[23]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 16 + (((((digits[213] << 1) + digits[163]) << 1) + digits[113]) << 1) + digits[63], digits[13]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 00 + (((((digits[203] << 1) + digits[153]) << 1) + digits[103]) << 1) + digits[53], digits[3]);
+    eccmadd(S, R);
+
+    eccdouble(R);
+    table_lookup_fixed_base(S, 64 + (((((digits[242] << 1) + digits[192]) << 1) + digits[142]) << 1) + digits[92], digits[42]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 48 + (((((digits[232] << 1) + digits[182]) << 1) + digits[132]) << 1) + digits[82], digits[32]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 32 + (((((digits[222] << 1) + digits[172]) << 1) + digits[122]) << 1) + digits[72], digits[22]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 16 + (((((digits[212] << 1) + digits[162]) << 1) + digits[112]) << 1) + digits[62], digits[12]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 00 + (((((digits[202] << 1) + digits[152]) << 1) + digits[102]) << 1) + digits[52], digits[2]);
+    eccmadd(S, R);
+
+    eccdouble(R);
+    table_lookup_fixed_base(S, 64 + (((((digits[241] << 1) + digits[191]) << 1) + digits[141]) << 1) + digits[91], digits[41]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 48 + (((((digits[231] << 1) + digits[181]) << 1) + digits[131]) << 1) + digits[81], digits[31]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 32 + (((((digits[221] << 1) + digits[171]) << 1) + digits[121]) << 1) + digits[71], digits[21]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 16 + (((((digits[211] << 1) + digits[161]) << 1) + digits[111]) << 1) + digits[61], digits[11]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 00 + (((((digits[201] << 1) + digits[151]) << 1) + digits[101]) << 1) + digits[51], digits[1]);
+    eccmadd(S, R);
+
+    eccdouble(R);
+    table_lookup_fixed_base(S, 64 + (((((digits[240] << 1) + digits[190]) << 1) + digits[140]) << 1) + digits[90], digits[40]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 48 + (((((digits[230] << 1) + digits[180]) << 1) + digits[130]) << 1) + digits[80], digits[30]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 32 + (((((digits[220] << 1) + digits[170]) << 1) + digits[120]) << 1) + digits[70], digits[20]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 16 + (((((digits[210] << 1) + digits[160]) << 1) + digits[110]) << 1) + digits[60], digits[10]);
+    eccmadd(S, R);
+    table_lookup_fixed_base(S, 00 + (((((digits[200] << 1) + digits[150]) << 1) + digits[100]) << 1) + digits[50], digits[0]);
+    eccmadd(S, R);
+
     eccnorm(R, Q);
 }
 
@@ -3836,48 +3849,45 @@ static void ecc_phi(point_extproj_t P)
 
 static void eccneg_extproj_precomp(point_extproj_precomp_t P, point_extproj_precomp_t Q)
 { // Point negation
-    fp2copy1271(P->t2, Q->t2);
-    fp2copy1271(P->xy, Q->yx);
-    fp2copy1271(P->yx, Q->xy);
-    fp2copy1271(P->z2, Q->z2);
+    *((__m256i*) & Q->t2) = *((__m256i*) & P->t2);
+    *((__m256i*) & Q->yx) = *((__m256i*) & P->xy);
+    *((__m256i*) & Q->xy) = *((__m256i*) & P->yx);
+    *((__m256i*) & Q->z2) = *((__m256i*) & P->z2);
     fp2neg1271(Q->t2);
 }
 
 static void eccneg_precomp(point_precomp_t P, point_precomp_t Q)
 { // Point negation
-    fp2copy1271(P->t2, Q->t2);
-    fp2copy1271(P->xy, Q->yx);
-    fp2copy1271(P->yx, Q->xy);
+    *((__m256i*) & Q->t2) = *((__m256i*) & P->t2);
+    *((__m256i*) & Q->yx) = *((__m256i*) & P->xy);
+    *((__m256i*) & Q->xy) = *((__m256i*) & P->yx);
     fp2neg1271(Q->t2);
 }
 
 static unsigned long long mul_truncate(unsigned long long* s, unsigned long long* C)
-{ // 256-bit multiplication with truncation for the scalar decomposition
-  // Outputs 64-bit value "out" = (unsigned long long)((s * C) >> 256)
-    unsigned long long tt1[2], tt2[2];
-    unsigned int carry1, carry2;
+{
+    unsigned long long t0, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15, t16;
+    unsigned long long high00, low10, high10, low01, high01, low20, high20, low02, high02, low11, high11, low03, high03, low30, high30, low12, high12, high21;
 
-    _umul128(s[0], C[0], &tt2[0]);
-    tt1[0] = _umul128(s[1], C[0], &tt1[1]);
-    _addcarry_u64(_addcarry_u64(0, tt1[0], tt2[0], &tt1[0]), tt1[1], 0, &tt1[1]);
-    tt2[0] = _umul128(s[0], C[1], &tt2[1]);
-    carry1 = _addcarry_u64(_addcarry_u64(0, tt1[0], tt2[0], &tt1[0]), tt1[1], tt2[1], &tt1[0]);
-    tt2[0] = _umul128(s[2], C[0], &tt2[1]);
-    _addcarry_u64(_addcarry_u64(0, tt1[0], tt2[0], &tt1[0]), carry1, tt2[1], &tt1[1]);
-    tt2[0] = _umul128(s[0], C[2], &tt2[1]);
-    carry1 = _addcarry_u64(_addcarry_u64(0, tt1[0], tt2[0], &tt1[0]), tt1[1], tt2[1], &tt1[1]);
-    tt2[0] = _umul128(s[1], C[1], &tt2[1]);
-    carry2 = _addcarry_u64(_addcarry_u64(0, tt1[0], tt2[0], &tt1[0]), tt1[1], tt2[1], &tt1[0]);
-    tt2[0] = _umul128(s[0], C[3], &tt2[1]);
-    _addcarry_u64(_addcarry_u64(0, tt1[0], tt2[0], &tt1[0]), carry1 + carry2, tt2[1], &tt1[1]);
-    tt2[0] = _umul128(s[3], C[0], &tt2[1]);
-    _addcarry_u64(_addcarry_u64(0, tt1[0], tt2[0], &tt1[0]), tt1[1], tt2[1], &tt1[1]);
-    tt2[0] = _umul128(s[1], C[2], &tt2[1]);
-    _addcarry_u64(_addcarry_u64(0, tt1[0], tt2[0], &tt1[0]), tt1[1], tt2[1], &tt1[1]);
-    tt2[0] = _umul128(s[2], C[1], &tt2[1]);
-    _addcarry_u64(_addcarry_u64(0, tt1[0], tt2[0], &tt1[0]), tt1[1], tt2[1], &tt1[1]);
+    _umul128(s[0], C[0], &high00);
+    low10 = _umul128(s[1], C[0], &high10);
+    _addcarry_u64(_addcarry_u64(0, high00, low10, &t0), high10, 0, &t1);
+    low01 = _umul128(s[0], C[1], &high01);
+    t2 = _addcarry_u64(_addcarry_u64(0, t0, low01, &t0), t1, high01, &t3);
+    low20 = _umul128(s[2], C[0], &high20);
+    _addcarry_u64(_addcarry_u64(0, t3, low20, &t4), t2, high20, &t5);
+    low02 = _umul128(s[0], C[2], &high02);
+    t6 = _addcarry_u64(_addcarry_u64(0, t4, low02, &t7), t5, high02, &t8);
+    low11 = _umul128(s[1], C[1], &high11);
+    t9 = _addcarry_u64(_addcarry_u64(0, t7, low11, &t0), t8, high11, &t10);
+    low03 = _umul128(s[0], C[3], &high03);
+    _addcarry_u64(_addcarry_u64(0, t10, low03, &t11), t6 + t9, high03, &t12);
+    low30 = _umul128(s[3], C[0], &high30);
+    _addcarry_u64(_addcarry_u64(0, t11, low30, &t13), t12, high30, &t14);
+    low12 = _umul128(s[1], C[2], &high12);
+    _addcarry_u64(_addcarry_u64(0, t13, low12, &t15), t14, high12, &t16);
 
-    return tt1[1] + s[1] * C[3] + s[3] * C[1] + s[2] * C[2];
+    return _addcarry_u64(0, t15, _umul128(s[2], C[1], &high21), &t0) + t16 + high21 + s[1] * C[3] + s[2] * C[2] + s[3] * C[1];
 }
 
 static void decompose(unsigned long long* k, unsigned long long* scalars)
@@ -3887,20 +3897,27 @@ static void decompose(unsigned long long* k, unsigned long long* scalars)
     const unsigned long long a3 = mul_truncate(k, ell3);
     const unsigned long long a4 = mul_truncate(k, ell4);
 
-    scalars[0] = k[0] - a1 * B11 - a2 * B21 - a3 * B31 - a4 * B41 + C1;
-    scalars[1] = a1 * B12 + a2 - a3 * B32 - a4 * B42 + C2;
-    scalars[2] = a3 * B33 - a1 * B13 - a2 + a4 * B43 + C3;
-    scalars[3] = a1 * B14 - a2 * B24 - a3 * B34 + a4 * B44 + C4;
+#if AVX512
+    * ((__m256i*)scalars) = _mm256_add_epi64(_mm256_add_epi64(_mm256_add_epi64(_mm256_add_epi64(_mm256_mullo_epi64(_mm256_set1_epi64x(a1), B1), _mm256_mullo_epi64(_mm256_set1_epi64x(a2), B2)), _mm256_mullo_epi64(_mm256_set1_epi64x(a3), B3)), _mm256_mullo_epi64(_mm256_set1_epi64x(a4), B4)), C);
+    if (!((scalars[0] += k[0]) & 1))
+    {
+        *((__m256i*)scalars) = _mm256_sub_epi64(*((__m256i*)scalars), B4);
+    }
+#else
+    scalars[0] = a1 * B11 + a2 * B21 + a3 * B31 + a4 * B41 + C1 + k[0];
+    scalars[1] = a1 * B12 + a2 * B22 + a3 * B32 + a4 * B42 + C2;
+    scalars[2] = a1 * B13 + a2 * B23 + a3 * B33 + a4 * B43 + C3;
+    scalars[3] = a1 * B14 + a2 * B24 + a3 * B34 + a4 * B44 + C4;
     if (!(scalars[0] & 1))
     {
-        scalars[0] += B41;
-        scalars[1] += B42;
+        scalars[0] -= B41;
+        scalars[1] -= B42;
         scalars[2] -= B43;
         scalars[3] -= B44;
     }
+#endif
 }
 
-#pragma optimize("", off)
 static void wNAF_recode(unsigned long long scalar, unsigned int w, char* digits)
 { // Computes wNAF recoding of a scalar, where digits are in set {0,+-1,+-3,...,+-(2^(w-1)-1)}
     const int val1 = (int)(1 << (w - 1)) - 1;                           // 2^(w-1) - 1
@@ -3942,27 +3959,26 @@ static void wNAF_recode(unsigned long long scalar, unsigned int w, char* digits)
         index++;
     }
 
-    while (index < 65)
-    {
-        digits[index++] = 0;
-    }
+    bs->SetMem(&digits[index], 65 - index, 0);
 }
-#pragma optimize("", on)
 
 static void ecc_precomp_double(point_extproj_t P, point_extproj_precomp_t* Table)
 { // Generation of the precomputation table used internally by the double scalar multiplication function ecc_mul_double()
     point_extproj_t Q;
     point_extproj_precomp_t PP;
 
-    R1_to_R2(P, Table[0]);                     // Precomputed point Table[0] = P in coordinates (X+Y,Y-X,2Z,2dT)
-    eccdouble(P);                              // A = 2*P in (X,Y,Z,Ta,Tb)
-    R1_to_R3(P, PP);                           // Converting from (X,Y,Z,Ta,Tb) to (X+Y,Y-X,Z,T) 
+    R1_to_R2(P, Table[0]);                  // Precomputed point Table[0] = P in coordinates (X+Y,Y-X,2Z,2dT)
+    eccdouble(P);                           // A = 2*P in (X,Y,Z,Ta,Tb)
+    R1_to_R3(P, PP);                        // Converting from (X,Y,Z,Ta,Tb) to (X+Y,Y-X,Z,T) 
 
-    for (unsigned int i = 1; i < 4; i++)
-    {
-        eccadd_core(Table[i - 1], PP, Q);      // Table[i] = Table[i-1]+2P using the representations (X,Y,Z,Ta,Tb) <- (X+Y,Y-X,2Z,2dT) + (X+Y,Y-X,Z,T)
-        R1_to_R2(Q, Table[i]);                 // Converting from (X,Y,Z,Ta,Tb) to (X+Y,Y-X,2Z,2dT)
-    }
+    eccadd_core(Table[0], PP, Q);           // Table[i] = Table[i-1]+2P using the representations (X,Y,Z,Ta,Tb) <- (X+Y,Y-X,2Z,2dT) + (X+Y,Y-X,Z,T)
+    R1_to_R2(Q, Table[1]);                  // Converting from (X,Y,Z,Ta,Tb) to (X+Y,Y-X,2Z,2dT)
+
+    eccadd_core(Table[1], PP, Q);           // Table[i] = Table[i-1]+2P using the representations (X,Y,Z,Ta,Tb) <- (X+Y,Y-X,2Z,2dT) + (X+Y,Y-X,Z,T)
+    R1_to_R2(Q, Table[2]);                  // Converting from (X,Y,Z,Ta,Tb) to (X+Y,Y-X,2Z,2dT)
+
+    eccadd_core(Table[2], PP, Q);           // Table[i] = Table[i-1]+2P using the representations (X,Y,Z,Ta,Tb) <- (X+Y,Y-X,2Z,2dT) + (X+Y,Y-X,Z,T)
+    R1_to_R2(Q, Table[3]);                  // Converting from (X,Y,Z,Ta,Tb) to (X+Y,Y-X,2Z,2dT)
 }
 
 static BOOLEAN ecc_mul_double(unsigned long long* k, unsigned long long* l, point_t Q)
@@ -3984,23 +4000,23 @@ static BOOLEAN ecc_mul_double(unsigned long long* k, unsigned long long* l, poin
     }
 
     // Computing endomorphisms over point Q
-    fp2copy1271(Q1->x, Q2->x);
-    fp2copy1271(Q1->y, Q2->y);
-    fp2copy1271(Q1->z, Q2->z);
-    fp2copy1271(Q1->ta, Q2->ta);
-    fp2copy1271(Q1->tb, Q2->tb);
+    *((__m256i*) & Q2->x) = *((__m256i*) & Q1->x);
+    *((__m256i*) & Q2->y) = *((__m256i*) & Q1->y);
+    *((__m256i*) & Q2->z) = *((__m256i*) & Q1->z);
+    *((__m256i*) & Q2->ta) = *((__m256i*) & Q1->ta);
+    *((__m256i*) & Q2->tb) = *((__m256i*) & Q1->tb);
     ecc_phi(Q2);
-    fp2copy1271(Q1->x, Q3->x);
-    fp2copy1271(Q1->y, Q3->y);
-    fp2copy1271(Q1->z, Q3->z);
-    fp2copy1271(Q1->ta, Q3->ta);
-    fp2copy1271(Q1->tb, Q3->tb);
+    *((__m256i*) & Q3->x) = *((__m256i*) & Q1->x);
+    *((__m256i*) & Q3->y) = *((__m256i*) & Q1->y);
+    *((__m256i*) & Q3->z) = *((__m256i*) & Q1->z);
+    *((__m256i*) & Q3->ta) = *((__m256i*) & Q1->ta);
+    *((__m256i*) & Q3->tb) = *((__m256i*) & Q1->tb);
     ecc_psi(Q3);
-    fp2copy1271(Q2->x, Q4->x);
-    fp2copy1271(Q2->y, Q4->y);
-    fp2copy1271(Q2->z, Q4->z);
-    fp2copy1271(Q2->ta, Q4->ta);
-    fp2copy1271(Q2->tb, Q4->tb);
+    *((__m256i*) & Q4->x) = *((__m256i*) & Q2->x);
+    *((__m256i*) & Q4->y) = *((__m256i*) & Q2->y);
+    *((__m256i*) & Q4->z) = *((__m256i*) & Q2->z);
+    *((__m256i*) & Q4->ta) = *((__m256i*) & Q2->ta);
+    *((__m256i*) & Q4->tb) = *((__m256i*) & Q2->tb);
     ecc_psi(Q4);
 
     decompose((unsigned long long*)k, k_scalars);                   // Scalar decomposition
@@ -4118,11 +4134,11 @@ static void ecc_precomp(point_extproj_t P, point_extproj_precomp_t* T)
     point_extproj_t PP;
 
     // Generating Q = phi(P) = (XQ+YQ,YQ-XQ,ZQ,TQ)
-    fp2copy1271(P->x, PP->x);
-    fp2copy1271(P->y, PP->y);
-    fp2copy1271(P->z, PP->z);
-    fp2copy1271(P->ta, PP->ta);
-    fp2copy1271(P->tb, PP->tb);
+    *((__m256i*) & PP->x) = *((__m256i*) & P->x);
+    *((__m256i*) & PP->y) = *((__m256i*) & P->y);
+    *((__m256i*) & PP->z) = *((__m256i*) & P->z);
+    *((__m256i*) & PP->ta) = *((__m256i*) & P->ta);
+    *((__m256i*) & PP->tb) = *((__m256i*) & P->tb);
     ecc_phi(PP);
     R1_to_R3(PP, Q);                       // Converting from (X,Y,Z,Ta,Tb) to (X+Y,Y-X,Z,T) 
 
@@ -4153,42 +4169,21 @@ static void ecc_precomp(point_extproj_t P, point_extproj_precomp_t* T)
     R1_to_R2(PP, T[7]);
 }
 
-static void recode(unsigned long long* scalars, unsigned int* digits, unsigned int* sign_masks)
-{ // Recoding sub-scalars for use in the variable-base scalar multiplication
-    for (unsigned int i = 0; i < 64; i++)
-    {
-        scalars[0] >>= 1;
-        const unsigned int bit0 = scalars[0] & 1;
-        sign_masks[i] = bit0;
-
-        digits[i] = scalars[1] & 1;
-        scalars[1] = (scalars[1] >> 1) + ((bit0 | digits[i]) ^ bit0);
-
-        unsigned int bit = scalars[2] & 1;
-        scalars[2] = (scalars[2] >> 1) + ((bit0 | bit) ^ bit0);
-        digits[i] += (bit << 1);
-
-        bit = scalars[3] & 1;
-        scalars[3] = (scalars[3] >> 1) + ((bit0 | bit) ^ bit0);
-        digits[i] += (bit << 2);
-    }
-}
-
-static void cofactor_clearing(point_extproj_t P)
+static void cofactor_clearing(point_extproj_t R)
 { // Co-factor clearing
     point_extproj_precomp_t Q;
 
-    R1_to_R2(P, Q);                      // Converting from (X,Y,Z,Ta,Tb) to (X+Y,Y-X,2Z,2dT)
-    eccdouble(P);                        // P = 2*P using representations (X,Y,Z,Ta,Tb) <- 2*(X,Y,Z)
-    eccadd(Q, P);                        // P = P+Q using representations (X,Y,Z,Ta,Tb) <- (X,Y,Z,Ta,Tb) + (X+Y,Y-X,2Z,2dT)
-    eccdouble(P);
-    eccdouble(P);
-    eccdouble(P);
-    eccdouble(P);
-    eccadd(Q, P);
-    eccdouble(P);
-    eccdouble(P);
-    eccdouble(P);
+    R1_to_R2(R, Q);                      // Converting from (X,Y,Z,Ta,Tb) to (X+Y,Y-X,2Z,2dT)
+    eccdouble(R);                        // P = 2*P using representations (X,Y,Z,Ta,Tb) <- 2*(X,Y,Z)
+    eccadd(Q, R);                        // P = P+Q using representations (X,Y,Z,Ta,Tb) <- (X,Y,Z,Ta,Tb) + (X+Y,Y-X,2Z,2dT)
+    eccdouble(R);
+    eccdouble(R);
+    eccdouble(R);
+    eccdouble(R);
+    eccadd(Q, R);
+    eccdouble(R);
+    eccdouble(R);
+    eccdouble(R);
 }
 
 static BOOLEAN ecc_mul(point_t P, unsigned long long* k, point_t Q)
@@ -4210,7 +4205,25 @@ static BOOLEAN ecc_mul(point_t P, unsigned long long* k, point_t Q)
 
     cofactor_clearing(R);
 
-    recode(scalars, digits, sign_masks);                      // Scalar recoding
+    // Recoding sub-scalars for use in the variable-base scalar multiplication
+    for (unsigned int i = 0; i < 64; i++)
+    {
+        scalars[0] >>= 1;
+        const unsigned int bit0 = scalars[0] & 1;
+        sign_masks[i] = bit0;
+
+        digits[i] = scalars[1] & 1;
+        scalars[1] = (scalars[1] >> 1) + ((bit0 | digits[i]) ^ bit0);
+
+        unsigned int bit = scalars[2] & 1;
+        scalars[2] = (scalars[2] >> 1) + ((bit0 | bit) ^ bit0);
+        digits[i] += (bit << 1);
+
+        bit = scalars[3] & 1;
+        scalars[3] = (scalars[3] >> 1) + ((bit0 | bit) ^ bit0);
+        digits[i] += (bit << 2);
+    }
+
     ecc_precomp(R, Table[1]);                                 // Precomputation
     for (unsigned int i = 0; i < 8; i++)
     {
@@ -4234,11 +4247,11 @@ static BOOLEAN ecc_mul(point_t P, unsigned long long* k, point_t Q)
 
 static void encode(point_t P, unsigned char* Pencoded)
 { // Encode point P
-    unsigned long long temp1 = (P->x[1][1] & 0x4000000000000000) << 1;
-    unsigned long long temp2 = (P->x[0][1] & 0x4000000000000000) << 1;
+    const unsigned long long temp1 = (P->x[1][1] & 0x4000000000000000) << 1;
+    const unsigned long long temp2 = (P->x[0][1] & 0x4000000000000000) << 1;
 
     *((__m256i*)Pencoded) = *((__m256i*)P->y);
-    if (P->x[0][0] == 0 && P->x[0][1] == 0)
+    if (!P->x[0][0] && !P->x[0][1])
     {
         ((unsigned long long*)Pencoded)[3] |= temp1;
     }
@@ -4279,7 +4292,7 @@ static BOOLEAN decode(const unsigned char* Pencoded, point_t P)
 
     fpadd1271(t1, t3, t);                           // t = t1+t3
     mod1271(t);
-    if (t[0] == 0 && t[1] == 0)
+    if (!t[0] && !t[1])
     {
         fpsub1271(t1, t3, t);                       // t = t1-t3
     }
@@ -4291,13 +4304,20 @@ static BOOLEAN decode(const unsigned char* Pencoded, point_t P)
     fpmul1271(t0, r, t3);                           // t3 = t0*r          
     fpmul1271(t, t3, P->x[0]);                      // x0 = t*t3 
     fpsqr1271(P->x[0], t1);
-    fpmul1271(t0, t1, t1);                          // t1 = t0*x0^2 
-    fpdiv1271(P->x[0]);                             // x0 = x0/2         
+    fpmul1271(t0, t1, t1);                          // t1 = t0*x0^2
+
+    // x0 = x0/2
+    unsigned long long mask, temp[2];
+    mask = (0 - (1 & P->x[0][0]));
+    _addcarry_u64(_addcarry_u64(0, P->x[0][0], mask, &temp[0]), P->x[0][1], (mask >> 1), &temp[1]);
+    P->x[0][0] = __shiftright128(temp[0], temp[1], 1);
+    P->x[0][1] = (temp[1] >> 1);
+
     fpmul1271(t2, t3, P->x[1]);                     // x1 = t3*t2  
 
     fpsub1271(t, t1, t);
     mod1271(t);
-    if (t[0] != 0 || t[1] != 0) // If t != t1 then swap x0 and x1
+    if (t[0] || t[1]) // If t != t1 then swap x0 and x1
     {
         t0[0] = P->x[0][0];
         t0[1] = P->x[0][1];
@@ -4309,7 +4329,7 @@ static BOOLEAN decode(const unsigned char* Pencoded, point_t P)
 
     mod1271(P->x[0]);
     if (((unsigned int)(Pencoded[31] >> 7))
-        != (unsigned int)(P->x[(P->x[0][0] == 0 && P->x[0][1] == 0) ? 1 : 0][1] >> 62)) // If sign of x-coordinate decoded != input sign bit, then negate x-coordinate
+        != (unsigned int)(P->x[(!P->x[0][0] && !P->x[0][1]) ? 1 : 0][1] >> 62)) // If sign of x-coordinate decoded != input sign bit, then negate x-coordinate
     {
         fp2neg1271(P->x);
     }
@@ -4399,8 +4419,8 @@ static BOOLEAN getSharedKey(const unsigned char* privateKey, const unsigned char
         return FALSE;
     }
 
-    if (A->x[0][0] == 0 && A->x[0][1] == 0 && A->x[1][0] == 0 && A->x[1][1] == 0
-        && A->y[0][0] == 1 && A->y[0][1] == 0 && A->y[1][0] == 0 && A->y[1][1] == 0) // Is output = neutral point (0,1)?
+    if (!A->x[0][0] && !A->x[0][1] && !A->x[1][0] && !A->x[1][1]
+        && A->y[0][0] == 1 && !A->y[0][1] && !A->y[1][0] && !A->y[1][1]) // Is output = neutral point (0,1)?
     {
         return FALSE;
     }
@@ -4433,28 +4453,34 @@ static void sign(const unsigned char* subseed, const unsigned char* publicKey, c
   // Inputs: 32-byte subseed, 32-byte publicKey, and messageDigest of size 32 in bytes
   // Output: 64-byte signature 
     point_t R;
-    unsigned char k[64], r[64], h[64], temp[32 + 64];
+    unsigned char k[64], h[64], temp[32 + 64];
+    unsigned long long r[8];
 
     KangarooTwelve((unsigned char*)subseed, 32, k, 64);
 
     *((__m256i*)(temp + 32)) = *((__m256i*)(k + 32));
     *((__m256i*)(temp + 64)) = *((__m256i*)messageDigest);
 
-    KangarooTwelve(temp + 32, 32 + 32, r, 64);
+    KangarooTwelve(temp + 32, 32 + 32, (unsigned char*)r, 64);
 
-    ecc_mul_fixed((unsigned long long*)r, R);
+    ecc_mul_fixed(r, R);
     encode(R, signature); // Encode lowest 32 bytes of signature
     *((__m256i*)temp) = *((__m256i*)signature);
     *((__m256i*)(temp + 32)) = *((__m256i*)publicKey);
 
     KangarooTwelve(temp, 32 + 64, h, 64);
-    modulo_order((unsigned long long*)r, (unsigned long long*)r);
-    modulo_order((unsigned long long*)h, (unsigned long long*)h);
+    Montgomery_multiply_mod_order(r, Montgomery_Rprime, r);
+    Montgomery_multiply_mod_order(r, ONE, r);
+    Montgomery_multiply_mod_order((unsigned long long*)h, Montgomery_Rprime, (unsigned long long*)h);
+    Montgomery_multiply_mod_order((unsigned long long*)h, ONE, (unsigned long long*)h);
     Montgomery_multiply_mod_order((unsigned long long*)k, Montgomery_Rprime, (unsigned long long*)(signature + 32));
     Montgomery_multiply_mod_order((unsigned long long*)h, Montgomery_Rprime, (unsigned long long*)h);
     Montgomery_multiply_mod_order((unsigned long long*)(signature + 32), (unsigned long long*)h, (unsigned long long*)(signature + 32));
     Montgomery_multiply_mod_order((unsigned long long*)(signature + 32), ONE, (unsigned long long*)(signature + 32));
-    subtract_mod_order((unsigned long long*)r, (unsigned long long*)(signature + 32), (unsigned long long*)(signature + 32));
+    if (_subborrow_u64(_subborrow_u64(_subborrow_u64(_subborrow_u64(0, r[0], ((unsigned long long*)signature)[4], &((unsigned long long*)signature)[4]), r[1], ((unsigned long long*)signature)[5], &((unsigned long long*)signature)[5]), r[2], ((unsigned long long*)signature)[6], &((unsigned long long*)signature)[6]), r[3], ((unsigned long long*)signature)[7], &((unsigned long long*)signature)[7]))
+    {
+        _addcarry_u64(_addcarry_u64(_addcarry_u64(_addcarry_u64(0, ((unsigned long long*)signature)[4], CURVE_ORDER_0, &((unsigned long long*)signature)[4]), ((unsigned long long*)signature)[5], CURVE_ORDER_1, &((unsigned long long*)signature)[5]), ((unsigned long long*)signature)[6], CURVE_ORDER_2, &((unsigned long long*)signature)[6]), ((unsigned long long*)signature)[7], CURVE_ORDER_3, &((unsigned long long*)signature)[7]);
+    }
 }
 
 static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messageDigest, const unsigned char* signature)
@@ -4465,7 +4491,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
     point_t A;
     unsigned char temp[32 + 64], h[64];
 
-    if (((publicKey[15] & 0x80) != 0) || ((signature[15] & 0x80) != 0) || (signature[63] != 0) || ((signature[62] & 0xC0) != 0))
+    if ((publicKey[15] & 0x80) || (signature[15] & 0x80) || (signature[62] & 0xC0) || signature[63])
     {  // Are bit128(PublicKey) = bit128(Signature) = 0 and Signature+32 < 2^246?
         return FALSE;
     }
@@ -4529,7 +4555,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define PORT 21841
 #define QUORUM (NUMBER_OF_COMPUTORS * 2 / 3 + 1)
 #define REQUEST_QUORUM_TICK_BROADCASTING_LIMIT 5
-#define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 300
+#define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 90
 #define REVENUE_PUBLICATION_PERIOD 300
 #define SIGNATURE_SIZE 64
 #define SOLUTION_THRESHOLD 27
@@ -4543,8 +4569,6 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define MULTIPLE_TICK_VERSIONS_FAULT 4
 #define INCONSISTENT_NEXT_TICK_DATA_FAULT 8
 #define MULTIPLE_NEXT_TICK_DATA_VERSIONS_FAULT 16
-
-static __m256i ZERO;
 
 typedef struct
 {
@@ -4837,7 +4861,7 @@ typedef struct
     RequestedQuorumTick quorumTick;
 } RequestQuorumTick;
 
-#define BROADCAST_QUORUM_TICK 15
+#define RESPOND_QUORUM_TICK 15
 
 typedef struct
 {
@@ -4872,7 +4896,7 @@ typedef struct
 typedef struct
 {
     QuorumTick quorumTick;
-} BroadcastQuorumTick;
+} RespondQuorumTick;
 
 #define GET_COMPUTER_STATE 0
 
@@ -4930,7 +4954,6 @@ static volatile unsigned char spectrumDigestLevel = 0;
 static volatile short spectrumDigestLevelCompleteness = 0;
 static __m256i* spectrumDigests = NULL;
 #endif
-static unsigned long long requestedQuorumTickTicks[MAX_NUMBER_OF_TICKS_PER_EPOCH];
 /**///static unsigned int chosenTransfersInvocationsAndQuestionSizes[NUMBER_OF_COMPUTORS];
 /**///static char chosenTransfersInvocationsAndQuestionBytes[NUMBER_OF_COMPUTORS][sizeof(BroadcastNextTickData) + (sizeof(Transfer) + MAX_TRANSFER_DESCRIPTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_TRANSFERS_PER_TICK + (sizeof(Invocation) + MAX_INVOCATION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_INVOCATIONS_PER_TICK + (sizeof(Question) + MAX_QUESTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_QUESTIONS_PER_TICK + SIGNATURE_SIZE];
 
@@ -5026,8 +5049,8 @@ static struct
 static struct
 {
     RequestResponseHeader header;
-    BroadcastQuorumTick BroadcastQuorumTick;
-} broadcastedQuorumTick;
+    RespondQuorumTick respondQuorumTick;
+} respondedQuorumTick;
 
 static bool disableLogging = false;
 
@@ -5762,10 +5785,10 @@ static void requestProcessor(void* ProcedureArgument)
                 }
                 break;
 
-                case BROADCAST_QUORUM_TICK:
-                {
 #if NUMBER_OF_COMPUTING_PROCESSORS
-                    BroadcastQuorumTick* request = (BroadcastQuorumTick*)((char*)processor->cache + sizeof(RequestResponseHeader));
+                case RESPOND_QUORUM_TICK:
+                {
+                    RespondQuorumTick* request = (RespondQuorumTick*)((char*)processor->cache + sizeof(RequestResponseHeader));
                     if (request->quorumTick.epoch == broadcastedComputors.broadcastComputors.computors.epoch
                         && request->quorumTick.tick == system.tick + 1
                         //&& request->quorumTick.month >= 1 && request->quorumTick.month <= 12
@@ -5788,57 +5811,59 @@ static void requestProcessor(void* ProcedureArgument)
                         *((__m256i*)tick.nextTickDataDigest) = *((__m256i*)request->quorumTick.nextTickDataDigest); // TODO: Make sure it matches own value
                         for (tick.computorIndex = 0; tick.computorIndex < NUMBER_OF_COMPUTORS; tick.computorIndex++)
                         {
-                            unsigned int i;
-                            for (i = 0; i < numberOfOwnComputorIndices; i++)
+                            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->quorumTick.signatures[tick.computorIndex]), ZERO)) != 0xFFFFFFFF)
                             {
-                                if (ownComputorIndices[i] == tick.computorIndex)
+                                unsigned int i;
+                                for (i = 0; i < numberOfOwnComputorIndices; i++)
                                 {
-                                    break;
-                                }
-                            }
-                            if (i == numberOfOwnComputorIndices
-                                && actualTicks[tick.computorIndex].tick < tick.tick)
-                            {
-                                unsigned char saltedData[32 + 32];
-                                *((__m256i*)&saltedData[0]) = *((__m256i*)broadcastedComputors.broadcastComputors.computors.publicKeys[tick.computorIndex]);
-                                *((__m256i*)&saltedData[32]) = *((__m256i*)request->quorumTick.spectrumDigest);
-                                KangarooTwelve64To32(saltedData, tick.saltedSpectrumDigest);
-                                *((__m256i*)&saltedData[32]) = *((__m256i*)request->quorumTick.universeDigest);
-                                KangarooTwelve64To32(saltedData, tick.saltedUniverseDigest);
-                                *((__m256i*)&saltedData[32]) = *((__m256i*)request->quorumTick.computerDigest);
-                                KangarooTwelve64To32(saltedData, tick.saltedComputerDigest);
-
-                                unsigned char digest[32];
-                                tick.computorIndex ^= BROADCAST_TICK;
-                                KangarooTwelve((unsigned char*)&tick, sizeof(Tick) - SIGNATURE_SIZE, digest, sizeof(digest));
-                                tick.computorIndex ^= BROADCAST_TICK;
-                                //if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[tick.computorIndex], digest, request->quorumTick.signatures[tick.computorIndex]))
-                                {
-                                    *((__m256i*)&tick.signature[0]) = *((__m256i*)&request->quorumTick.signatures[tick.computorIndex][0]);
-                                    *((__m256i*)&tick.signature[32]) = *((__m256i*)&request->quorumTick.signatures[tick.computorIndex][32]);
-
-                                    while (_InterlockedCompareExchange8(&tickLocks[tick.computorIndex], 1, 0))
+                                    if (ownComputorIndices[i] == tick.computorIndex)
                                     {
-                                        _mm_pause();
+                                        break;
                                     }
-                                    if (actualTicks[tick.computorIndex].tick < tick.tick)
-                                    {
-                                        bs->CopyMem(&previousTicks[tick.computorIndex], &actualTicks[tick.computorIndex], sizeof(Tick));
-                                        bs->CopyMem(&actualTicks[tick.computorIndex], &tick, sizeof(Tick));
-                                    }
-                                    _InterlockedCompareExchange8(&tickLocks[tick.computorIndex], 0, 1);
                                 }
-                                /*else
+                                if (i == numberOfOwnComputorIndices
+                                    && actualTicks[tick.computorIndex].tick < tick.tick)
                                 {
-                                    goto doNotBroadcast;
-                                }*/
+                                    unsigned char saltedData[32 + 32];
+                                    *((__m256i*) & saltedData[0]) = *((__m256i*)broadcastedComputors.broadcastComputors.computors.publicKeys[tick.computorIndex]);
+                                    *((__m256i*) & saltedData[32]) = *((__m256i*)request->quorumTick.spectrumDigest);
+                                    KangarooTwelve64To32(saltedData, tick.saltedSpectrumDigest);
+                                    *((__m256i*) & saltedData[32]) = *((__m256i*)request->quorumTick.universeDigest);
+                                    KangarooTwelve64To32(saltedData, tick.saltedUniverseDigest);
+                                    *((__m256i*) & saltedData[32]) = *((__m256i*)request->quorumTick.computerDigest);
+                                    KangarooTwelve64To32(saltedData, tick.saltedComputerDigest);
+
+                                    unsigned char digest[32];
+                                    tick.computorIndex ^= BROADCAST_TICK;
+                                    KangarooTwelve((unsigned char*)&tick, sizeof(Tick) - SIGNATURE_SIZE, digest, sizeof(digest));
+                                    tick.computorIndex ^= BROADCAST_TICK;
+                                    if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[tick.computorIndex], digest, request->quorumTick.signatures[tick.computorIndex]))
+                                    {
+                                        *((__m256i*) & tick.signature[0]) = *((__m256i*) & request->quorumTick.signatures[tick.computorIndex][0]);
+                                        *((__m256i*) & tick.signature[32]) = *((__m256i*) & request->quorumTick.signatures[tick.computorIndex][32]);
+
+                                        while (_InterlockedCompareExchange8(&tickLocks[tick.computorIndex], 1, 0))
+                                        {
+                                            _mm_pause();
+                                        }
+                                        if (actualTicks[tick.computorIndex].tick < tick.tick)
+                                        {
+                                            bs->CopyMem(&previousTicks[tick.computorIndex], &actualTicks[tick.computorIndex], sizeof(Tick));
+                                            bs->CopyMem(&actualTicks[tick.computorIndex], &tick, sizeof(Tick));
+                                        }
+                                        _InterlockedCompareExchange8(&tickLocks[tick.computorIndex], 0, 1);
+                                    }
+                                    else
+                                    {
+                                        break;
+                                    }
+                                }
                             }
                         }
                     }
-#endif
-                    responseSize = requestHeader->size;
                 }
                 break;
+#endif
                 }
             }
             else
@@ -6039,7 +6064,6 @@ static void requestProcessor(void* ProcedureArgument)
                 processor->cache = tmp;
             }
 
-        doNotBroadcast:
             _InterlockedIncrement64(&numberOfProcessedRequests);
         }
     }
@@ -6568,7 +6592,7 @@ static void getInitSpectrumDigest()
     unsigned int digestIndex;
     for (digestIndex = 0; digestIndex < SPECTRUM_CAPACITY; digestIndex++)
     {
-        KangarooTwelve((unsigned char*)&initSpectrum[digestIndex], 64, (unsigned char*)&initSpectrumDigests[digestIndex], 32);
+        KangarooTwelve64To32((unsigned char*)&initSpectrum[digestIndex], (unsigned char*)&initSpectrumDigests[digestIndex]);
     }
     unsigned int previousLevelBeginning = 0;
     unsigned int numberOfLeafs = SPECTRUM_CAPACITY;
@@ -6699,10 +6723,12 @@ static BOOLEAN initialize()
     requestedQuorumTick.header.size = sizeof(requestedQuorumTick);
     requestedQuorumTick.header.protocol = VERSION_B;
     requestedQuorumTick.header.type = REQUEST_QUORUM_TICK;
+    requestedQuorumTick.header.nonce = 0;
     requestedQuorumTick.requestQuorumTick.quorumTick.tick = 0;
-    broadcastedQuorumTick.header.size = sizeof(broadcastedQuorumTick);
-    broadcastedQuorumTick.header.protocol = VERSION_B;
-    broadcastedQuorumTick.header.type = BROADCAST_QUORUM_TICK;
+    respondedQuorumTick.header.size = sizeof(respondedQuorumTick);
+    respondedQuorumTick.header.protocol = VERSION_B;
+    respondedQuorumTick.header.type = RESPOND_QUORUM_TICK;
+    respondedQuorumTick.header.nonce = 0;
 
     EFI_STATUS status;
 
@@ -6962,14 +6988,12 @@ static BOOLEAN initialize()
                     }
                     size -= sizeof(QuorumTick);
                 }
-
-                bs->SetMem(requestedQuorumTickTicks, sizeof(requestedQuorumTickTicks), 0);
             }
         }
 #endif
 
 #if NUMBER_OF_MINING_PROCESSORS
-        miningData[0] = 555;
+        miningData[0] = 559;
         miningData[1] = 26;
         miningData[2] = 826;
         miningData[3] = 0;
@@ -7637,7 +7661,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         {
                                             if (nextTickNumberOfComputors > (NUMBER_OF_COMPUTORS - QUORUM) && requestedQuorumTick.requestQuorumTick.quorumTick.tick != actualTicks[ownComputorIndices[0]].tick)
                                             {
-                                                _rdrand16_step(&requestedQuorumTick.header.nonce);
                                                 requestedQuorumTick.requestQuorumTick.quorumTick.tick = actualTicks[ownComputorIndices[0]].tick;
                                                 for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
                                                 {
@@ -8163,24 +8186,14 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                                 case REQUEST_QUORUM_TICK:
                                                                 {
-                                                                    RequestQuorumTick* request = (RequestQuorumTick*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader));
-                                                                    if (request->quorumTick.tick > TICK && request->quorumTick.tick <= TICK + MAX_NUMBER_OF_TICKS_PER_EPOCH
-                                                                        && __rdtsc() - requestedQuorumTickTicks[request->quorumTick.tick - TICK - 1] >= REQUEST_QUORUM_TICK_BROADCASTING_LIMIT * frequency)
-                                                                    {
-                                                                        requestedQuorumTickTicks[request->quorumTick.tick - TICK - 1] = __rdtsc();
 #if NUMBER_OF_COMPUTING_PROCESSORS
-                                                                        if (request->quorumTick.tick <= system.tick)
-                                                                        {
-                                                                            broadcastedQuorumTick.header.nonce = requestResponseHeader->nonce;
-                                                                            bs->CopyMem(&broadcastedQuorumTick.BroadcastQuorumTick.quorumTick, &quorumTicks[request->quorumTick.tick - TICK - 1], sizeof(QuorumTick));
-                                                                            pushToSome(&broadcastedQuorumTick.header);
-                                                                        }
-                                                                        else
-#endif
-                                                                        {
-                                                                            pushToSome(requestResponseHeader);
-                                                                        }
+                                                                    RequestQuorumTick* request = (RequestQuorumTick*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader));
+                                                                    if (request->quorumTick.tick > TICK && request->quorumTick.tick <= system.tick)
+                                                                    {
+                                                                        bs->CopyMem(&respondedQuorumTick.respondQuorumTick.quorumTick, &quorumTicks[request->quorumTick.tick - TICK - 1], sizeof(QuorumTick));
+                                                                        push(&peers[i], &respondedQuorumTick.header, true);
                                                                     }
+#endif
 
                                                                     _InterlockedIncrement64(&numberOfProcessedRequests);
                                                                 }
