@@ -32,7 +32,7 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 
 #define VERSION_A 1
 #define VERSION_B 49
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -2761,11 +2761,7 @@ static __m256i ZERO;
 #define C4 0x6BC57DEF56CE8877
 
 #if AVX512
-const __m256i B1 = _mm256_set_epi64x(B14, B13, B12, B11);
-const __m256i B2 = _mm256_set_epi64x(B24, B23, B22, B21);
-const __m256i B3 = _mm256_set_epi64x(B34, B33, B32, B31);
-const __m256i B4 = _mm256_set_epi64x(B44, B43, B42, B41);
-const __m256i C = _mm256_set_epi64x(C4, C3, C2, C1);
+static __m256i B1, B2, B3, B4, C;
 #endif
 
 typedef unsigned long long felm_t[2]; // Datatype for representing 128-bit field elements
@@ -6580,28 +6576,20 @@ static void saveTick(QuorumTick* quorumTick)
     }
     else
     {
-        if (status = dataFile->SetPosition(dataFile, sizeof(QuorumTick) * (quorumTick->tick - TICK)))
+        unsigned long long size = sizeof(QuorumTick);
+        status = dataFile->Write(dataFile, &size, quorumTick);
+        dataFile->Close(dataFile);
+        if (status)
         {
-            dataFile->Close(dataFile);
-            logStatus(L"EFI_FILE_PROTOCOL.SetPosition() fails", status, __LINE__);
+            logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status, __LINE__);
         }
         else
         {
-            unsigned long long size = sizeof(QuorumTick);
-            status = dataFile->Write(dataFile, &size, quorumTick);
-            dataFile->Close(dataFile);
-            if (status)
-            {
-                logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status, __LINE__);
-            }
-            else
-            {
-                setNumber(message, size, TRUE);
-                appendText(message, L" bytes of the tick data are saved (");
-                appendNumber(message, (__rdtsc() - beginningTick) * 1000 / frequency, TRUE);
-                appendText(message, L" ms).");
-                log(message);
-            }
+            setNumber(message, size, TRUE);
+            appendText(message, L" bytes of the tick data are saved (");
+            appendNumber(message, (__rdtsc() - beginningTick) * 1000 / frequency, TRUE);
+            appendText(message, L" ms).");
+            log(message);
         }
     }
 }
@@ -6659,6 +6647,12 @@ static BOOLEAN initialize()
     pi2KM = _mm512_setr_epi64(2, 3, 10, 11, 7, 5, 6, 7);
     pi2S3 = _mm512_setr_epi64(4, 5, 12, 13, 4, 5, 6, 7);
     padding = _mm512_maskz_set1_epi64(1, 0x8000000000000000);
+
+    B1 = _mm256_set_epi64x(B14, B13, B12, B11);
+    B2 = _mm256_set_epi64x(B24, B23, B22, B21);
+    B3 = _mm256_set_epi64x(B34, B33, B32, B31);
+    B4 = _mm256_set_epi64x(B44, B43, B42, B41);
+    C = _mm256_set_epi64x(C4, C3, C2, C1);
 #endif
 
     ZERO = _mm256_setzero_si256();
@@ -6743,7 +6737,6 @@ static BOOLEAN initialize()
     requestedQuorumTick.header.protocol = VERSION_B;
     requestedQuorumTick.header.type = REQUEST_QUORUM_TICK;
     requestedQuorumTick.header.nonce = 0;
-    requestedQuorumTick.requestQuorumTick.quorumTick.tick = 0;
     respondedQuorumTick.header.size = sizeof(respondedQuorumTick);
     respondedQuorumTick.header.protocol = VERSION_B;
     respondedQuorumTick.header.type = RESPOND_QUORUM_TICK;
@@ -7987,6 +7980,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     _InterlockedIncrement64(&numberOfDisseminatedRequests);
 
                                                     _InterlockedIncrement64(&numberOfDisseminatedRequests);
+
+                                                    requestedQuorumTick.requestQuorumTick.quorumTick.tick = 0;
                                                 }
                                             }
                                         }
@@ -8132,6 +8127,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                             _InterlockedIncrement64(&numberOfDisseminatedRequests);
 
                                                                             _InterlockedIncrement64(&numberOfDisseminatedRequests);
+
+                                                                            requestedQuorumTick.requestQuorumTick.quorumTick.tick = 0;
                                                                         }
                                                                     }
 
