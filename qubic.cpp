@@ -31,8 +31,8 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 49
-#define VERSION_C 1
+#define VERSION_B 50
+#define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -42,7 +42,7 @@ static const unsigned char knownPublicPeers[][4] = {
 };
 
 #define EPOCH 27 // Do NOT change!
-#define TICK 3271162 // Do NOT change!
+#define TICK 3300000 // Do NOT change!
 
 #include <intrin.h>
 
@@ -4940,6 +4940,8 @@ static CHAR16 message[16384], timestampedMessage[16384];
 static EFI_FILE_PROTOCOL* root = NULL;
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
+static EFI_FILE_PROTOCOL* ticksDataFile = NULL;
+
 static struct System
 {
     short version;
@@ -6488,8 +6490,8 @@ static void saveSolution()
         {
             setNumber(message, size, TRUE);
             appendText(message, L" bytes of the solution data are saved (");
-            appendNumber(message, (__rdtsc() - beginningTick) * 1000 / frequency, TRUE);
-            appendText(message, L" ms).");
+            appendNumber(message, (__rdtsc() - beginningTick) * 1000000000 / frequency, TRUE);
+            appendText(message, L" ns).");
             log(message);
         }
     }
@@ -6525,8 +6527,8 @@ static void saveSpectrum()
         {
             setNumber(message, size, TRUE);
             appendText(message, L" bytes of the spectrum data are saved (");
-            appendNumber(message, (__rdtsc() - beginningTick) * 1000 / frequency, TRUE);
-            appendText(message, L" ms).");
+            appendNumber(message, (__rdtsc() - beginningTick) * 1000000000 / frequency, TRUE);
+            appendText(message, L" ns).");
             log(message);
         }
 
@@ -6557,8 +6559,8 @@ static void saveSystem()
         {
             setNumber(message, size, TRUE);
             appendText(message, L" bytes of the system data are saved (");
-            appendNumber(message, (__rdtsc() - beginningTick) * 1000 / frequency, TRUE);
-            appendText(message, L" ms).");
+            appendNumber(message, (__rdtsc() - beginningTick) * 1000000000 / frequency, TRUE);
+            appendText(message, L" ns).");
             log(message);
         }
     }
@@ -6568,29 +6570,19 @@ static void saveTick(QuorumTick* quorumTick)
 {
     const unsigned long long beginningTick = __rdtsc();
 
-    EFI_FILE_PROTOCOL* dataFile;
     EFI_STATUS status;
-    if (status = root->Open(root, (void**)&dataFile, (CHAR16*)TICKS_DATA_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0))
+    unsigned long long size = sizeof(QuorumTick);
+    if (status = ticksDataFile->Write(ticksDataFile, &size, quorumTick))
     {
-        logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status, __LINE__);
+        logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status, __LINE__);
     }
     else
     {
-        unsigned long long size = sizeof(QuorumTick);
-        status = dataFile->Write(dataFile, &size, quorumTick);
-        dataFile->Close(dataFile);
-        if (status)
-        {
-            logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status, __LINE__);
-        }
-        else
-        {
-            setNumber(message, size, TRUE);
-            appendText(message, L" bytes of the tick data are saved (");
-            appendNumber(message, (__rdtsc() - beginningTick) * 1000 / frequency, TRUE);
-            appendText(message, L" ms).");
-            log(message);
-        }
+        setNumber(message, size, TRUE);
+        appendText(message, L" bytes of the tick data are saved (");
+        appendNumber(message, (__rdtsc() - beginningTick) * 1000000000 / frequency, TRUE);
+        appendText(message, L" ns).");
+        log(message);
     }
 }
 
@@ -6939,8 +6931,8 @@ static BOOLEAN initialize()
             getInitSpectrumDigest();
             setNumber(message, SPECTRUM_CAPACITY * sizeof(Entity), TRUE);
             appendText(message, L" bytes of the spectrum data are hashed (");
-            appendNumber(message, (__rdtsc() - beginningTick) * 1000 / frequency, TRUE);
-            appendText(message, L" ms).");
+            appendNumber(message, (__rdtsc() - beginningTick) * 1000000000 / frequency, TRUE);
+            appendText(message, L" ns).");
             log(message);
             getHash((unsigned char*)&initSpectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1], hash);
 
@@ -6962,7 +6954,7 @@ static BOOLEAN initialize()
             log(message);
         }
 
-        if (status = root->Open(root, (void**)&dataFile, (CHAR16*)TICKS_DATA_FILE_NAME, EFI_FILE_MODE_READ, 0))
+        if (status = root->Open(root, (void**)&ticksDataFile, (CHAR16*)TICKS_DATA_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0))
         {
             logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status, __LINE__);
 
@@ -6971,10 +6963,7 @@ static BOOLEAN initialize()
         else
         {
             unsigned long long size = ((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * sizeof(QuorumTick);
-
-            status = dataFile->Read(dataFile, &size, quorumTicks);
-            dataFile->Close(dataFile);
-            if (status)
+            if (status = ticksDataFile->Read(ticksDataFile, &size, quorumTicks))
             {
                 logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status, __LINE__);
 
@@ -7132,6 +7121,12 @@ static void deinitialize()
     bs->SetMem(ownPrivateKeys, sizeof(ownPrivateKeys), 0);
     bs->SetMem(ownPublicKeys, sizeof(ownPublicKeys), 0);
 
+#if NUMBER_OF_COMPUTING_PROCESSORS
+    if (ticksDataFile)
+    {
+        ticksDataFile->Close(ticksDataFile);
+    }
+#endif
 #if NUMBER_OF_COMPUTING_PROCESSORS || NUMBER_OF_MINING_PROCESSORS
     if (root)
     {
@@ -7454,8 +7449,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 spectrum[i].numberOfIncomingTransfers = latestOwnTick + 1;
                                             }
                                             setText(message, L"Spectrum updating takes ");
-                                            appendNumber(message, (__rdtsc() - spectrumUpdatingBeginningTick) * 1000 / frequency, TRUE);
-                                            appendText(message, L" ms.");
+                                            appendNumber(message, (__rdtsc() - spectrumUpdatingBeginningTick) * 1000000000 / frequency, TRUE);
+                                            appendText(message, L" ns.");
                                             log(message);
 
                                             spectrumDigestCalculationBeginningTick = __rdtsc();
@@ -7466,8 +7461,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     if (spectrumDigestLevel == SPECTRUM_DEPTH + 2)
                                     {
                                         setText(message, L"Spectrum HASHING takes ");
-                                        appendNumber(message, (__rdtsc() - spectrumDigestCalculationBeginningTick) * 1000 / frequency, TRUE);
-                                        appendText(message, L" ms.");
+                                        appendNumber(message, (__rdtsc() - spectrumDigestCalculationBeginningTick) * 1000000000 / frequency, TRUE);
+                                        appendText(message, L" ns.");
                                         log(message);
 
                                         while (spectrumDigestLevelCompleteness != NUMBER_OF_COMPUTING_PROCESSORS)
