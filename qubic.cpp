@@ -32,7 +32,7 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 
 #define VERSION_A 1
 #define VERSION_B 50
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -4557,7 +4557,6 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define MAX_NUMBER_OF_PROCESSORS 1024
 #define MAX_NUMBER_OF_PUBLIC_PEERS 256
 #define MAX_NUMBER_OF_TICKS_PER_EPOCH (60 * 60 * 24 * 7)
-#define MAX_NUMBER_OF_TRANSACTIONS_PER_TICK 100
 #define MAX_QUESTION_SIZE 1024
 #define MAX_TRANSFER_DESCRIPTION_SIZE 112
 #define NUMBER_OF_EXCHANGED_PEERS 4
@@ -4567,6 +4566,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define NUMBER_OF_CLIENT_CONNECTIONS 100
 #define NUMBER_OF_NEURONS 20000
 #define NUMBER_OF_SOLUTION_NONCES 1000
+#define NUMBER_OF_TRANSACTIONS_PER_TICK 100
 #define PEER_REFRESHING_PERIOD 60
 #define PORT 21841
 #define QUORUM (NUMBER_OF_COMPUTORS * 2 / 3 + 1)
@@ -4794,7 +4794,7 @@ typedef struct
 
 typedef struct
 {
-    unsigned short computorIndex;
+    unsigned short padding[1]; // TODO: Remove
     unsigned short epoch;
     unsigned int tick;
     unsigned short millisecond;
@@ -4804,7 +4804,8 @@ typedef struct
     unsigned char day;
     unsigned char month;
     unsigned char year;
-    unsigned int numberOfTransactions;
+    unsigned char transactionDigests[NUMBER_OF_TRANSACTIONS_PER_TICK][32];
+    unsigned char signature[SIGNATURE_SIZE];
 } NextTickData;
 
 typedef struct
@@ -4852,8 +4853,7 @@ typedef struct
 
 typedef struct
 {
-    unsigned char nonce; // TODO: Remove
-    unsigned char numberOfNewComputors;
+    unsigned short numberOfNewComputors;
     unsigned short epoch;
     unsigned int tick;
     unsigned int revenues[NUMBER_OF_COMPUTORS];
@@ -4957,7 +4957,7 @@ static short ownComputorIndices[NUMBER_OF_COMPUTORS / 3];
 static short ownComputorIndicesMapping[sizeof(ownSeeds) / sizeof(ownSeeds[0])];
 
 static unsigned int numberOfBufferedTransfers[sizeof(ownSeeds) / sizeof(ownSeeds[0])];
-static unsigned char bufferedTransferBytes[sizeof(ownSeeds) / sizeof(ownSeeds[0])][MAX_NUMBER_OF_TRANSACTIONS_PER_TICK][sizeof(Transfer) + MAX_TRANSFER_DESCRIPTION_SIZE + SIGNATURE_SIZE];
+static unsigned char bufferedTransferBytes[sizeof(ownSeeds) / sizeof(ownSeeds[0])][NUMBER_OF_TRANSACTIONS_PER_TICK][sizeof(Transfer) + MAX_TRANSFER_DESCRIPTION_SIZE + SIGNATURE_SIZE];
 
 static QuorumTick* quorumTicks = NULL;
 
@@ -5041,6 +5041,12 @@ static struct
     RequestResponseHeader header;
     BroadcastTick broadcastTick;
 } broadcastedTick;
+
+static struct
+{
+    RequestResponseHeader header;
+    BroadcastNextTickData broadcastNextTickData;
+} broadcastedNextTickData;
 
 static struct
 {
@@ -5646,7 +5652,7 @@ static void requestProcessor(void* ProcedureArgument)
                                 {
                                     if (request->transfer.tick % NUMBER_OF_COMPUTORS == ownComputorIndices[i])
                                     {
-                                        if (numberOfBufferedTransfers[i] < MAX_NUMBER_OF_TRANSACTIONS_PER_TICK)
+                                        if (numberOfBufferedTransfers[i] < NUMBER_OF_TRANSACTIONS_PER_TICK)
                                         {
                                             bs->CopyMem(bufferedTransferBytes[i][numberOfBufferedTransfers[i]++], &request->transfer, sizeof(Transfer) + request->transfer.descriptionSize + SIGNATURE_SIZE);
                                         }
@@ -5684,56 +5690,22 @@ static void requestProcessor(void* ProcedureArgument)
                 case BROADCAST_NEXT_TICK_DATA:
                 {
                     BroadcastNextTickData* request = (BroadcastNextTickData*)((char*)processor->cache + sizeof(RequestResponseHeader));
-                    if (request->nextTickData.computorIndex < NUMBER_OF_COMPUTORS
+                    if (request->nextTickData.epoch == broadcastedComputors.broadcastComputors.computors.epoch
                         //&& request->nextTickData.month >= 1 && request->nextTickData.month <= 12
                         //&& request->nextTickData.day >= 1 && request->nextTickData.day <= 31
                         && request->nextTickData.hour <= 23
                         && request->nextTickData.minute <= 59
                         && request->nextTickData.second <= 59
                         && request->nextTickData.millisecond <= 999
-                        && request->nextTickData.numberOfTransactions <= MAX_NUMBER_OF_TRANSACTIONS_PER_TICK)
+                        && !request->nextTickData.padding[0])
                     {
-                        if (request->nextTickData.epoch == broadcastedComputors.broadcastComputors.computors.epoch)
+                        unsigned char digest[32];
+                        request->nextTickData.padding[0] ^= BROADCAST_NEXT_TICK_DATA;
+                        KangarooTwelve((unsigned char*)&request->nextTickData, sizeof(BroadcastNextTickData) - SIGNATURE_SIZE, digest, sizeof(digest));
+                        request->nextTickData.padding[0] ^= BROADCAST_NEXT_TICK_DATA;
+                        if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->nextTickData.tick % NUMBER_OF_COMPUTORS], digest, request->nextTickData.signature))
                         {
-                            /*unsigned char digest[32];
-                            request->nextTickData.computorIndex ^= BROADCAST_NEXT_TICK_DATA;
-                            KangarooTwelve((unsigned char*)&request->nextTickData, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
-                            request->nextTickData.computorIndex ^= BROADCAST_NEXT_TICK_DATA;
-                            if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->nextTickData.computorIndex], digest, ((const unsigned char*)processor->cache) + requestHeader->size - SIGNATURE_SIZE))
-                            {
-                                char* ptr = ((char*)processor->cache) + sizeof(RequestResponseHeader) + sizeof(BroadcastNextTickData);
-                                unsigned int i;
-                                for (i = 0; i < request->nextTickData.numberOfTransfers; i++)
-                                {
-                                    Transfer* transfer = (Transfer*)ptr;
-                                    if (transfer->amount > 0
-                                        && transfer->descriptionSize <= MAX_TRANSFER_DESCRIPTION_SIZE)
-                                    {
-                                        unsigned char digest[32];
-                                        transfer->sourcePublicKey[0] ^= BROADCAST_TRANSFER;
-                                        KangarooTwelve((unsigned char*)transfer, sizeof(Transfer) + transfer->descriptionSize, digest, sizeof(digest));
-                                        transfer->sourcePublicKey[0] ^= BROADCAST_TRANSFER;
-                                        if (!verify(transfer->sourcePublicKey, digest, ((const unsigned char*)transfer) + sizeof(Transfer) + transfer->descriptionSize))
-                                        {
-                                            break;
-                                        }
-
-                                        ptr += sizeof(Transfer) + transfer->descriptionSize + SIGNATURE_SIZE;
-                                    }
-                                    else
-                                    {
-                                        break;
-                                    }
-                                }
-                                if (i == request->nextTickData.numberOfTransfers)
-                                {
-                                    responseSize = requestHeader->size;
-
-#if NUMBER_OF_COMPUTING_PROCESSORS
-                                    bs->CopyMem(&chosenTransfersInvocationsAndQuestionBytes[request->nextTickData.computorIndex], &request->nextTickData, chosenTransfersInvocationsAndQuestionSizes[request->nextTickData.computorIndex] = requestHeader->size - sizeof(RequestResponseHeader));
-#endif
-                                }
-                            }*/
+                            responseSize = requestHeader->size;
                         }
                     }
                 }
@@ -5826,7 +5798,7 @@ static void requestProcessor(void* ProcedureArgument)
                         *((__m256i*)tick.prevSpectrumDigest) = *((__m256i*)request->quorumTick.prevSpectrumDigest);
                         *((__m256i*)tick.prevUniverseDigest) = *((__m256i*)request->quorumTick.prevUniverseDigest);
                         *((__m256i*)tick.prevComputerDigest) = *((__m256i*)request->quorumTick.prevComputerDigest);
-                        *((__m256i*)tick.nextTickDataDigest) = *((__m256i*)request->quorumTick.nextTickDataDigest); // TODO: Make sure it matches own value
+                        *((__m256i*)tick.nextTickDataDigest) = *((__m256i*)request->quorumTick.nextTickDataDigest);
                         for (tick.computorIndex = 0; tick.computorIndex < NUMBER_OF_COMPUTORS; tick.computorIndex++)
                         {
                             if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->quorumTick.signatures[tick.computorIndex]), ZERO)) != 0xFFFFFFFF)
@@ -6714,6 +6686,10 @@ static BOOLEAN initialize()
     broadcastedTick.header.protocol = VERSION_B;
     broadcastedTick.header.type = BROADCAST_TICK;
     broadcastedTick.header.nonce = 0;
+    broadcastedNextTickData.header.size = sizeof(broadcastedNextTickData);
+    broadcastedNextTickData.header.protocol = VERSION_B;
+    broadcastedNextTickData.header.type = BROADCAST_NEXT_TICK_DATA;
+    broadcastedNextTickData.header.nonce = 0;
     broadcastedRevenues.header.size = sizeof(broadcastedRevenues);
     broadcastedRevenues.header.protocol = VERSION_B;
     broadcastedRevenues.header.type = BROADCAST_REVENUES;
@@ -7506,6 +7482,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             broadcastedTick.broadcastTick.tick.computorIndex ^= BROADCAST_TICK;
                                             sign(ownSubseeds[ownComputorIndicesMapping[i]], ownPublicKeys[ownComputorIndicesMapping[i]], digest, broadcastedTick.broadcastTick.tick.signature);
 
+                                            for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
+                                            {
+                                                push(&peers[j], &broadcastedTick.header, true);
+                                            }
+
                                             while (_InterlockedCompareExchange8(&tickLocks[ownComputorIndices[i]], 1, 0))
                                             {
                                                 _mm_pause();
@@ -7514,11 +7495,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             bs->CopyMem(&previousTicks[ownComputorIndices[i]], &actualTicks[ownComputorIndices[i]], sizeof(Tick));
                                             bs->CopyMem(&actualTicks[ownComputorIndices[i]], &broadcastedTick.broadcastTick.tick, sizeof(Tick));
                                             _InterlockedCompareExchange8(&tickLocks[ownComputorIndices[i]], 0, 1);
-
-                                            for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
-                                            {
-                                                push(&peers[j], &broadcastedTick.header, true);
-                                            }
                                         }
                                     }
 
@@ -7650,19 +7626,48 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 }
                                             }
 
-                                            /*
                                             for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
                                             {
-                                                if (request->transfer.tick % NUMBER_OF_COMPUTORS == ownComputorIndices[i])
+                                                if ((system.tick + 3) % NUMBER_OF_COMPUTORS == ownComputorIndices[i])
                                                 {
-                                                    if (numberOfBufferedTransfers[i] < MAX_NUMBER_OF_TRANSFERS_PER_TICK)
+                                                    EFI_TIME newTime;
+                                                    if (status = rs->GetTime(&newTime, NULL))
                                                     {
-                                                        bs->CopyMem(bufferedTransferBytes[i][numberOfBufferedTransfers[i]++], &request->transfer, sizeof(Transfer) + request->transfer.descriptionSize + SIGNATURE_SIZE);
+                                                        logStatus(L"EFI_RUNTIME_SERVICES.GetTime() fails", status, __LINE__);
+                                                    }
+                                                    else
+                                                    {
+                                                        broadcastedNextTickData.broadcastNextTickData.nextTickData.padding[0] = BROADCAST_NEXT_TICK_DATA;
+                                                        broadcastedNextTickData.broadcastNextTickData.nextTickData.epoch = system.epoch;
+                                                        broadcastedNextTickData.broadcastNextTickData.nextTickData.tick = system.tick + 3;
+
+                                                        broadcastedNextTickData.broadcastNextTickData.nextTickData.millisecond = newTime.Nanosecond / 1000000;
+                                                        broadcastedNextTickData.broadcastNextTickData.nextTickData.second = newTime.Second;
+                                                        broadcastedNextTickData.broadcastNextTickData.nextTickData.minute = newTime.Minute;
+                                                        broadcastedNextTickData.broadcastNextTickData.nextTickData.hour = newTime.Hour;
+                                                        broadcastedNextTickData.broadcastNextTickData.nextTickData.day = newTime.Day;
+                                                        broadcastedNextTickData.broadcastNextTickData.nextTickData.month = newTime.Month;
+                                                        broadcastedNextTickData.broadcastNextTickData.nextTickData.year = newTime.Year - 2000;
+
+                                                        for (unsigned int j = 0; j < NUMBER_OF_TRANSACTIONS_PER_TICK; j++)
+                                                        {
+                                                            *((__m256i*)broadcastedNextTickData.broadcastNextTickData.nextTickData.transactionDigests[j]) = ZERO;
+                                                        }
+
+                                                        unsigned char digest[32];
+                                                        KangarooTwelve((unsigned char*)&broadcastedNextTickData.broadcastNextTickData.nextTickData, sizeof(NextTickData) - SIGNATURE_SIZE, digest, sizeof(digest));
+                                                        broadcastedNextTickData.broadcastNextTickData.nextTickData.padding[0] ^= BROADCAST_NEXT_TICK_DATA;
+                                                        sign(ownSubseeds[ownComputorIndicesMapping[i]], ownPublicKeys[ownComputorIndicesMapping[i]], digest, broadcastedNextTickData.broadcastNextTickData.nextTickData.signature);
+
+                                                        for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
+                                                        {
+                                                            push(&peers[j], &broadcastedNextTickData.header, true);
+                                                        }
                                                     }
 
                                                     break;
                                                 }
-                                            }*/
+                                            }
                                         }
                                         else
                                         {
@@ -7878,7 +7883,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             appendText(message, alphabet[ownComputorIndices[i] / 26]);
                                             appendText(message, alphabet[ownComputorIndices[i] % 26]);
                                             appendText(message, i ? L"[" : L"[in ");
-                                            appendNumber(message, ((ownComputorIndices[i] + NUMBER_OF_COMPUTORS) - system.tick % NUMBER_OF_COMPUTORS) % NUMBER_OF_COMPUTORS, FALSE);
+                                            appendNumber(message, (ownComputorIndices[i] + NUMBER_OF_COMPUTORS) - system.tick % NUMBER_OF_COMPUTORS, FALSE);
                                             appendText(message, i ? L"/" : L" ticks/");
                                             appendNumber(message, numberOfBufferedTransfers[i], TRUE);
                                             appendText(message, i ? L"]" : L" transfers]");
