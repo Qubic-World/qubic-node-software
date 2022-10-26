@@ -32,7 +32,7 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 
 #define VERSION_A 1
 #define VERSION_B 51
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -1294,25 +1294,7 @@ static EFI_BOOT_SERVICES* bs;
 #endif
 
 #if AVX512
-const static __m512i zero = _mm512_maskz_set1_epi64(0, 0);
-const static __m512i moveThetaPrev = _mm512_setr_epi64(4, 0, 1, 2, 3, 5, 6, 7);
-const static __m512i moveThetaNext = _mm512_setr_epi64(1, 2, 3, 4, 0, 5, 6, 7);
-const static __m512i rhoB = _mm512_setr_epi64(0, 1, 62, 28, 27, 0, 0, 0);
-const static __m512i rhoG = _mm512_setr_epi64(36, 44, 6, 55, 20, 0, 0, 0);
-const static __m512i rhoK = _mm512_setr_epi64(3, 10, 43, 25, 39, 0, 0, 0);
-const static __m512i rhoM = _mm512_setr_epi64(41, 45, 15, 21, 8, 0, 0, 0);
-const static __m512i rhoS = _mm512_setr_epi64(18, 2, 61, 56, 14, 0, 0, 0);
-const static __m512i pi1B = _mm512_setr_epi64(0, 3, 1, 4, 2, 5, 6, 7);
-const static __m512i pi1G = _mm512_setr_epi64(1, 4, 2, 0, 3, 5, 6, 7);
-const static __m512i pi1K = _mm512_setr_epi64(2, 0, 3, 1, 4, 5, 6, 7);
-const static __m512i pi1M = _mm512_setr_epi64(3, 1, 4, 2, 0, 5, 6, 7);
-const static __m512i pi1S = _mm512_setr_epi64(4, 2, 0, 3, 1, 5, 6, 7);
-const static __m512i pi2S1 = _mm512_setr_epi64(0, 1, 2, 3, 4, 5, 8, 10);
-const static __m512i pi2S2 = _mm512_setr_epi64(0, 1, 2, 3, 4, 5, 9, 11);
-const static __m512i pi2BG = _mm512_setr_epi64(0, 1, 8, 9, 6, 5, 6, 7);
-const static __m512i pi2KM = _mm512_setr_epi64(2, 3, 10, 11, 7, 5, 6, 7);
-const static __m512i pi2S3 = _mm512_setr_epi64(4, 5, 12, 13, 4, 5, 6, 7);
-const static __m512i padding = _mm512_maskz_set1_epi64(1, 0x8000000000000000);
+static __m512i zero, moveThetaPrev, moveThetaNext, rhoB, rhoG, rhoK, rhoM, rhoS, pi1B, pi1G, pi1K, pi1M, pi1S, pi2S1, pi2S2, pi2BG, pi2KM, pi2S3, padding;
 
 static const unsigned long long K12RoundConstants[12]
 = {
@@ -1367,6 +1349,25 @@ static const unsigned long long K12RoundConstants[12]
 #define KeccakF1600RoundConstant9   0x8000000000008080ULL
 #define KeccakF1600RoundConstant10  0x0000000080000001ULL
 
+#if AVX512
+#define declareABCDE __m512i Baeiou, Gaeiou, Kaeiou, Maeiou, Saeiou;
+
+#define copyFromState(state) \
+    Baeiou = _mm512_maskz_loadu_epi64(0x1F, state); \
+    Gaeiou = _mm512_maskz_loadu_epi64(0x1F, state + 40); \
+    Kaeiou = _mm512_maskz_loadu_epi64(0x1F, state + 80); \
+    Maeiou = _mm512_maskz_loadu_epi64(0x1F, state + 120); \
+    Saeiou = _mm512_maskz_loadu_epi64(0x1F, state + 160);
+
+#define copyToState(state) \
+	_mm512_mask_storeu_epi64(state, 0x1F, Baeiou); \
+    _mm512_mask_storeu_epi64(state + 40, 0x1F, Gaeiou); \
+    _mm512_mask_storeu_epi64(state + 80, 0x1F, Kaeiou); \
+    _mm512_mask_storeu_epi64(state + 120, 0x1F, Maeiou); \
+    _mm512_mask_storeu_epi64(state + 160, 0x1F, Saeiou);
+
+
+#else
 #define declareABCDE \
     unsigned long long Aba, Abe, Abi, Abo, Abu; \
     unsigned long long Aga, Age, Agi, Ago, Agu; \
@@ -1492,7 +1493,7 @@ static const unsigned long long K12RoundConstants[12]
     E##so =   Bso ^((~Bsu)&  Bsa ); \
     Co ^= E##so; \
     E##su =   Bsu ^((~Bsa)&  Bse ); \
-    Cu ^= E##su; \
+    Cu ^= E##su;
 
 #define copyFromState(state) \
     Aba = state[ 0]; \
@@ -1519,7 +1520,7 @@ static const unsigned long long K12RoundConstants[12]
     Ase = state[21]; \
     Asi = state[22]; \
     Aso = state[23]; \
-    Asu = state[24]; \
+    Asu = state[24];
 
 #define copyToState(state) \
     state[ 0] = Aba; \
@@ -1546,7 +1547,8 @@ static const unsigned long long K12RoundConstants[12]
     state[21] = Ase; \
     state[22] = Asi; \
     state[23] = Aso; \
-    state[24] = Asu; \
+    state[24] = Asu;
+#endif
 
 #define rounds12 \
     Ca = Aba^Aga^Aka^Ama^Asa; \
@@ -1660,24 +1662,23 @@ typedef struct
     unsigned char byteIOIndex;
 } KangarooTwelve_F;
 
-static void KeccakP1600_Permute_12rounds(void* state)
+static void KeccakP1600_Permute_12rounds(unsigned char* state)
 {
 #if AVX512
-    unsigned long long* stateAsLanes = (unsigned long long*)state;
-    __m512i Baeiou = _mm512_maskz_loadu_epi64(0x1F, stateAsLanes);
-    __m512i Gaeiou = _mm512_maskz_loadu_epi64(0x1F, stateAsLanes + 5);
-    __m512i Kaeiou = _mm512_maskz_loadu_epi64(0x1F, stateAsLanes + 10);
-    __m512i Maeiou = _mm512_maskz_loadu_epi64(0x1F, stateAsLanes + 15);
-    __m512i Saeiou = _mm512_maskz_loadu_epi64(0x01, stateAsLanes + 20);
+    __m512i Baeiou = _mm512_maskz_loadu_epi64(0x1F, state);
+    __m512i Gaeiou = _mm512_maskz_loadu_epi64(0x1F, state + 40);
+    __m512i Kaeiou = _mm512_maskz_loadu_epi64(0x1F, state + 80);
+    __m512i Maeiou = _mm512_maskz_loadu_epi64(0x1F, state + 120);
+    __m512i Saeiou = _mm512_maskz_loadu_epi64(0x1F, state + 160);
     for (unsigned __int8 i = 0; i < 12; )
     {
         KeccakP_Round(i++);
     }
-    _mm512_mask_storeu_epi64(stateAsLanes, 0x1F, Baeiou);
-    _mm512_mask_storeu_epi64(stateAsLanes + 5, 0x1F, Gaeiou);
-    _mm512_mask_storeu_epi64(stateAsLanes + 10, 0x1F, Kaeiou);
-    _mm512_mask_storeu_epi64(stateAsLanes + 15, 0x1F, Maeiou);
-    _mm512_mask_storeu_epi64(stateAsLanes + 20, 0x01, Saeiou);
+    _mm512_mask_storeu_epi64(state, 0x1F, Baeiou);
+    _mm512_mask_storeu_epi64(state + 40, 0x1F, Gaeiou);
+    _mm512_mask_storeu_epi64(state + 80, 0x1F, Kaeiou);
+    _mm512_mask_storeu_epi64(state + 120, 0x1F, Maeiou);
+    _mm512_mask_storeu_epi64(state + 160, 0x1F, Saeiou);
 #else
     declareABCDE
         unsigned long long* stateAsLanes = (unsigned long long*)state;
@@ -1695,11 +1696,26 @@ static void KangarooTwelve_F_Absorb(KangarooTwelve_F* instance, unsigned char* d
         if (!instance->byteIOIndex && dataByteLen >= i + K12_rateInBytes)
         {
             declareABCDE
+#if AVX512
+                copyFromState(instance->state)
+#else
                 unsigned long long* stateAsLanes = (unsigned long long*)instance->state;
             copyFromState(stateAsLanes)
+#endif
                 unsigned long long modifiedDataByteLen = dataByteLen - i;
             while (modifiedDataByteLen >= K12_rateInBytes)
             {
+#if AVX512
+                Baeiou = _mm512_xor_si512(Baeiou, _mm512_maskz_loadu_epi64(0x1F, data));
+                Gaeiou = _mm512_xor_si512(Gaeiou, _mm512_maskz_loadu_epi64(0x1F, data + 40));
+                Kaeiou = _mm512_xor_si512(Kaeiou, _mm512_maskz_loadu_epi64(0x1F, data + 80));
+                Maeiou = _mm512_xor_si512(Maeiou, _mm512_maskz_loadu_epi64(0x1F, data + 120));
+                Saeiou = _mm512_xor_si512(Saeiou, _mm512_maskz_loadu_epi64(0x01, data + 160));
+                for (unsigned __int8 j = 0; j < 12; )
+                {
+                    KeccakP_Round(j++);
+                }
+#else
                 Aba ^= ((unsigned long long*)data)[0];
                 Abe ^= ((unsigned long long*)data)[1];
                 Abi ^= ((unsigned long long*)data)[2];
@@ -1722,10 +1738,15 @@ static void KangarooTwelve_F_Absorb(KangarooTwelve_F* instance, unsigned char* d
                 Amu ^= ((unsigned long long*)data)[19];
                 Asa ^= ((unsigned long long*)data)[20];
                 rounds12
+#endif
                     data += K12_rateInBytes;
                 modifiedDataByteLen -= K12_rateInBytes;
             }
+#if AVX512
+            copyToState(instance->state)
+#else
             copyToState(stateAsLanes)
+#endif
                 i = dataByteLen - modifiedDataByteLen;
         }
         else
@@ -6399,8 +6420,8 @@ static void saveSolution()
         {
             setNumber(message, size, TRUE);
             appendText(message, L" bytes of the solution data are saved (");
-            appendNumber(message, (__rdtsc() - beginningTick) * 1000000000 / frequency, TRUE);
-            appendText(message, L" ns).");
+            appendNumber(message, (__rdtsc() - beginningTick) * 1000000 / frequency, TRUE);
+            appendText(message, L" microseconds).");
             log(message);
         }
     }
@@ -6436,8 +6457,8 @@ static void saveSpectrum()
         {
             setNumber(message, size, TRUE);
             appendText(message, L" bytes of the spectrum data are saved (");
-            appendNumber(message, (__rdtsc() - beginningTick) * 1000000000 / frequency, TRUE);
-            appendText(message, L" ns).");
+            appendNumber(message, (__rdtsc() - beginningTick) * 1000000 / frequency, TRUE);
+            appendText(message, L" microseconds).");
             log(message);
         }
 
@@ -6468,8 +6489,8 @@ static void saveSystem()
         {
             setNumber(message, size, TRUE);
             appendText(message, L" bytes of the system data are saved (");
-            appendNumber(message, (__rdtsc() - beginningTick) * 1000000000 / frequency, TRUE);
-            appendText(message, L" ns).");
+            appendNumber(message, (__rdtsc() - beginningTick) * 1000000 / frequency, TRUE);
+            appendText(message, L" microseconds).");
             log(message);
         }
     }
@@ -6491,8 +6512,8 @@ static void saveTick(QuorumTick* quorumTick)
         {
             setNumber(message, size, TRUE);
             appendText(message, L" bytes of the tick data are saved (");
-            appendNumber(message, (__rdtsc() - beginningTick) * 1000000000 / frequency, TRUE);
-            appendText(message, L" ns).");
+            appendNumber(message, (__rdtsc() - beginningTick) * 1000000 / frequency, TRUE);
+            appendText(message, L" microseconds).");
             log(message);
         }
     }
@@ -6847,8 +6868,8 @@ static BOOLEAN initialize()
             getInitSpectrumDigest();
             setNumber(message, SPECTRUM_CAPACITY * sizeof(Entity), TRUE);
             appendText(message, L" bytes of the spectrum data are hashed (");
-            appendNumber(message, (__rdtsc() - beginningTick) * 1000000000 / frequency, TRUE);
-            appendText(message, L" ns).");
+            appendNumber(message, (__rdtsc() - beginningTick) * 1000000 / frequency, TRUE);
+            appendText(message, L" microseconds).");
             log(message);
             getHash((unsigned char*)&initSpectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1], hash);
 
@@ -7373,8 +7394,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 spectrum[i].numberOfIncomingTransfers = latestOwnTick + 1;
                                             }
                                             setText(message, L"Spectrum updating takes ");
-                                            appendNumber(message, (__rdtsc() - spectrumUpdatingBeginningTick) * 1000000000 / frequency, TRUE);
-                                            appendText(message, L" ns.");
+                                            appendNumber(message, (__rdtsc() - spectrumUpdatingBeginningTick) * 1000000 / frequency, TRUE);
+                                            appendText(message, L" microseconds.");
                                             log(message);
 
                                             spectrumDigestCalculationBeginningTick = __rdtsc();
@@ -7385,8 +7406,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     if (spectrumDigestLevel == SPECTRUM_DEPTH + 2)
                                     {
                                         setText(message, L"Spectrum HASHING takes ");
-                                        appendNumber(message, (__rdtsc() - spectrumDigestCalculationBeginningTick) * 1000000000 / frequency, TRUE);
-                                        appendText(message, L" ns.");
+                                        appendNumber(message, (__rdtsc() - spectrumDigestCalculationBeginningTick) * 1000000 / frequency, TRUE);
+                                        appendText(message, L" microseconds.");
                                         log(message);
 
                                         while (spectrumDigestLevelCompleteness != NUMBER_OF_COMPUTING_PROCESSORS)
