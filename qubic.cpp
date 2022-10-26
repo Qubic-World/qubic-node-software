@@ -31,8 +31,8 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 50
-#define VERSION_C 2
+#define VERSION_B 51
+#define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -41,8 +41,8 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 static const unsigned char knownPublicPeers[][4] = {
 };
 
-#define EPOCH 27 // Do NOT change!
-#define TICK 3300000 // Do NOT change!
+#define EPOCH 28 // Do NOT change!
+#define TICK 3400000 // Do NOT change!
 
 #include <intrin.h>
 
@@ -1294,7 +1294,25 @@ static EFI_BOOT_SERVICES* bs;
 #endif
 
 #if AVX512
-static __m512i zero, moveThetaPrev, moveThetaNext, rhoB, rhoG, rhoK, rhoM, rhoS, pi1B, pi1G, pi1K, pi1M, pi1S, pi2S1, pi2S2, pi2BG, pi2KM, pi2S3, padding;
+const static __m512i zero = _mm512_maskz_set1_epi64(0, 0);
+const static __m512i moveThetaPrev = _mm512_setr_epi64(4, 0, 1, 2, 3, 5, 6, 7);
+const static __m512i moveThetaNext = _mm512_setr_epi64(1, 2, 3, 4, 0, 5, 6, 7);
+const static __m512i rhoB = _mm512_setr_epi64(0, 1, 62, 28, 27, 0, 0, 0);
+const static __m512i rhoG = _mm512_setr_epi64(36, 44, 6, 55, 20, 0, 0, 0);
+const static __m512i rhoK = _mm512_setr_epi64(3, 10, 43, 25, 39, 0, 0, 0);
+const static __m512i rhoM = _mm512_setr_epi64(41, 45, 15, 21, 8, 0, 0, 0);
+const static __m512i rhoS = _mm512_setr_epi64(18, 2, 61, 56, 14, 0, 0, 0);
+const static __m512i pi1B = _mm512_setr_epi64(0, 3, 1, 4, 2, 5, 6, 7);
+const static __m512i pi1G = _mm512_setr_epi64(1, 4, 2, 0, 3, 5, 6, 7);
+const static __m512i pi1K = _mm512_setr_epi64(2, 0, 3, 1, 4, 5, 6, 7);
+const static __m512i pi1M = _mm512_setr_epi64(3, 1, 4, 2, 0, 5, 6, 7);
+const static __m512i pi1S = _mm512_setr_epi64(4, 2, 0, 3, 1, 5, 6, 7);
+const static __m512i pi2S1 = _mm512_setr_epi64(0, 1, 2, 3, 4, 5, 8, 10);
+const static __m512i pi2S2 = _mm512_setr_epi64(0, 1, 2, 3, 4, 5, 9, 11);
+const static __m512i pi2BG = _mm512_setr_epi64(0, 1, 8, 9, 6, 5, 6, 7);
+const static __m512i pi2KM = _mm512_setr_epi64(2, 3, 10, 11, 7, 5, 6, 7);
+const static __m512i pi2S3 = _mm512_setr_epi64(4, 5, 12, 13, 4, 5, 6, 7);
+const static __m512i padding = _mm512_maskz_set1_epi64(1, 0x8000000000000000);
 
 static const unsigned long long K12RoundConstants[12]
 = {
@@ -1632,9 +1650,7 @@ static const unsigned long long K12RoundConstants[12]
 #define K12_security        128
 #define K12_capacity        (2 * K12_security)
 #define K12_capacityInBytes (K12_capacity / 8)
-#define K12_rate            (1600 - K12_capacity)
-#define K12_rateInBytes     (K12_rate / 8)
-#define K12_rateInLanes     (K12_rate / 64)
+#define K12_rateInBytes     ((1600 - K12_capacity) / 8)
 #define K12_chunkSize       8192
 #define K12_suffixLeaf      0x0B
 
@@ -1642,16 +1658,7 @@ typedef struct
 {
     unsigned char state[200];
     unsigned char byteIOIndex;
-    unsigned char squeezing;
 } KangarooTwelve_F;
-
-typedef struct
-{
-    KangarooTwelve_F queueNode;
-    KangarooTwelve_F finalNode;
-    unsigned long long blockNumber;
-    unsigned int queueAbsorbedLen;
-} KangarooTwelve_Instance;
 
 static void KeccakP1600_Permute_12rounds(void* state)
 {
@@ -1678,35 +1685,6 @@ static void KeccakP1600_Permute_12rounds(void* state)
         rounds12
         copyToState(stateAsLanes)
 #endif
-}
-
-static void KeccakP1600_ExtractBytes(const void* state, unsigned char* data, unsigned int offset, unsigned int length)
-{
-    if (!offset)
-    {
-        bs->CopyMem(data, (void*)state, length & 0xFFFFFFF8);
-        bs->CopyMem(data + (length & 0xFFFFFFF8), &((unsigned long long*)state)[length >> 3], length & 7);
-    }
-    else
-    {
-        unsigned int _sizeLeft = length;
-        unsigned int _lanePosition = offset >> 3;
-        unsigned int _offsetInLane = offset & 7;
-        unsigned char* _curData = data;
-        while (_sizeLeft > 0)
-        {
-            unsigned int _bytesInLane = 8 - _offsetInLane;
-            if (_bytesInLane > _sizeLeft)
-            {
-                _bytesInLane = _sizeLeft;
-            }
-            bs->CopyMem(_curData, (unsigned char*)(&(((unsigned long long*)state)[_lanePosition])) + _offsetInLane, _bytesInLane);
-            _sizeLeft -= _bytesInLane;
-            _lanePosition++;
-            _offsetInLane = 0;
-            _curData += _bytesInLane;
-        }
-    }
 }
 
 static void KangarooTwelve_F_Absorb(KangarooTwelve_F* instance, unsigned char* data, unsigned long long dataByteLen)
@@ -1795,16 +1773,9 @@ static void KangarooTwelve_F_Absorb(KangarooTwelve_F* instance, unsigned char* d
                 }
                 if (partialBlock & 7)
                 {
-                    if ((partialBlock & 7) == 1)
-                    {
-                        ((unsigned long long*)instance->state)[partialBlock >> 3] ^= ((unsigned long long)data[partialBlock & 0xFFFFFFF8]);
-                    }
-                    else
-                    {
-                        unsigned long long lane = 0;
-                        bs->CopyMem(&lane, data + (partialBlock & 0xFFFFFFF8), partialBlock & 7);
-                        ((unsigned long long*)instance->state)[partialBlock >> 3] ^= lane;
-                    }
+                    unsigned long long lane = 0;
+                    bs->CopyMem(&lane, data + (partialBlock & 0xFFFFFFF8), partialBlock & 7);
+                    ((unsigned long long*)instance->state)[partialBlock >> 3] ^= lane;
                 }
             }
             else
@@ -1822,16 +1793,9 @@ static void KangarooTwelve_F_Absorb(KangarooTwelve_F* instance, unsigned char* d
                     }
                     if (_bytesInLane)
                     {
-                        if (_bytesInLane == 1)
-                        {
-                            ((unsigned long long*)instance->state)[_lanePosition] ^= (((unsigned long long)_curData[0]) << (_offsetInLane << 3));
-                        }
-                        else
-                        {
-                            unsigned long long lane = 0;
-                            bs->CopyMem(&lane, (void*)_curData, _bytesInLane);
-                            ((unsigned long long*)instance->state)[_lanePosition] ^= (lane << (_offsetInLane << 3));
-                        }
+                        unsigned long long lane = 0;
+                        bs->CopyMem(&lane, (void*)_curData, _bytesInLane);
+                        ((unsigned long long*)instance->state)[_lanePosition] ^= (lane << (_offsetInLane << 3));
                     }
                     _sizeLeft -= _bytesInLane;
                     _lanePosition++;
@@ -1851,170 +1815,143 @@ static void KangarooTwelve_F_Absorb(KangarooTwelve_F* instance, unsigned char* d
     }
 }
 
-static void KangarooTwelve_F_AbsorbLastFewBits(KangarooTwelve_F* instance, unsigned char delimitedData)
+static void KangarooTwelve(unsigned char* input, unsigned int inputByteLen, unsigned char* output, unsigned int outputByteLen)
 {
-    instance->state[instance->byteIOIndex] ^= delimitedData;
-    if ((delimitedData >= 0x80) && (instance->byteIOIndex == (K12_rateInBytes - 1)))
-    {
-        KeccakP1600_Permute_12rounds(instance->state);
-    }
-    instance->state[K12_rateInBytes - 1] ^= 0x80;
-    KeccakP1600_Permute_12rounds(instance->state);
-    instance->byteIOIndex = 0;
-    instance->squeezing = 1;
-}
+    KangarooTwelve_F queueNode;
+    KangarooTwelve_F finalNode;
+    unsigned int blockNumber, queueAbsorbedLen;
 
-static void KangarooTwelve_F_Squeeze(KangarooTwelve_F* instance, unsigned char* data, unsigned long long dataByteLen)
-{
-    if (!instance->squeezing)
+    bs->SetMem(&finalNode, sizeof(KangarooTwelve_F), 0);
+    const unsigned int len = inputByteLen ^ ((K12_chunkSize ^ inputByteLen) & -(K12_chunkSize < inputByteLen));
+    KangarooTwelve_F_Absorb(&finalNode, input, len);
+    input += len;
+    inputByteLen -= len;
+    if ((len == K12_chunkSize) && inputByteLen)
     {
-        KangarooTwelve_F_AbsorbLastFewBits(instance, 0x01);
-    }
-
-    unsigned long long i = 0;
-    unsigned char* curData = data;
-    while (i < dataByteLen)
-    {
-        if ((instance->byteIOIndex == K12_rateInBytes) && (dataByteLen >= (i + K12_rateInBytes)))
+        blockNumber = 1;
+        queueAbsorbedLen = 0;
+        finalNode.state[finalNode.byteIOIndex] ^= 0x03;
+        if (++finalNode.byteIOIndex == K12_rateInBytes)
         {
-            unsigned long long j;
-            for (j = dataByteLen - i; j >= K12_rateInBytes; j -= K12_rateInBytes)
-            {
-                KeccakP1600_Permute_12rounds(instance->state);
-                KeccakP1600_ExtractBytes(instance->state, curData, 0, K12_rateInBytes);
-                curData += K12_rateInBytes;
-            }
-            i = dataByteLen - j;
+            KeccakP1600_Permute_12rounds(finalNode.state);
+            finalNode.byteIOIndex = 0;
         }
         else
         {
-            if (instance->byteIOIndex == K12_rateInBytes)
-            {
-                KeccakP1600_Permute_12rounds(instance->state);
-                instance->byteIOIndex = 0;
-            }
-            unsigned int partialBlock = (unsigned int)(dataByteLen - i);
-            if (partialBlock + instance->byteIOIndex > K12_rateInBytes)
-            {
-                partialBlock = K12_rateInBytes - instance->byteIOIndex;
-            }
-            i += partialBlock;
-
-            KeccakP1600_ExtractBytes(instance->state, curData, instance->byteIOIndex, partialBlock);
-            curData += partialBlock;
-            instance->byteIOIndex += partialBlock;
+            finalNode.byteIOIndex = (finalNode.byteIOIndex + 7) & ~7;
         }
-    }
-}
 
-static void KangarooTwelve_Update(KangarooTwelve_Instance* ktInstance, unsigned char* input, unsigned long long inputByteLen)
-{
-    if (!ktInstance->blockNumber)
-    {
-        unsigned int len = (inputByteLen < (K12_chunkSize - ktInstance->queueAbsorbedLen)) ? (unsigned int)inputByteLen : (K12_chunkSize - ktInstance->queueAbsorbedLen);
-        KangarooTwelve_F_Absorb(&ktInstance->finalNode, input, len);
-        input += len;
-        inputByteLen -= len;
-        ktInstance->queueAbsorbedLen += len;
-        if ((ktInstance->queueAbsorbedLen == K12_chunkSize) && inputByteLen)
+        while (inputByteLen > 0)
         {
-            unsigned char padding = 0x03;
-            ktInstance->queueAbsorbedLen = 0;
-            ktInstance->blockNumber = 1;
-            KangarooTwelve_F_Absorb(&ktInstance->finalNode, &padding, 1);
-            ktInstance->finalNode.byteIOIndex = (ktInstance->finalNode.byteIOIndex + 7) & ~7;
-        }
-    }
-    else
-    {
-        if (ktInstance->queueAbsorbedLen)
-        {
-            unsigned int len = (inputByteLen < (K12_chunkSize - ktInstance->queueAbsorbedLen)) ? (unsigned int)inputByteLen : (K12_chunkSize - ktInstance->queueAbsorbedLen);
-            KangarooTwelve_F_Absorb(&ktInstance->queueNode, input, len);
+            const unsigned int len = K12_chunkSize ^ ((inputByteLen ^ K12_chunkSize) & -(inputByteLen < K12_chunkSize));
+            bs->SetMem(&queueNode, sizeof(KangarooTwelve_F), 0);
+            KangarooTwelve_F_Absorb(&queueNode, input, len);
             input += len;
             inputByteLen -= len;
-            ktInstance->queueAbsorbedLen += len;
-            if (ktInstance->queueAbsorbedLen == K12_chunkSize)
+            if (len == K12_chunkSize)
             {
-                unsigned char intermediate[K12_capacityInBytes];
-                ktInstance->queueAbsorbedLen = 0;
-                ++ktInstance->blockNumber;
-                KangarooTwelve_F_AbsorbLastFewBits(&ktInstance->queueNode, K12_suffixLeaf);
-                KangarooTwelve_F_Squeeze(&ktInstance->queueNode, intermediate, K12_capacityInBytes);
-                KangarooTwelve_F_Absorb(&ktInstance->finalNode, intermediate, K12_capacityInBytes);
+                ++blockNumber;
+                queueNode.state[queueNode.byteIOIndex] ^= K12_suffixLeaf;
+                queueNode.state[K12_rateInBytes - 1] ^= 0x80;
+                KeccakP1600_Permute_12rounds(queueNode.state);
+                queueNode.byteIOIndex = K12_capacityInBytes;
+                KangarooTwelve_F_Absorb(&finalNode, queueNode.state, K12_capacityInBytes);
+            }
+            else
+            {
+                queueAbsorbedLen = len;
+            }
+        }
+
+        if (queueAbsorbedLen)
+        {
+            if (++queueNode.byteIOIndex == K12_rateInBytes)
+            {
+                KeccakP1600_Permute_12rounds(queueNode.state);
+                queueNode.byteIOIndex = 0;
+            }
+            if (++queueAbsorbedLen == K12_chunkSize)
+            {
+                ++blockNumber;
+                queueAbsorbedLen = 0;
+                queueNode.state[queueNode.byteIOIndex] ^= K12_suffixLeaf;
+                queueNode.state[K12_rateInBytes - 1] ^= 0x80;
+                KeccakP1600_Permute_12rounds(queueNode.state);
+                queueNode.byteIOIndex = K12_capacityInBytes;
+                KangarooTwelve_F_Absorb(&finalNode, queueNode.state, K12_capacityInBytes);
+            }
+        }
+        else
+        {
+            bs->SetMem(queueNode.state, sizeof(queueNode.state), 0);
+            queueNode.byteIOIndex = 1;
+            queueAbsorbedLen = 1;
+        }
+    }
+    else
+    {
+        if (len == K12_chunkSize)
+        {
+            blockNumber = 1;
+            finalNode.state[finalNode.byteIOIndex] ^= 0x03;
+            if (++finalNode.byteIOIndex == K12_rateInBytes)
+            {
+                KeccakP1600_Permute_12rounds(finalNode.state);
+                finalNode.byteIOIndex = 0;
+            }
+            else
+            {
+                finalNode.byteIOIndex = (finalNode.byteIOIndex + 7) & ~7;
+            }
+
+            bs->SetMem(queueNode.state, sizeof(queueNode.state), 0);
+            queueNode.byteIOIndex = 1;
+            queueAbsorbedLen = 1;
+        }
+        else
+        {
+            blockNumber = 0;
+            if (++finalNode.byteIOIndex == K12_rateInBytes)
+            {
+                KeccakP1600_Permute_12rounds(finalNode.state);
+                finalNode.state[0] ^= 0x07;
+            }
+            else
+            {
+                finalNode.state[finalNode.byteIOIndex] ^= 0x07;
             }
         }
     }
 
-    while (inputByteLen > 0)
+    if (blockNumber)
     {
-        unsigned int len = (inputByteLen < K12_chunkSize) ? (unsigned int)inputByteLen : K12_chunkSize;
-        bs->SetMem(&ktInstance->queueNode, sizeof(KangarooTwelve_F), 0);
-        KangarooTwelve_F_Absorb(&ktInstance->queueNode, input, len);
-        input += len;
-        inputByteLen -= len;
-        if (len == K12_chunkSize)
+        if (queueAbsorbedLen)
         {
-            unsigned char intermediate[K12_capacityInBytes];
-            ++ktInstance->blockNumber;
-            KangarooTwelve_F_AbsorbLastFewBits(&ktInstance->queueNode, K12_suffixLeaf);
-            KangarooTwelve_F_Squeeze(&ktInstance->queueNode, intermediate, K12_capacityInBytes);
-            KangarooTwelve_F_Absorb(&ktInstance->finalNode, intermediate, K12_capacityInBytes);
+            ++blockNumber;
+            queueNode.state[queueNode.byteIOIndex] ^= K12_suffixLeaf;
+            queueNode.state[K12_rateInBytes - 1] ^= 0x80;
+            KeccakP1600_Permute_12rounds(queueNode.state);
+            KangarooTwelve_F_Absorb(&finalNode, queueNode.state, K12_capacityInBytes);
         }
-        else
-        {
-            ktInstance->queueAbsorbedLen = len;
-        }
-    }
-}
-
-static void KangarooTwelve(unsigned char* input, unsigned long long inputByteLen, unsigned char* output, unsigned long long outputByteLen)
-{
-    KangarooTwelve_Instance ktInstance;
-
-    ktInstance.queueAbsorbedLen = 0;
-    ktInstance.blockNumber = 0;
-    bs->SetMem(&ktInstance.finalNode, sizeof(KangarooTwelve_F), 0);
-
-    KangarooTwelve_Update(&ktInstance, input, inputByteLen);
-
-    unsigned char encbuf[sizeof(unsigned long long) + 1 + 2];
-
-    encbuf[0] = 0;
-    KangarooTwelve_Update(&ktInstance, encbuf, 1);
-
-    unsigned char padding;
-    if (!ktInstance.blockNumber)
-    {
-        padding = 0x07;
-    }
-    else
-    {
-        if (ktInstance.queueAbsorbedLen)
-        {
-            unsigned char intermediate[K12_capacityInBytes];
-            ++ktInstance.blockNumber;
-            KangarooTwelve_F_AbsorbLastFewBits(&ktInstance.queueNode, K12_suffixLeaf);
-            KangarooTwelve_F_Squeeze(&ktInstance.queueNode, intermediate, K12_capacityInBytes);
-            KangarooTwelve_F_Absorb(&ktInstance.finalNode, intermediate, K12_capacityInBytes);
-        }
-        --ktInstance.blockNumber;
+        --blockNumber;
         unsigned int n = 0;
-        for (unsigned long long v = ktInstance.blockNumber; v && (n < sizeof(unsigned long long)); ++n, v >>= 8)
+        for (unsigned long long v = blockNumber; v && (n < sizeof(unsigned long long)); ++n, v >>= 8)
         {
         }
+        unsigned char encbuf[sizeof(unsigned long long) + 1 + 2];
         for (unsigned int i = 1; i <= n; ++i)
         {
-            encbuf[i - 1] = (unsigned char)(ktInstance.blockNumber >> (8 * (n - i)));
+            encbuf[i - 1] = (unsigned char)(blockNumber >> (8 * (n - i)));
         }
         encbuf[n] = (unsigned char)n;
         encbuf[++n] = 0xFF;
         encbuf[++n] = 0xFF;
-        KangarooTwelve_F_Absorb(&ktInstance.finalNode, encbuf, ++n);
-        padding = 0x06;
+        KangarooTwelve_F_Absorb(&finalNode, encbuf, ++n);
+        finalNode.state[finalNode.byteIOIndex] ^= 0x06;
     }
-    KangarooTwelve_F_AbsorbLastFewBits(&ktInstance.finalNode, padding);
-    KangarooTwelve_F_Squeeze(&ktInstance.finalNode, output, outputByteLen);
+    finalNode.state[K12_rateInBytes - 1] ^= 0x80;
+    KeccakP1600_Permute_12rounds(finalNode.state);
+    bs->CopyMem(output, finalNode.state, outputByteLen);
 }
 
 static void KangarooTwelve64To32(unsigned char* input, unsigned char* output)
@@ -6976,12 +6913,17 @@ static BOOLEAN initialize()
 #endif
 
 #if NUMBER_OF_MINING_PROCESSORS
-        miningData[0] = 559;
-        miningData[1] = 26;
-        miningData[2] = 826;
-        miningData[3] = 0;
-        miningData[4] = 53;
-        KangarooTwelve((unsigned char*)miningData, 5 * sizeof(unsigned long long), (unsigned char*)miningData, sizeof(miningData));
+        unsigned char randomSeed[32];
+        bs->SetMem(randomSeed, 32, 0);
+        randomSeed[0] = 8;
+        randomSeed[1] = 234;
+        randomSeed[2] = 87;
+        randomSeed[3] = 140;
+        randomSeed[4] = 251;
+        randomSeed[5] = 73;
+        randomSeed[6] = 216;
+        randomSeed[7] = 18;
+        random(randomSeed, randomSeed, (unsigned char*)miningData, sizeof(miningData));
 
         if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SOLUTION_DATA_FILE_NAME, EFI_FILE_MODE_READ, 0))
         {
@@ -8062,7 +8004,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     if (receivedDataSize >= sizeof(RequestResponseHeader))
                                                     {
                                                         RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                        if (requestResponseHeader->protocol < VERSION_B - 1 || requestResponseHeader->protocol > VERSION_B + 1)
+                                                        if (requestResponseHeader->protocol < VERSION_B || requestResponseHeader->protocol > VERSION_B + 1)
                                                         {
                                                             closePeer(i);
                                                         }
