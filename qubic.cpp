@@ -31,18 +31,18 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 51
-#define VERSION_C 1
+#define VERSION_B 52
+#define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
-#define AVX512 0 // Do NOT change!
+#define AVX512 0
 
 static const unsigned char knownPublicPeers[][4] = {
 };
 
 #define EPOCH 28 // Do NOT change!
-#define TICK 3400000 // Do NOT change!
+#define TICK 3450000 // Do NOT change!
 
 #include <intrin.h>
 
@@ -4514,9 +4514,12 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define MAX_MESSAGE_SIZE 1024
 #define MAX_NUMBER_OF_PROCESSORS 1024
 #define MAX_NUMBER_OF_PUBLIC_PEERS 256
-#define MAX_NUMBER_OF_TICKS_PER_EPOCH (60 * 60 * 24 * 7)
+#define MAX_NUMBER_OF_SMART_CONTRACTS 1024
+#define MAX_NUMBER_OF_TICKS_PER_EPOCH (12 * 60 * 24 * 7)
 #define MAX_QUESTION_SIZE 1024
+#define MAX_SMART_CONTRACT_STATE_SIZE 1073741824
 #define MAX_TRANSFER_DESCRIPTION_SIZE 112
+#define MAX_UNIVERSE_SIZE 1073741824
 #define NUMBER_OF_EXCHANGED_PEERS 4
 #define NUMBER_OF_OUTGOING_CONNECTIONS 16
 #define NUMBER_OF_INCOMING_CONNECTIONS 48
@@ -4839,7 +4842,7 @@ typedef struct
 
 typedef struct
 {
-    unsigned short nonce; // TODO: Remove
+    unsigned short numberOfComputorSignatures;
 
     unsigned short epoch;
     unsigned int tick;
@@ -4864,7 +4867,7 @@ typedef struct
 
     unsigned char nextTickDataDigest[32];
 
-    unsigned char signatures[NUMBER_OF_COMPUTORS][SIGNATURE_SIZE];
+    unsigned char indexedSignatures[QUORUM][SIGNATURE_SIZE];
 } QuorumTick;
 
 typedef struct
@@ -5757,21 +5760,23 @@ static void requestProcessor(void* ProcedureArgument)
                         *((__m256i*)tick.prevUniverseDigest) = *((__m256i*)request->quorumTick.prevUniverseDigest);
                         *((__m256i*)tick.prevComputerDigest) = *((__m256i*)request->quorumTick.prevComputerDigest);
                         *((__m256i*)tick.nextTickDataDigest) = *((__m256i*)request->quorumTick.nextTickDataDigest);
-                        for (tick.computorIndex = 0; tick.computorIndex < NUMBER_OF_COMPUTORS; tick.computorIndex++)
+                        for (unsigned int i = 0; i < QUORUM; i++)
                         {
-                            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->quorumTick.signatures[tick.computorIndex]), ZERO)) != 0xFFFFFFFF)
+                            if ((tick.computorIndex = *((unsigned short*)&request->quorumTick.indexedSignatures[i][SIGNATURE_SIZE - 2]) >> 6) <= NUMBER_OF_COMPUTORS)
                             {
-                                unsigned int i;
-                                for (i = 0; i < numberOfOwnComputorIndices; i++)
+                                unsigned int j;
+                                for (j = 0; j < numberOfOwnComputorIndices; j++)
                                 {
-                                    if (ownComputorIndices[i] == tick.computorIndex)
+                                    if (ownComputorIndices[j] == tick.computorIndex)
                                     {
                                         break;
                                     }
                                 }
-                                if (i == numberOfOwnComputorIndices
+                                if (j == numberOfOwnComputorIndices
                                     && actualTicks[tick.computorIndex].tick < tick.tick)
                                 {
+                                    *((unsigned short*)&request->quorumTick.indexedSignatures[i][SIGNATURE_SIZE - 2]) &= 0x3F;
+
                                     unsigned char saltedData[32 + 32];
                                     *((__m256i*) & saltedData[0]) = *((__m256i*)broadcastedComputors.broadcastComputors.computors.publicKeys[tick.computorIndex]);
                                     *((__m256i*) & saltedData[32]) = *((__m256i*)request->quorumTick.spectrumDigest);
@@ -5785,10 +5790,10 @@ static void requestProcessor(void* ProcedureArgument)
                                     tick.computorIndex ^= BROADCAST_TICK;
                                     KangarooTwelve((unsigned char*)&tick, sizeof(Tick) - SIGNATURE_SIZE, digest, sizeof(digest));
                                     tick.computorIndex ^= BROADCAST_TICK;
-                                    if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[tick.computorIndex], digest, request->quorumTick.signatures[tick.computorIndex]))
+                                    if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[tick.computorIndex], digest, request->quorumTick.indexedSignatures[tick.computorIndex]))
                                     {
-                                        *((__m256i*) & tick.signature[0]) = *((__m256i*) & request->quorumTick.signatures[tick.computorIndex][0]);
-                                        *((__m256i*) & tick.signature[32]) = *((__m256i*) & request->quorumTick.signatures[tick.computorIndex][32]);
+                                        *((__m256i*) & tick.signature[0]) = *((__m256i*) & request->quorumTick.indexedSignatures[tick.computorIndex][0]);
+                                        *((__m256i*) & tick.signature[32]) = *((__m256i*) & request->quorumTick.indexedSignatures[tick.computorIndex][32]);
 
                                         while (_InterlockedCompareExchange8(&tickLocks[tick.computorIndex], 1, 0))
                                         {
@@ -7484,9 +7489,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         {
                                             for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
                                             {
-                                                *((__m256i*) & quorumTicks[quorumTickIndex].signatures[j][0]) = ZERO;
-                                                *((__m256i*) & quorumTicks[quorumTickIndex].signatures[j][32]) = ZERO;
-
                                                 while (_InterlockedCompareExchange8(&tickLocks[j], 1, 0))
                                                 {
                                                     _mm_pause();
@@ -7522,12 +7524,16 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                 KangarooTwelve64To32(saltedData, saltedDigest);
                                                                 if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[j].saltedComputerDigest), *((__m256i*)saltedDigest))) == 0xFFFFFFFF)
                                                                 {
+                                                                    if (tickNumberOfComputors < QUORUM)
+                                                                    {
+                                                                        *((__m256i*)&quorumTicks[quorumTickIndex].indexedSignatures[tickNumberOfComputors][0]) = *((__m256i*)&actualTicks[j].signature[0]);
+                                                                        *((__m256i*)&quorumTicks[quorumTickIndex].indexedSignatures[tickNumberOfComputors][32]) = *((__m256i*)&actualTicks[j].signature[32]);
+                                                                        *((unsigned short*)&quorumTicks[quorumTickIndex].indexedSignatures[tickNumberOfComputors][SIGNATURE_SIZE - 2]) |= (j << 6);
+                                                                    }
+
                                                                     tickNumberOfComputors++;
 
                                                                     counters[j] = 1;
-
-                                                                    *((__m256i*) & quorumTicks[quorumTickIndex].signatures[j][0]) = *((__m256i*) & actualTicks[j].signature[0]);
-                                                                    *((__m256i*) & quorumTicks[quorumTickIndex].signatures[j][32]) = *((__m256i*) & actualTicks[j].signature[32]);
                                                                 }
                                                             }
                                                         }
@@ -7543,7 +7549,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             }
                                             if (tickNumberOfComputors >= QUORUM)
                                             {
-                                                quorumTicks[quorumTickIndex].nonce = 0;
+                                                quorumTicks[quorumTickIndex].numberOfComputorSignatures = QUORUM;
                                                 quorumTicks[quorumTickIndex].epoch = actualTicks[ownComputorIndices[0]].epoch;
                                                 quorumTicks[quorumTickIndex].tick = actualTicks[ownComputorIndices[0]].tick;
                                                 *((unsigned long long*) & quorumTicks[quorumTickIndex].millisecond) = *((unsigned long long*) & actualTicks[ownComputorIndices[0]].millisecond);
@@ -8025,7 +8031,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     if (receivedDataSize >= sizeof(RequestResponseHeader))
                                                     {
                                                         RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                        if (requestResponseHeader->protocol < VERSION_B || requestResponseHeader->protocol > VERSION_B + 1)
+                                                        if (requestResponseHeader->protocol < VERSION_B - 1 || requestResponseHeader->protocol > VERSION_B + 1)
                                                         {
                                                             closePeer(i);
                                                         }
