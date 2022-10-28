@@ -32,7 +32,7 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
 
 #define VERSION_A 1
 #define VERSION_B 52
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -4506,7 +4506,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 ////////// Qubic \\\\\\\\\\
 
 #define BUFFER_SIZE 1048576
-#define DEJAVU_SWAP_LIMIT 2621440 // False duplicate chance < 2%
+#define DEJAVU_SWAP_LIMIT 28000000
 #define DISSEMINATION_MULTIPLIER 4
 #define ISSUANCE_RATE 1000000000000
 #define MAX_ANSWER_SIZE 1024
@@ -4531,7 +4531,6 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define PEER_REFRESHING_PERIOD 60
 #define PORT 21841
 #define QUORUM (NUMBER_OF_COMPUTORS * 2 / 3 + 1)
-#define REQUEST_QUORUM_TICK_BROADCASTING_LIMIT 5
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 90
 #define REVENUE_PUBLICATION_PERIOD 300
 #define SIGNATURE_SIZE 64
@@ -5740,7 +5739,8 @@ static void requestProcessor(void* ProcedureArgument)
                 case RESPOND_QUORUM_TICK:
                 {
                     RespondQuorumTick* request = (RespondQuorumTick*)((char*)processor->cache + sizeof(RequestResponseHeader));
-                    if (request->quorumTick.epoch == broadcastedComputors.broadcastComputors.computors.epoch
+                    if (request->quorumTick.numberOfComputorSignatures == QUORUM
+                        && request->quorumTick.epoch == broadcastedComputors.broadcastComputors.computors.epoch
                         && request->quorumTick.tick == system.tick + 1
                         //&& request->quorumTick.month >= 1 && request->quorumTick.month <= 12
                         //&& request->quorumTick.day >= 1 && request->quorumTick.day <= 31
@@ -5790,10 +5790,10 @@ static void requestProcessor(void* ProcedureArgument)
                                     tick.computorIndex ^= BROADCAST_TICK;
                                     KangarooTwelve((unsigned char*)&tick, sizeof(Tick) - SIGNATURE_SIZE, digest, sizeof(digest));
                                     tick.computorIndex ^= BROADCAST_TICK;
-                                    if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[tick.computorIndex], digest, request->quorumTick.indexedSignatures[tick.computorIndex]))
+                                    if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[tick.computorIndex], digest, request->quorumTick.indexedSignatures[i]))
                                     {
-                                        *((__m256i*) & tick.signature[0]) = *((__m256i*) & request->quorumTick.indexedSignatures[tick.computorIndex][0]);
-                                        *((__m256i*) & tick.signature[32]) = *((__m256i*) & request->quorumTick.indexedSignatures[tick.computorIndex][32]);
+                                        *((__m256i*) & tick.signature[0]) = *((__m256i*) & request->quorumTick.indexedSignatures[i][0]);
+                                        *((__m256i*) & tick.signature[32]) = *((__m256i*) & request->quorumTick.indexedSignatures[i][32]);
 
                                         while (_InterlockedCompareExchange8(&tickLocks[tick.computorIndex], 1, 0))
                                         {
@@ -8204,13 +8204,13 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     *((unsigned long long*)requestResponseHeader) ^= salt;
                                                                     KangarooTwelve((unsigned char*)requestResponseHeader, size, (unsigned char*)&saltedId, sizeof(saltedId));
                                                                     *((unsigned long long*)requestResponseHeader) ^= salt;
-                                                                    if (!((dejavu0[saltedId >> 6] | dejavu1[saltedId >> 6]) & (((unsigned long long)1) << (saltedId & 63))))
+                                                                    if (!((dejavu0[saltedId >> 6] | dejavu1[saltedId >> 6]) & (1ULL << (saltedId & 63))))
                                                                     {
                                                                         for (unsigned int j = 0; j < numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS); j++)
                                                                         {
                                                                             if (!_InterlockedCompareExchange8(&processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + j].inputState, 1, 0))
                                                                             {
-                                                                                dejavu0[saltedId >> 6] |= (((unsigned long long)1) << (saltedId & 63));
+                                                                                dejavu0[saltedId >> 6] |= (1ULL << (saltedId & 63));
                                                                                 if (!(--dejavuSwapCounter))
                                                                                 {
                                                                                     unsigned long long* tmp = dejavu1;
