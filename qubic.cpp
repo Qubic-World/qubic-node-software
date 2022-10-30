@@ -2,6 +2,7 @@
 
 #define NUMBER_OF_COMPUTING_PROCESSORS 0
 #define NUMBER_OF_MINING_PROCESSORS 0
+#define AVX512 0
 
 // Do NOT share the data of "Private Settings" section with anybody!!!
 static unsigned char ownSeeds[][55 + 1] = {
@@ -27,23 +28,21 @@ static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
     "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 };
 
+static const unsigned char knownPublicPeers[][4] = {
+};
+
 
 
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 53
+#define VERSION_B 54
 #define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
-#define AVX512 0
-
-static const unsigned char knownPublicPeers[][4] = {
-};
-
 #define EPOCH 28 // Do NOT change!
-#define TICK 3450000 // Do NOT change!
+#define TICK 3500000 // Do NOT change!
 
 #include <intrin.h>
 
@@ -4541,11 +4540,10 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define SYSTEM_DATA_SAVING_PERIOD 300
 #define VOLUME_LABEL L"Qubic"
 
-#define INACTIVITY_FAULT 1
-#define INCONSISTENT_TICK_DATA_FAULT 2
-#define MULTIPLE_TICK_VERSIONS_FAULT 4
-#define INCONSISTENT_FUTURE_TICK_DATA_FAULT 8
-#define MULTIPLE_FUTURE_TICK_DATA_VERSIONS_FAULT 16
+#define INCONSISTENT_TICK_DATA_FAULT 1
+#define MULTIPLE_TICK_VERSIONS_FAULT 2
+#define INCONSISTENT_FUTURE_TICK_DATA_FAULT 4
+#define MULTIPLE_FUTURE_TICK_DATA_VERSIONS_FAULT 8
 
 typedef struct
 {
@@ -4930,6 +4928,14 @@ static struct System
     unsigned int tick;
     unsigned int tickCounters[NUMBER_OF_COMPUTORS];
     unsigned char faults[NUMBER_OF_COMPUTORS];
+
+    unsigned short epochBeginningMillisecond;
+    unsigned char epochBeginningSecond;
+    unsigned char epochBeginningMinute;
+    unsigned char epochBeginningHour;
+    unsigned char epochBeginningDay;
+    unsigned char epochBeginningMonth;
+    unsigned char epochBeginningYear;
 } system;
 static unsigned int tickNumberOfComputors = 0, futureTickNumberOfComputors = 0;
 static unsigned long long latestRevenuePublicationTick = 0;
@@ -4966,7 +4972,6 @@ static Tick actualTicks[NUMBER_OF_COMPUTORS];
 #endif
 static Tick previousTicks[NUMBER_OF_COMPUTORS];
 static unsigned long long tickTicks[11];
-static unsigned int totalNumberOfTicks = 0, numberOfLostTicks = 0;
 
 static unsigned long long* dejavu0 = NULL;
 static unsigned long long* dejavu1 = NULL;
@@ -5528,14 +5533,12 @@ static void requestProcessor(void* ProcedureArgument)
                     BroadcastTick* request = (BroadcastTick*)((char*)processor->cache + sizeof(RequestResponseHeader));
                     if (request->tick.computorIndex < NUMBER_OF_COMPUTORS
                         && request->tick.epoch == broadcastedComputors.broadcastComputors.computors.epoch
-                        //&& request->tick.month >= 1 && request->tick.month <= 12
-                        //&& request->tick.day >= 1 && request->tick.day <= 31
+                        && request->tick.month >= 1 && request->tick.month <= 12
+                        && request->tick.day >= 1 && request->tick.day <= ((request->tick.month == 1 || request->tick.month == 3 || request->tick.month == 5 || request->tick.month == 7 || request->tick.month == 8 || request->tick.month == 10 || request->tick.month == 12) ? 31 : ((request->tick.month == 4 || request->tick.month == 6 || request->tick.month == 9 || request->tick.month == 11) ? 30 : ((request->tick.year & 3) ? 28 : 29)))
                         && request->tick.hour <= 23
                         && request->tick.minute <= 59
                         && request->tick.second <= 59
-                        && request->tick.millisecond <= 999
-                        /*&& ms(request->tick.year, request->tick.month, request->tick.day, request->tick.hour, request->tick.minute, request->tick.second, request->tick.millisecond) >= ms(request->tick.prevYear, request->tick.prevMonth, request->tick.prevDay, request->tick.prevHour, request->tick.prevMinute, request->tick.prevSecond, request->tick.prevMillisecond)*/ // TODO
-                        )
+                        && request->tick.millisecond <= 999)
                     {
                         unsigned char digest[32];
                         request->tick.computorIndex ^= BROADCAST_TICK;
@@ -5692,8 +5695,8 @@ static void requestProcessor(void* ProcedureArgument)
                     BroadcastFutureTickData* request = (BroadcastFutureTickData*)((char*)processor->cache + sizeof(RequestResponseHeader));
                     if (request->tickData.epoch == broadcastedComputors.broadcastComputors.computors.epoch
                         && request->tickData.tick % NUMBER_OF_COMPUTORS == request->tickData.computorIndex
-                        //&& request->tickData.month >= 1 && request->tickData.month <= 12
-                        //&& request->tickData.day >= 1 && request->tickData.day <= 31
+                        && request->tickData.month >= 1 && request->tickData.month <= 12
+                        && request->tickData.day >= 1 && request->tickData.day <= ((request->tickData.month == 1 || request->tickData.month == 3 || request->tickData.month == 5 || request->tickData.month == 7 || request->tickData.month == 8 || request->tickData.month == 10 || request->tickData.month == 12) ? 31 : ((request->tickData.month == 4 || request->tickData.month == 6 || request->tickData.month == 9 || request->tickData.month == 11) ? 30 : ((request->tickData.year & 3) ? 28 : 29)))
                         && request->tickData.hour <= 23
                         && request->tickData.minute <= 59
                         && request->tickData.second <= 59
@@ -5708,7 +5711,36 @@ static void requestProcessor(void* ProcedureArgument)
 #if NUMBER_OF_COMPUTING_PROCESSORS
                             if (request->tickData.tick > TICK && request->tickData.tick <= TICK + MAX_NUMBER_OF_TICKS_PER_EPOCH)
                             {
-                                bs->CopyMem(&tickData[request->tickData.tick - TICK - 1], &request->tickData, sizeof(TickData));
+                                TickData* futureTickData = &tickData[request->tickData.tick - TICK - 1];
+                                if (futureTickData->epoch)
+                                {
+                                    if (request->tickData.millisecond != futureTickData->millisecond
+                                        || request->tickData.second != futureTickData->second
+                                        || request->tickData.minute != futureTickData->minute
+                                        || request->tickData.hour != futureTickData->hour
+                                        || request->tickData.day != futureTickData->day
+                                        || request->tickData.month != futureTickData->month
+                                        || request->tickData.year != futureTickData->year)
+                                    {
+                                        system.faults[request->tickData.computorIndex] |= MULTIPLE_FUTURE_TICK_DATA_VERSIONS_FAULT;
+                                    }
+                                    else
+                                    {
+                                        for (unsigned int i = 0; i < NUMBER_OF_TRANSACTIONS_PER_TICK; i++)
+                                        {
+                                            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(request->tickData.transactionDigests[i], futureTickData->transactionDigests[i])) != 0xFFFFFFFF)
+                                            {
+                                                system.faults[request->tickData.computorIndex] |= MULTIPLE_FUTURE_TICK_DATA_VERSIONS_FAULT;
+
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                else
+                                {
+                                    bs->CopyMem(futureTickData, &request->tickData, sizeof(TickData));
+                                }
                             }
 #endif
 
@@ -5789,8 +5821,8 @@ static void requestProcessor(void* ProcedureArgument)
                     if (request->quorumTick.numberOfComputorSignatures == QUORUM
                         && request->quorumTick.epoch == broadcastedComputors.broadcastComputors.computors.epoch
                         && request->quorumTick.tick == system.tick + 1
-                        //&& request->quorumTick.month >= 1 && request->quorumTick.month <= 12
-                        //&& request->quorumTick.day >= 1 && request->quorumTick.day <= 31
+                        && request->quorumTick.month >= 1 && request->quorumTick.month <= 12
+                        && request->quorumTick.day >= 1 && request->quorumTick.day <= ((request->quorumTick.month == 1 || request->quorumTick.month == 3 || request->quorumTick.month == 5 || request->quorumTick.month == 7 || request->quorumTick.month == 8 || request->quorumTick.month == 10 || request->quorumTick.month == 12) ? 31 : ((request->quorumTick.month == 4 || request->quorumTick.month == 6 || request->quorumTick.month == 9 || request->quorumTick.month == 11) ? 30 : ((request->quorumTick.year & 3) ? 28 : 29)))
                         && request->quorumTick.hour <= 23
                         && request->quorumTick.minute <= 59
                         && request->quorumTick.second <= 59
@@ -5859,8 +5891,8 @@ static void requestProcessor(void* ProcedureArgument)
                     if (request->tickData.epoch == broadcastedComputors.broadcastComputors.computors.epoch
                         && request->tickData.tick > TICK && request->tickData.tick <= TICK + MAX_NUMBER_OF_TICKS_PER_EPOCH
                         && request->tickData.tick % NUMBER_OF_COMPUTORS == request->tickData.computorIndex
-                        //&& request->tickData.month >= 1 && request->tickData.month <= 12
-                        //&& request->tickData.day >= 1 && request->tickData.day <= 31
+                        && request->tickData.month >= 1 && request->tickData.month <= 12
+                        && request->tickData.day >= 1 && request->tickData.day <= ((request->tickData.month == 1 || request->tickData.month == 3 || request->tickData.month == 5 || request->tickData.month == 7 || request->tickData.month == 8 || request->tickData.month == 10 || request->tickData.month == 12) ? 31 : ((request->tickData.month == 4 || request->tickData.month == 6 || request->tickData.month == 9 || request->tickData.month == 11) ? 30 : ((request->tickData.year & 3) ? 28 : 29)))
                         && request->tickData.hour <= 23
                         && request->tickData.minute <= 59
                         && request->tickData.second <= 59
@@ -5872,7 +5904,36 @@ static void requestProcessor(void* ProcedureArgument)
                         request->tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
                         if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->tickData.computorIndex], digest, request->tickData.signature))
                         {
-                            bs->CopyMem(&tickData[request->tickData.tick - TICK - 1], &request->tickData, sizeof(TickData));
+                            TickData* futureTickData = &tickData[request->tickData.tick - TICK - 1];
+                            if (futureTickData->epoch)
+                            {
+                                if (request->tickData.millisecond != futureTickData->millisecond
+                                    || request->tickData.second != futureTickData->second
+                                    || request->tickData.minute != futureTickData->minute
+                                    || request->tickData.hour != futureTickData->hour
+                                    || request->tickData.day != futureTickData->day
+                                    || request->tickData.month != futureTickData->month
+                                    || request->tickData.year != futureTickData->year)
+                                {
+                                    system.faults[request->tickData.computorIndex] |= MULTIPLE_FUTURE_TICK_DATA_VERSIONS_FAULT;
+                                }
+                                else
+                                {
+                                    for (unsigned int i = 0; i < NUMBER_OF_TRANSACTIONS_PER_TICK; i++)
+                                    {
+                                        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(request->tickData.transactionDigests[i], futureTickData->transactionDigests[i])) != 0xFFFFFFFF)
+                                        {
+                                            system.faults[request->tickData.computorIndex] |= MULTIPLE_FUTURE_TICK_DATA_VERSIONS_FAULT;
+
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                bs->CopyMem(futureTickData, &request->tickData, sizeof(TickData));
+                            }
                         }
                     }
                 }
@@ -6906,10 +6967,6 @@ static BOOLEAN initialize()
         {
             bs->SetMem(&system, sizeof(system), 0);
             system.version = VERSION_B;
-            for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
-            {
-                system.faults[i] = INACTIVITY_FAULT;
-            }
 
             unsigned long long size = sizeof(system);
             status = dataFile->Read(dataFile, &size, &system);
@@ -6925,10 +6982,7 @@ static BOOLEAN initialize()
                 if (system.epoch < EPOCH)
                 {
                     bs->SetMem(system.tickCounters, sizeof(system.tickCounters), 0);
-                    for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
-                    {
-                        system.faults[i] = INACTIVITY_FAULT;
-                    }
+                    bs->SetMem(system.faults, sizeof(system.faults), 0);
                 }
                 system.epoch = EPOCH;
                 system.tick = TICK;
@@ -7027,7 +7081,7 @@ static BOOLEAN initialize()
             }
             else
             {
-                unsigned long long size = ((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * sizeof(TickData);
+                unsigned long long size = numberOfTicksToProcess * ((unsigned long long)sizeof(TickData));
                 if (status = tickTransactionDigestsFile->Read(tickTransactionDigestsFile, &size, tickData))
                 {
                     logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status, __LINE__);
@@ -7036,7 +7090,7 @@ static BOOLEAN initialize()
                 }
                 else
                 {
-                    if (size != numberOfTicksToProcess * sizeof(TickData))
+                    if (size != numberOfTicksToProcess * ((unsigned long long)sizeof(TickData)))
                     {
                         logStatus(L"EFI_FILE_PROTOCOL.Read() reads invalid number of bytes", size, __LINE__);
 
@@ -7594,19 +7648,105 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         broadcastedTick.broadcastTick.tick.epoch = system.epoch;
                                         broadcastedTick.broadcastTick.tick.tick = system.tick + 1;
 
-                                        broadcastedTick.broadcastTick.tick.millisecond = 0;// time.Nanosecond / 1000000;
-                                        broadcastedTick.broadcastTick.tick.second = 0;// time.Second;
-                                        broadcastedTick.broadcastTick.tick.minute = 0;// time.Minute;
-                                        broadcastedTick.broadcastTick.tick.hour = 0;// time.Hour;
-                                        broadcastedTick.broadcastTick.tick.day = 0;// time.Day;
-                                        broadcastedTick.broadcastTick.tick.month = 0;// time.Month;
-                                        broadcastedTick.broadcastTick.tick.year = 0;// time.Year - 2000;
-
                                         *((__m256i*)broadcastedTick.broadcastTick.tick.prevSpectrumDigest) = *((__m256i*)broadcastedTick.broadcastTick.tick.initSpectrumDigest) = initSpectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1];
                                         *((__m256i*)broadcastedTick.broadcastTick.tick.prevUniverseDigest) = *((__m256i*)broadcastedTick.broadcastTick.tick.initUniverseDigest) = ZERO;
                                         *((__m256i*)broadcastedTick.broadcastTick.tick.prevComputerDigest) = *((__m256i*)broadcastedTick.broadcastTick.tick.initComputerDigest) = ZERO;
 
-                                        *((__m256i*)broadcastedTick.broadcastTick.tick.nextTickDataDigest) = ZERO;
+                                        unsigned short prevTickMillisecond;
+                                        unsigned char prevTickSecond, prevTickMinute, prevTickHour, prevTickDay, prevTickMonth, prevTickYear;
+
+                                        if (system.tick == TICK)
+                                        {
+                                            prevTickMillisecond = system.epochBeginningMillisecond;
+                                            prevTickSecond = system.epochBeginningSecond;
+                                            prevTickMinute = system.epochBeginningMinute;
+                                            prevTickHour = system.epochBeginningHour;
+                                            prevTickDay = system.epochBeginningDay;
+                                            prevTickMonth = system.epochBeginningMonth;
+                                            prevTickYear = system.epochBeginningYear;
+                                        }
+                                        else
+                                        {
+                                            QuorumTick* prevTick = &quorumTicks[system.tick - TICK - 1];
+                                            prevTickMillisecond = prevTick->millisecond;
+                                            prevTickSecond = prevTick->second;
+                                            prevTickMinute = prevTick->minute;
+                                            prevTickHour = prevTick->hour;
+                                            prevTickDay = prevTick->day;
+                                            prevTickMonth = prevTick->month;
+                                            prevTickYear = prevTick->year;
+                                        }
+
+                                        TickData* curTickData = &tickData[system.tick - TICK];
+                                        if (curTickData->epoch == system.epoch
+                                            && (curTickData->year > prevTickYear
+                                                || (curTickData->year == prevTickYear && (curTickData->month > prevTickMonth
+                                                    || (curTickData->month == prevTickMonth && (curTickData->day > prevTickDay
+                                                        || (curTickData->day == prevTickDay && (curTickData->hour > prevTickHour
+                                                            || (curTickData->hour == prevTickHour && (curTickData->minute > prevTickMinute
+                                                                || (curTickData->minute == prevTickMinute && (curTickData->second > prevTickSecond
+                                                                    || (curTickData->second == prevTickSecond && curTickData->millisecond > prevTickMillisecond)))))))))))))
+                                        {
+                                            broadcastedTick.broadcastTick.tick.millisecond = curTickData->millisecond;
+                                            broadcastedTick.broadcastTick.tick.second = curTickData->second;
+                                            broadcastedTick.broadcastTick.tick.minute = curTickData->minute;
+                                            broadcastedTick.broadcastTick.tick.hour = curTickData->hour;
+                                            broadcastedTick.broadcastTick.tick.day = curTickData->day;
+                                            broadcastedTick.broadcastTick.tick.month = curTickData->month;
+                                            broadcastedTick.broadcastTick.tick.year = curTickData->year;
+                                        }
+                                        else
+                                        {
+                                            broadcastedTick.broadcastTick.tick.millisecond = prevTickMillisecond;
+                                            broadcastedTick.broadcastTick.tick.second = prevTickSecond;
+                                            broadcastedTick.broadcastTick.tick.minute = prevTickMinute;
+                                            broadcastedTick.broadcastTick.tick.hour = prevTickHour;
+                                            broadcastedTick.broadcastTick.tick.day = prevTickDay;
+                                            broadcastedTick.broadcastTick.tick.month = prevTickMonth;
+                                            broadcastedTick.broadcastTick.tick.year = prevTickYear;
+
+                                            if (++broadcastedTick.broadcastTick.tick.millisecond > 999)
+                                            {
+                                                broadcastedTick.broadcastTick.tick.millisecond = 0;
+
+                                                if (++broadcastedTick.broadcastTick.tick.second > 59)
+                                                {
+                                                    broadcastedTick.broadcastTick.tick.second = 0;
+
+                                                    if (++broadcastedTick.broadcastTick.tick.minute > 59)
+                                                    {
+                                                        broadcastedTick.broadcastTick.tick.minute = 0;
+
+                                                        if (++broadcastedTick.broadcastTick.tick.hour > 23)
+                                                        {
+                                                            broadcastedTick.broadcastTick.tick.hour = 0;
+
+                                                            if (++broadcastedTick.broadcastTick.tick.day > ((broadcastedTick.broadcastTick.tick.month == 1 || broadcastedTick.broadcastTick.tick.month == 3 || broadcastedTick.broadcastTick.tick.month == 5 || broadcastedTick.broadcastTick.tick.month == 7 || broadcastedTick.broadcastTick.tick.month == 8 || broadcastedTick.broadcastTick.tick.month == 10 || broadcastedTick.broadcastTick.tick.month == 12) ? 31 : ((broadcastedTick.broadcastTick.tick.month == 4 || broadcastedTick.broadcastTick.tick.month == 6 || broadcastedTick.broadcastTick.tick.month == 9 || broadcastedTick.broadcastTick.tick.month == 11) ? 30 : ((broadcastedTick.broadcastTick.tick.year & 3) ? 28 : 29))))
+                                                            {
+                                                                broadcastedTick.broadcastTick.tick.day = 1;
+
+                                                                if (++broadcastedTick.broadcastTick.tick.month > 12)
+                                                                {
+                                                                    broadcastedTick.broadcastTick.tick.month = 1;
+
+                                                                    ++broadcastedTick.broadcastTick.tick.year;
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        TickData* nextTickData = &tickData[system.tick + 1 - TICK];
+                                        if (nextTickData->epoch == system.epoch)
+                                        {
+                                            KangarooTwelve((unsigned char*)nextTickData, sizeof(TickData), broadcastedTick.broadcastTick.tick.nextTickDataDigest, 32);
+                                        }
+                                        else
+                                        {
+                                            *((__m256i*)broadcastedTick.broadcastTick.tick.nextTickDataDigest) = ZERO;
+                                        }
 
                                         for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
                                         {
@@ -7658,6 +7798,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         {
                                             for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
                                             {
+                                                if (system.faults[j])
+                                                {
+                                                    continue;
+                                                }
+
                                                 while (_InterlockedCompareExchange8(&tickLocks[j], 1, 0))
                                                 {
                                                     _mm_pause();
@@ -7738,7 +7883,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 futureTickNumberOfComputors = 0;
 
                                                 system.tick++;
-                                                totalNumberOfTicks++;
 
                                                 for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
                                                 {
@@ -7830,8 +7974,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     {
                                                         push(&peers[j], &requestedQuorumTick.header, true);
                                                     }
-
-                                                    numberOfLostTicks++;
                                                 }
                                             }
                                         }
@@ -7993,16 +8135,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     appendText(message, L"+");
                                     appendNumber(message, numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS), TRUE);
 
-                                    appendText(message, L" | ");
-                                    appendNumber(message, numberOfLostTicks, TRUE);
-                                    appendText(message, L"/");
-                                    appendNumber(message, totalNumberOfTicks, TRUE);
-                                    appendText(message, L" lost ticks | Tick = ");
-
+                                    appendText(message, L" | Tick = ");
                                     unsigned long long tickDuration = (tickTicks[sizeof(tickTicks) / sizeof(tickTicks[0]) - 1] - tickTicks[0]) / (sizeof(tickTicks) / sizeof(tickTicks[0]) - 1);
                                     appendNumber(message, tickDuration / frequency, FALSE);
                                     appendText(message, L".");
-                                    appendNumber(message, (tickDuration% frequency) * 10 / frequency, FALSE);
+                                    appendNumber(message, (tickDuration % frequency) * 10 / frequency, FALSE);
 #if NUMBER_OF_MINING_PROCESSORS
                                     appendText(message, L" s | Score = ");
                                     int score = 0;
@@ -8054,7 +8191,18 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 appendNumber(message, totalRevenue, TRUE);
                                                 appendText(message, L"/");
                                                 appendNumber(message, maxRevenue, TRUE);
-                                                appendText(message, L" qus).");
+                                                appendText(message, L" qus) | ");
+
+                                                unsigned int numberOfFaultyComputors = 0;
+                                                for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
+                                                {
+                                                    if (system.faults[j])
+                                                    {
+                                                        numberOfFaultyComputors++;
+                                                    }
+                                                }
+                                                appendNumber(message, numberOfFaultyComputors, TRUE);
+                                                appendText(message, L" faulty computors.");
                                             }
                                         }
                                     }
@@ -8217,7 +8365,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     if (receivedDataSize >= sizeof(RequestResponseHeader))
                                                     {
                                                         RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                        if (requestResponseHeader->protocol < VERSION_B - 1 || requestResponseHeader->protocol > VERSION_B + 1)
+                                                        if (requestResponseHeader->protocol < VERSION_B || requestResponseHeader->protocol > VERSION_B + 1)
                                                         {
                                                             closePeer(i);
                                                         }
