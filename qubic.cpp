@@ -37,7 +37,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 54
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -4937,7 +4937,7 @@ static struct System
     unsigned char epochBeginningMonth;
     unsigned char epochBeginningYear;
 } system;
-static unsigned int tickNumberOfComputors = 0, futureTickNumberOfComputors = 0;
+static unsigned int tickNumberOfComputors = 0, totalTickNumberOfComputors = 0, futureTickNumberOfComputors = 0;
 static unsigned long long latestRevenuePublicationTick = 0;
 static unsigned short numberOfOwnComputorIndices = 0;
 static short ownComputorIndices[NUMBER_OF_COMPUTORS / 3];
@@ -5217,6 +5217,10 @@ static void log(const CHAR16* message)
     appendNumber(timestampedMessage, tickNumberOfComputors / 100, FALSE);
     appendNumber(timestampedMessage, (tickNumberOfComputors % 100) / 10, FALSE);
     appendNumber(timestampedMessage, tickNumberOfComputors % 10, FALSE);
+    appendText(timestampedMessage, L"/");
+    appendNumber(timestampedMessage, totalTickNumberOfComputors / 100, FALSE);
+    appendNumber(timestampedMessage, (totalTickNumberOfComputors % 100) / 10, FALSE);
+    appendNumber(timestampedMessage, totalTickNumberOfComputors % 10, FALSE);
     appendText(timestampedMessage, L"(");
     appendNumber(timestampedMessage, futureTickNumberOfComputors / 100, FALSE);
     appendNumber(timestampedMessage, (futureTickNumberOfComputors % 100) / 10, FALSE);
@@ -7811,6 +7815,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     }
 
                                     tickNumberOfComputors = 0;
+                                    totalTickNumberOfComputors = 0;
                                     futureTickNumberOfComputors = 0;
                                     if (!spectrumDigestLevel)
                                     {
@@ -7839,6 +7844,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                 if (actualTicks[j].epoch)
                                                 {
+                                                    totalTickNumberOfComputors++;
+
                                                     if (actualTicks[j].epoch == system.epoch
                                                         && actualTicks[j].tick == system.tick + 1
                                                         && *((unsigned long long*) & actualTicks[j].millisecond) == *((unsigned long long*) & actualTicks[ownComputorIndices[0]].millisecond)
