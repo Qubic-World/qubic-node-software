@@ -37,7 +37,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 54
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -6982,10 +6982,11 @@ static BOOLEAN initialize()
                 if (system.epoch < EPOCH)
                 {
                     bs->SetMem(system.tickCounters, sizeof(system.tickCounters), 0);
-                    bs->SetMem(system.faults, sizeof(system.faults), 0);
                 }
                 system.epoch = EPOCH;
                 system.tick = TICK;
+                bs->SetMem(system.faults, sizeof(system.faults), 0);
+                system.epochBeginningMonth = system.epochBeginningDay = 1;
             }
         }
 
@@ -7374,6 +7375,10 @@ static unsigned int revenue(unsigned int computorIndex)
             revenueAmounts[numberOfRevenues++] = revenues[i].revenues[computorIndex];
         }
     }
+    if (!numberOfRevenues)
+    {
+        return 0;
+    }
     while (numberOfRevenues > QUORUM)
     {
         int i = 0;
@@ -7737,6 +7742,30 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 }
                                             }
                                         }
+                                        setText(message, L"Tick time is set to ");
+                                        appendNumber(message, broadcastedTick.broadcastTick.tick.year / 10, FALSE);
+                                        appendNumber(message, broadcastedTick.broadcastTick.tick.year % 10, FALSE);
+                                        appendText(message, L".");
+                                        appendNumber(message, broadcastedTick.broadcastTick.tick.month / 10, FALSE);
+                                        appendNumber(message, broadcastedTick.broadcastTick.tick.month % 10, FALSE);
+                                        appendText(message, L".");
+                                        appendNumber(message, broadcastedTick.broadcastTick.tick.day / 10, FALSE);
+                                        appendNumber(message, broadcastedTick.broadcastTick.tick.day % 10, FALSE);
+                                        appendText(message, L" ");
+                                        appendNumber(message, broadcastedTick.broadcastTick.tick.hour / 10, FALSE);
+                                        appendNumber(message, broadcastedTick.broadcastTick.tick.hour % 10, FALSE);
+                                        appendText(message, L":");
+                                        appendNumber(message, broadcastedTick.broadcastTick.tick.minute / 10, FALSE);
+                                        appendNumber(message, broadcastedTick.broadcastTick.tick.minute % 10, FALSE);
+                                        appendText(message, L":");
+                                        appendNumber(message, broadcastedTick.broadcastTick.tick.second / 10, FALSE);
+                                        appendNumber(message, broadcastedTick.broadcastTick.tick.second % 10, FALSE);
+                                        appendText(message, L".");
+                                        appendNumber(message, broadcastedTick.broadcastTick.tick.millisecond / 100, FALSE);
+                                        appendNumber(message, broadcastedTick.broadcastTick.tick.millisecond % 100 / 10, FALSE);
+                                        appendNumber(message, broadcastedTick.broadcastTick.tick.millisecond % 10, FALSE);
+                                        appendText(message, L".");
+                                        log(message);
 
                                         TickData* nextTickData = &tickData[system.tick + 1 - TICK];
                                         if (nextTickData->epoch == system.epoch)
@@ -8191,7 +8220,17 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 appendNumber(message, totalRevenue, TRUE);
                                                 appendText(message, L"/");
                                                 appendNumber(message, maxRevenue, TRUE);
-                                                appendText(message, L" qus) | ");
+                                                unsigned int numberOfRevenueVotes = 0;
+                                                for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
+                                                {
+                                                    if (revenues[j].epoch == system.epoch)
+                                                    {
+                                                        numberOfRevenueVotes++;
+                                                    }
+                                                }
+                                                appendText(message, L" qus by ");
+                                                appendNumber(message, numberOfRevenueVotes, TRUE);
+                                                appendText(message, L" computors) | ");
 
                                                 unsigned int numberOfFaultyComputors = 0;
                                                 for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
@@ -9332,6 +9371,12 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         {
                                             closePeer(i);
                                         }
+                                    }
+                                    break;
+
+                                    case 0x10:
+                                    {
+                                        latestOwnTick = 0;
                                     }
                                     break;
 
