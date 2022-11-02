@@ -36,13 +36,13 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 54
-#define VERSION_C 3
+#define VERSION_B 55
+#define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
-#define EPOCH 28 // Do NOT change!
-#define TICK 3500000 // Do NOT change!
+#define EPOCH 29 // Do NOT change!
+#define TICK 3500015 // Do NOT change!
 
 #include <intrin.h>
 
@@ -4525,7 +4525,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define NUMBER_OF_INCOMING_CONNECTIONS 48
 #define NUMBER_OF_COMPUTORS 676
 #define NUMBER_OF_CLIENT_CONNECTIONS 100
-#define NUMBER_OF_NEURONS 20000
+#define NUMBER_OF_NEURONS 19000
 #define NUMBER_OF_SOLUTION_NONCES 1000
 #define NUMBER_OF_TRANSACTIONS_PER_TICK 1000
 #define PEER_REFRESHING_PERIOD 60
@@ -4966,13 +4966,13 @@ static volatile unsigned char spectrumDigestLevel = 0;
 static volatile short spectrumDigestLevelCompleteness = 0;
 static __m256i* spectrumDigests = NULL;
 #endif
-/**///static unsigned int chosenTransfersInvocationsAndQuestionSizes[NUMBER_OF_COMPUTORS];
-/**///static char chosenTransfersInvocationsAndQuestionBytes[NUMBER_OF_COMPUTORS][sizeof(BroadcastFutureTickData) + (sizeof(Transfer) + MAX_TRANSFER_DESCRIPTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_TRANSFERS_PER_TICK + (sizeof(Invocation) + MAX_INVOCATION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_INVOCATIONS_PER_TICK + (sizeof(Question) + MAX_QUESTION_SIZE + SIGNATURE_SIZE) * MAX_NUMBER_OF_QUESTIONS_PER_TICK + SIGNATURE_SIZE];
 
 static volatile char tickLocks[NUMBER_OF_COMPUTORS];
 static Tick latestTicks[NUMBER_OF_COMPUTORS];
 #if NUMBER_OF_COMPUTING_PROCESSORS
 static Tick actualTicks[NUMBER_OF_COMPUTORS];
+static Tick etalonTick;
+static bool ownTicksAreInvalid;
 #endif
 static Tick previousTicks[NUMBER_OF_COMPUTORS];
 static unsigned long long tickTicks[11];
@@ -6935,7 +6935,6 @@ static BOOLEAN initialize()
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
         bs->SetMem(numberOfBufferedTransfers, sizeof(numberOfBufferedTransfers), 0);
-        /**///bs->SetMem(chosenTransfersInvocationsAndQuestionSizes, sizeof(chosenTransfersInvocationsAndQuestionSizes), 0);
 
         if (status = bs->AllocatePool(EfiRuntimeServicesData, ((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * sizeof(QuorumTick), (void**)&quorumTicks))
         {
@@ -7124,14 +7123,14 @@ static BOOLEAN initialize()
 #if NUMBER_OF_MINING_PROCESSORS
         unsigned char randomSeed[32];
         bs->SetMem(randomSeed, 32, 0);
-        randomSeed[0] = 8;
-        randomSeed[1] = 234;
-        randomSeed[2] = 87;
-        randomSeed[3] = 140;
-        randomSeed[4] = 251;
-        randomSeed[5] = 73;
-        randomSeed[6] = 216;
-        randomSeed[7] = 18;
+        randomSeed[0] = 200;
+        randomSeed[1] = 80;
+        randomSeed[2] = 105;
+        randomSeed[3] = 2;
+        randomSeed[4] = 212;
+        randomSeed[5] = 16;
+        randomSeed[6] = 70;
+        randomSeed[7] = 28;
         random(randomSeed, randomSeed, (unsigned char*)miningData, sizeof(miningData));
 
         if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SOLUTION_FILE_NAME, EFI_FILE_MODE_READ, 0))
@@ -7687,7 +7686,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         }
 
                                         TickData* curTickData = &tickData[system.tick - TICK];
-                                        if (curTickData->epoch == system.epoch
+                                        if (curTickData->epoch == system.epoch && system.tick > TICK && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)quorumTicks[system.tick - TICK - 1].nextTickDataDigest), ZERO)) != 0xFFFFFFFF
                                             && (curTickData->year > prevTickYear
                                                 || (curTickData->year == prevTickYear && (curTickData->month > prevTickMonth
                                                     || (curTickData->month == prevTickMonth && (curTickData->day > prevTickDay
@@ -7811,6 +7810,12 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             bs->CopyMem(&previousTicks[ownComputorIndices[i]], &actualTicks[ownComputorIndices[i]], sizeof(Tick));
                                             bs->CopyMem(&actualTicks[ownComputorIndices[i]], &broadcastedTick.broadcastTick.tick, sizeof(Tick));
                                             _InterlockedCompareExchange8(&tickLocks[ownComputorIndices[i]], 0, 1);
+
+                                            if (!i)
+                                            {
+                                                bs->CopyMem(&etalonTick, &broadcastedTick.broadcastTick.tick, sizeof(Tick));
+                                                ownTicksAreInvalid = false;
+                                            }
                                         }
                                     }
 
@@ -7822,7 +7827,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         bs->SetMem(counters, sizeof(counters), 0);
                                         tickNumberOfComputors = 0;
                                         futureTickNumberOfComputors = 0;
-                                        const unsigned int quorumTickIndex = actualTicks[ownComputorIndices[0]].tick - TICK - 1;
+                                        const unsigned int quorumTickIndex = etalonTick.tick - TICK - 1;
                                         if (quorumTickIndex >= MAX_NUMBER_OF_TICKS_PER_EPOCH)
                                         {
                                             log(L"Too many ticks this epoch!");
@@ -7836,6 +7841,22 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 if (system.faults[i])
                                                 {
                                                     continue;
+                                                }
+
+                                                if (ownTicksAreInvalid)
+                                                {
+                                                    unsigned int j;
+                                                    for (j = 0; j < numberOfOwnComputorIndices; j++)
+                                                    {
+                                                        if (ownComputorIndices[j] == i)
+                                                        {
+                                                            break;
+                                                        }
+                                                    }
+                                                    if (j < numberOfOwnComputorIndices)
+                                                    {
+                                                        continue;
+                                                    }
                                                 }
 
                                                 while (_InterlockedCompareExchange8(&tickLocks[i], 1, 0))
@@ -7864,14 +7885,14 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                         nextTickDataDigestCounters[j]++;
                                                     }
 
-                                                    if (*((unsigned long long*) & actualTicks[i].millisecond) == *((unsigned long long*) & actualTicks[ownComputorIndices[0]].millisecond)
-                                                        && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[i].prevSpectrumDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].prevSpectrumDigest))) == 0xFFFFFFFF
-                                                        && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[i].prevUniverseDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].prevUniverseDigest))) == 0xFFFFFFFF
-                                                        && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[i].prevComputerDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].prevComputerDigest))) == 0xFFFFFFFF
-                                                        && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[i].initSpectrumDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].initSpectrumDigest))) == 0xFFFFFFFF
-                                                        && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[i].initUniverseDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].initUniverseDigest))) == 0xFFFFFFFF
-                                                        && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[i].initComputerDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].initComputerDigest))) == 0xFFFFFFFF
-                                                        && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[i].nextTickDataDigest), *((__m256i*)actualTicks[ownComputorIndices[0]].nextTickDataDigest))) == 0xFFFFFFFF)
+                                                    if (*((unsigned long long*) & actualTicks[i].millisecond) == *((unsigned long long*) & etalonTick.millisecond)
+                                                        && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[i].prevSpectrumDigest), *((__m256i*)etalonTick.prevSpectrumDigest))) == 0xFFFFFFFF
+                                                        && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[i].prevUniverseDigest), *((__m256i*)etalonTick.prevUniverseDigest))) == 0xFFFFFFFF
+                                                        && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[i].prevComputerDigest), *((__m256i*)etalonTick.prevComputerDigest))) == 0xFFFFFFFF
+                                                        && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[i].initSpectrumDigest), *((__m256i*)etalonTick.initSpectrumDigest))) == 0xFFFFFFFF
+                                                        && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[i].initUniverseDigest), *((__m256i*)etalonTick.initUniverseDigest))) == 0xFFFFFFFF
+                                                        && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[i].initComputerDigest), *((__m256i*)etalonTick.initComputerDigest))) == 0xFFFFFFFF
+                                                        && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[i].nextTickDataDigest), *((__m256i*)etalonTick.nextTickDataDigest))) == 0xFFFFFFFF)
                                                     {
                                                         unsigned char saltedData[32 + 32];
                                                         *((__m256i*) & saltedData[0]) = *((__m256i*)broadcastedComputors.broadcastComputors.computors.publicKeys[actualTicks[i].computorIndex]);
@@ -7880,12 +7901,12 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                         KangarooTwelve64To32(saltedData, saltedDigest);
                                                         if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[i].saltedSpectrumDigest), *((__m256i*)saltedDigest))) == 0xFFFFFFFF)
                                                         {
-                                                            *((__m256i*) & saltedData[32]) = *((__m256i*)actualTicks[ownComputorIndices[0]].prevUniverseDigest);
+                                                            *((__m256i*) & saltedData[32]) = *((__m256i*)etalonTick.prevUniverseDigest);
                                                             unsigned char saltedDigest[32];
                                                             KangarooTwelve64To32(saltedData, saltedDigest);
                                                             if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[i].saltedUniverseDigest), *((__m256i*)saltedDigest))) == 0xFFFFFFFF)
                                                             {
-                                                                *((__m256i*) & saltedData[32]) = *((__m256i*)actualTicks[ownComputorIndices[0]].prevComputerDigest);
+                                                                *((__m256i*) & saltedData[32]) = *((__m256i*)etalonTick.prevComputerDigest);
                                                                 unsigned char saltedDigest[32];
                                                                 KangarooTwelve64To32(saltedData, saltedDigest);
                                                                 if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[i].saltedComputerDigest), *((__m256i*)saltedDigest))) == 0xFFFFFFFF)
@@ -7916,20 +7937,20 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if (tickNumberOfComputors >= QUORUM)
                                             {
                                                 quorumTicks[quorumTickIndex].numberOfComputorSignatures = QUORUM;
-                                                quorumTicks[quorumTickIndex].epoch = actualTicks[ownComputorIndices[0]].epoch;
-                                                quorumTicks[quorumTickIndex].tick = actualTicks[ownComputorIndices[0]].tick;
-                                                *((unsigned long long*) & quorumTicks[quorumTickIndex].millisecond) = *((unsigned long long*) & actualTicks[ownComputorIndices[0]].millisecond);
-                                                *((__m256i*)quorumTicks[quorumTickIndex].initSpectrumDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].initSpectrumDigest);
-                                                *((__m256i*)quorumTicks[quorumTickIndex].initUniverseDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].initUniverseDigest);
-                                                *((__m256i*)quorumTicks[quorumTickIndex].initComputerDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].initComputerDigest);
-                                                *((__m256i*)quorumTicks[quorumTickIndex].prevSpectrumDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].prevSpectrumDigest);
-                                                *((__m256i*)quorumTicks[quorumTickIndex].prevUniverseDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].prevUniverseDigest);
-                                                *((__m256i*)quorumTicks[quorumTickIndex].prevComputerDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].prevComputerDigest);
+                                                quorumTicks[quorumTickIndex].epoch = etalonTick.epoch;
+                                                quorumTicks[quorumTickIndex].tick = etalonTick.tick;
+                                                *((unsigned long long*) & quorumTicks[quorumTickIndex].millisecond) = *((unsigned long long*) & etalonTick.millisecond);
+                                                *((__m256i*)quorumTicks[quorumTickIndex].initSpectrumDigest) = *((__m256i*)etalonTick.initSpectrumDigest);
+                                                *((__m256i*)quorumTicks[quorumTickIndex].initUniverseDigest) = *((__m256i*)etalonTick.initUniverseDigest);
+                                                *((__m256i*)quorumTicks[quorumTickIndex].initComputerDigest) = *((__m256i*)etalonTick.initComputerDigest);
+                                                *((__m256i*)quorumTicks[quorumTickIndex].prevSpectrumDigest) = *((__m256i*)etalonTick.prevSpectrumDigest);
+                                                *((__m256i*)quorumTicks[quorumTickIndex].prevUniverseDigest) = *((__m256i*)etalonTick.prevUniverseDigest);
+                                                *((__m256i*)quorumTicks[quorumTickIndex].prevComputerDigest) = *((__m256i*)etalonTick.prevComputerDigest);
                                                 *((__m256i*)quorumTicks[quorumTickIndex].spectrumDigest) = *((__m256i*) & spectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1]);
-                                                *((__m256i*)quorumTicks[quorumTickIndex].universeDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].prevUniverseDigest);
-                                                *((__m256i*)quorumTicks[quorumTickIndex].computerDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].prevComputerDigest);
-                                                *((__m256i*)quorumTicks[quorumTickIndex].nextTickDataDigest) = *((__m256i*)actualTicks[ownComputorIndices[0]].nextTickDataDigest);
-                                                saveTick(&quorumTicks[quorumTickIndex], &tickData[quorumTickIndex]); // TODO
+                                                *((__m256i*)quorumTicks[quorumTickIndex].universeDigest) = *((__m256i*)etalonTick.prevUniverseDigest);
+                                                *((__m256i*)quorumTicks[quorumTickIndex].computerDigest) = *((__m256i*)etalonTick.prevComputerDigest);
+                                                *((__m256i*)quorumTicks[quorumTickIndex].nextTickDataDigest) = *((__m256i*)etalonTick.nextTickDataDigest);
+                                                saveTick(&quorumTicks[quorumTickIndex], &tickData[quorumTickIndex]);
 
                                                 tickNumberOfComputors = 0;
                                                 futureTickNumberOfComputors = 0;
@@ -8030,74 +8051,59 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 if (i < numberOfNextTickDataDigests)
                                                 {
                                                     if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(nextTickDataDigests[i], ZERO)) == 0xFFFFFFFF
-                                                        && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[ownComputorIndices[0]].nextTickDataDigest), ZERO)) != 0xFFFFFFFF)
+                                                        && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)etalonTick.nextTickDataDigest), ZERO)) != 0xFFFFFFFF)
                                                     {
-                                                        bs->SetMem(&tickData[system.tick + 1 - TICK], sizeof(TickData), 0);
-
-                                                        while (_InterlockedCompareExchange8(&tickLocks[ownComputorIndices[0]], 1, 0))
-                                                        {
-                                                            _mm_pause();
-                                                        }
-                                                        bs->CopyMem(&broadcastedTick.broadcastTick.tick, &actualTicks[ownComputorIndices[0]], sizeof(Tick));
-                                                        _InterlockedCompareExchange8(&tickLocks[ownComputorIndices[0]], 0, 1);
-
-                                                        *((__m256i*)broadcastedTick.broadcastTick.tick.nextTickDataDigest) = ZERO;
-
-                                                        for (unsigned int j = 0; j < numberOfOwnComputorIndices; j++)
-                                                        {
-                                                            broadcastedTick.broadcastTick.tick.computorIndex = ownComputorIndices[j] ^ BROADCAST_TICK;
-                                                            unsigned char saltedData[32 + 32];
-                                                            *((__m256i*) & saltedData[0]) = *((__m256i*)ownPublicKeys[ownComputorIndicesMapping[j]]);
-                                                            *((__m256i*) & saltedData[32]) = *((__m256i*) & spectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1]);
-                                                            KangarooTwelve64To32(saltedData, broadcastedTick.broadcastTick.tick.saltedSpectrumDigest);
-                                                            *((__m256i*) & saltedData[32]) = *((__m256i*)broadcastedTick.broadcastTick.tick.prevUniverseDigest);
-                                                            KangarooTwelve64To32(saltedData, broadcastedTick.broadcastTick.tick.saltedUniverseDigest);
-                                                            *((__m256i*) & saltedData[32]) = *((__m256i*)broadcastedTick.broadcastTick.tick.prevComputerDigest);
-                                                            KangarooTwelve64To32(saltedData, broadcastedTick.broadcastTick.tick.saltedComputerDigest);
-
-                                                            unsigned char digest[32];
-                                                            KangarooTwelve((unsigned char*)&broadcastedTick.broadcastTick.tick, broadcastedTick.header.size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
-                                                            broadcastedTick.broadcastTick.tick.computorIndex ^= BROADCAST_TICK;
-                                                            sign(ownSubseeds[ownComputorIndicesMapping[j]], ownPublicKeys[ownComputorIndicesMapping[j]], digest, broadcastedTick.broadcastTick.tick.signature);
-
-                                                            while (_InterlockedCompareExchange8(&tickLocks[ownComputorIndices[j]], 1, 0))
-                                                            {
-                                                                _mm_pause();
-                                                            }
-                                                            bs->CopyMem(&latestTicks[ownComputorIndices[j]], &broadcastedTick.broadcastTick.tick, sizeof(Tick));
-                                                            bs->CopyMem(&previousTicks[ownComputorIndices[j]], &actualTicks[ownComputorIndices[j]], sizeof(Tick));
-                                                            bs->CopyMem(&actualTicks[ownComputorIndices[j]], &broadcastedTick.broadcastTick.tick, sizeof(Tick));
-                                                            _InterlockedCompareExchange8(&tickLocks[ownComputorIndices[j]], 0, 1);
-                                                        }
+                                                        *((__m256i*)etalonTick.nextTickDataDigest) = ZERO;
+                                                        ownTicksAreInvalid = true;
                                                     }
                                                     else
                                                     {
                                                         if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(nextTickDataDigests[i], ZERO)) != 0xFFFFFFFF
-                                                            && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[ownComputorIndices[0]].nextTickDataDigest), ZERO)) == 0xFFFFFFFF)
+                                                            && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)etalonTick.nextTickDataDigest), ZERO)) == 0xFFFFFFFF)
                                                         {
-                                                            if (requestedTickData.requestTickData.requestedTickData.tick != actualTicks[ownComputorIndices[0]].tick)
+                                                            if (tickData[system.tick + 1 - TICK].epoch == system.epoch)
                                                             {
-                                                                requestedTickData.requestTickData.requestedTickData.tick = actualTicks[ownComputorIndices[0]].tick;
-                                                                for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
+                                                                unsigned char digest[32];
+                                                                KangarooTwelve((unsigned char*)&tickData[system.tick + 1 - TICK], sizeof(TickData), digest, 32);
+                                                                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)digest), nextTickDataDigests[i])) == 0xFFFFFFFF)
                                                                 {
-                                                                    push(&peers[j], &requestedTickData.header, true);
+                                                                    *((__m256i*)etalonTick.nextTickDataDigest) = nextTickDataDigests[i];
+                                                                    ownTicksAreInvalid = true;
+                                                                }
+                                                                else
+                                                                {
+                                                                    // TODO: I have tick data different to quorum's tick data
+                                                                    log(L"Report case A!");
+                                                                }
+                                                            }
+                                                            else
+                                                            {
+                                                                if (requestedTickData.requestTickData.requestedTickData.tick != etalonTick.tick + 1)
+                                                                {
+                                                                    requestedTickData.requestTickData.requestedTickData.tick = etalonTick.tick + 1;
+                                                                    for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
+                                                                    {
+                                                                        push(&peers[j], &requestedTickData.header, true);
+                                                                    }
                                                                 }
                                                             }
                                                         }
                                                         else
                                                         {
                                                             // TODO: I have tick data different to quorum's tick data
+                                                            log(L"Report case B!");
                                                         }
                                                     }
                                                 }
                                                 else
                                                 {
                                                     // TODO: Quorum may have different versions of tick data
+                                                    log(L"Report case C!");
                                                 }
 
-                                                if (futureTickNumberOfComputors >= QUORUM && requestedQuorumTick.requestQuorumTick.quorumTick.tick != actualTicks[ownComputorIndices[0]].tick)
+                                                if (futureTickNumberOfComputors > (NUMBER_OF_COMPUTORS - QUORUM) && requestedQuorumTick.requestQuorumTick.quorumTick.tick != etalonTick.tick)
                                                 {
-                                                    requestedQuorumTick.requestQuorumTick.quorumTick.tick = actualTicks[ownComputorIndices[0]].tick;
+                                                    requestedQuorumTick.requestQuorumTick.quorumTick.tick = etalonTick.tick;
                                                     for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
                                                     {
                                                         push(&peers[j], &requestedQuorumTick.header, true);
