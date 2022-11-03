@@ -37,7 +37,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 55
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -4763,7 +4763,7 @@ typedef struct
     unsigned char day;
     unsigned char month;
     unsigned char year;
-    __m256i transactionDigests[NUMBER_OF_TRANSACTIONS_PER_TICK];
+    unsigned char transactionDigests[NUMBER_OF_TRANSACTIONS_PER_TICK];
     unsigned char signature[SIGNATURE_SIZE];
 } TickData;
 
@@ -5732,7 +5732,7 @@ static void requestProcessor(void* ProcedureArgument)
                                     {
                                         for (unsigned int i = 0; i < NUMBER_OF_TRANSACTIONS_PER_TICK; i++)
                                         {
-                                            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(request->tickData.transactionDigests[i], futureTickData->transactionDigests[i])) != 0xFFFFFFFF)
+                                            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->tickData.transactionDigests[i]), *((__m256i*)futureTickData->transactionDigests[i]))) != 0xFFFFFFFF)
                                             {
                                                 system.faults[request->tickData.computorIndex] |= MULTIPLE_FUTURE_TICK_DATA_VERSIONS_FAULT;
 
@@ -5925,7 +5925,7 @@ static void requestProcessor(void* ProcedureArgument)
                                 {
                                     for (unsigned int i = 0; i < NUMBER_OF_TRANSACTIONS_PER_TICK; i++)
                                     {
-                                        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(request->tickData.transactionDigests[i], futureTickData->transactionDigests[i])) != 0xFFFFFFFF)
+                                        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->tickData.transactionDigests[i]), *((__m256i*)futureTickData->transactionDigests[i]))) != 0xFFFFFFFF)
                                         {
                                             system.faults[request->tickData.computorIndex] |= MULTIPLE_FUTURE_TICK_DATA_VERSIONS_FAULT;
 
@@ -8018,7 +8018,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                             for (unsigned int j = 0; j < NUMBER_OF_TRANSACTIONS_PER_TICK; j++)
                                                             {
-                                                                broadcastedFutureTickData.broadcastFutureTickData.tickData.transactionDigests[j] = ZERO;
+                                                                *((__m256i*)broadcastedFutureTickData.broadcastFutureTickData.tickData.transactionDigests[j]) = ZERO;
                                                             }
 
                                                             unsigned char digest[32];
@@ -8098,7 +8098,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 else
                                                 {
                                                     // TODO: Quorum may have different versions of tick data
-                                                    log(L"Report case C!");
                                                 }
 
                                                 if (futureTickNumberOfComputors > (NUMBER_OF_COMPUTORS - QUORUM) && requestedQuorumTick.requestQuorumTick.quorumTick.tick != etalonTick.tick)
@@ -8510,7 +8509,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     if (receivedDataSize >= sizeof(RequestResponseHeader))
                                                     {
                                                         RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                        if (requestResponseHeader->protocol < VERSION_B || requestResponseHeader->protocol > VERSION_B + 1)
+                                                        if (requestResponseHeader->protocol < VERSION_B - 1 || requestResponseHeader->protocol > VERSION_B + 1)
                                                         {
                                                             closePeer(i);
                                                         }
