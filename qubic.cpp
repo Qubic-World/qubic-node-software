@@ -23,6 +23,7 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 #define SYSTEM_FILE_NAME L"system.data"
 #define TICKS_FILE_NAME L"ticks.data"
 #define TICK_TRANSACTION_DIGESTS_FILE_NAME L"tick_transaction_digests.data"
+static unsigned short TICK_TRANSACTIONS_FILE_NAME[] = L"tick_transactions.??.???";
 
 static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
     "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
@@ -40,13 +41,13 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 55
-#define VERSION_C 3
+#define VERSION_B 56
+#define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
 #define EPOCH 29 // Do NOT change!
-#define TICK 3510000 // Do NOT change!
+#define TICK 3510100 // Do NOT change!
 
 #include <intrin.h>
 
@@ -4945,6 +4946,7 @@ static EFI_FILE_PROTOCOL* root = NULL;
 #if NUMBER_OF_COMPUTING_PROCESSORS
 static EFI_FILE_PROTOCOL* ticksFile = NULL;
 static EFI_FILE_PROTOCOL* tickTransactionDigestsFile = NULL;
+static EFI_FILE_PROTOCOL* tickTransactionsFiles[NUMBER_OF_COMPUTORS];
 
 static struct System
 {
@@ -6780,6 +6782,11 @@ static BOOLEAN initialize()
 
     ZERO = _mm256_setzero_si256();
 
+    for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+    {
+        tickTransactionsFiles[i] = NULL;
+    }
+
     for (unsigned int i = 0; i < sizeof(ownSeeds) / sizeof(ownSeeds[0]); i++)
     {
         if (!getSubseed(ownSeeds[i], ownSubseeds[i]))
@@ -7159,6 +7166,25 @@ static BOOLEAN initialize()
                 }
             }
 
+            /*for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+            {
+                TICK_TRANSACTIONS_FILE_NAME[sizeof(TICK_TRANSACTIONS_FILE_NAME) / sizeof(TICK_TRANSACTIONS_FILE_NAME[0]) - 7] = i / 26 + L'a';
+                TICK_TRANSACTIONS_FILE_NAME[sizeof(TICK_TRANSACTIONS_FILE_NAME) / sizeof(TICK_TRANSACTIONS_FILE_NAME[0]) - 6] = i % 26 + L'a';
+                TICK_TRANSACTIONS_FILE_NAME[sizeof(TICK_TRANSACTIONS_FILE_NAME) / sizeof(TICK_TRANSACTIONS_FILE_NAME[0]) - 4] = EPOCH / 100 + L'0';
+                TICK_TRANSACTIONS_FILE_NAME[sizeof(TICK_TRANSACTIONS_FILE_NAME) / sizeof(TICK_TRANSACTIONS_FILE_NAME[0]) - 3] = (EPOCH % 100) / 10 + L'0';
+                TICK_TRANSACTIONS_FILE_NAME[sizeof(TICK_TRANSACTIONS_FILE_NAME) / sizeof(TICK_TRANSACTIONS_FILE_NAME[0]) - 2] = EPOCH % 10 + L'0';
+                if (status = root->Open(root, (void**)&tickTransactionsFiles[i], (CHAR16*)TICK_TRANSACTIONS_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, EFI_FILE_ARCHIVE))
+                {
+                    logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status, __LINE__);
+
+                    return FALSE;
+                }
+                else
+                {
+                    /////
+                }
+            }*/
+
             for (unsigned int i = 0; i < numberOfTicksToProcess; i++)
             {
                 if (!processTick(&quorumTicks[i], &tickData[i]))
@@ -7310,6 +7336,13 @@ static void deinitialize()
     bs->SetMem(ownPublicKeys, sizeof(ownPublicKeys), 0);
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
+    for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+    {
+        if (tickTransactionsFiles[i])
+        {
+            tickTransactionsFiles[i]->Close(tickTransactionsFiles[i]);
+        }
+    }
     if (tickTransactionDigestsFile)
     {
         tickTransactionDigestsFile->Close(tickTransactionDigestsFile);
@@ -8581,7 +8614,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     if (receivedDataSize >= sizeof(RequestResponseHeader))
                                                     {
                                                         RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                        if (requestResponseHeader->protocol < VERSION_B - 1 || requestResponseHeader->protocol > VERSION_B + 1)
+                                                        if (requestResponseHeader->protocol < VERSION_B || requestResponseHeader->protocol > VERSION_B + 1)
                                                         {
                                                             closePeer(i);
                                                         }
