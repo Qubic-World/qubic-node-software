@@ -5,12 +5,17 @@
 #define AVX512 0
 
 // Do NOT share the data of "Private Settings" section with anybody!!!
+#if NUMBER_OF_COMPUTING_PROCESSORS
 static unsigned char computingSeeds[][55 + 1] = {
     "<seed1>",
 };
+#endif
+#if NUMBER_OF_MINING_PROCESSORS
 static unsigned char miningSeeds[][55 + 1] = {
     "<seed1>",
 };
+#define MIN_SCORE 0
+#endif
 
 static const unsigned char ownAddress[4] = { 0, 0, 0, 0 };
 static const unsigned char ownMask[4] = { 255, 255, 255, 255 };
@@ -43,7 +48,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 56
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -4930,8 +4935,12 @@ typedef struct
 
 static volatile int state = 0;
 
+#if NUMBER_OF_COMPUTING_PROCESSORS
 static unsigned char computingSubseeds[sizeof(computingSeeds) / sizeof(computingSeeds[0])][32], computingPrivateKeys[sizeof(computingSeeds) / sizeof(computingSeeds[0])][32], computingPublicKeys[sizeof(computingSeeds) / sizeof(computingSeeds[0])][32];
+#endif
+#if NUMBER_OF_MINING_PROCESSORS
 static unsigned char miningSubseeds[sizeof(miningSeeds) / sizeof(miningSeeds[0])][32], miningPrivateKeys[sizeof(miningSeeds) / sizeof(miningSeeds[0])][32], miningPublicKeys[sizeof(miningSeeds) / sizeof(miningSeeds[0])][32];
+#endif
 static unsigned char adminPublicKey[32];
 
 static struct
@@ -5057,7 +5066,7 @@ static struct
 {
     RequestResponseHeader header;
     BroadcastResourceTestingSolution broadcastResourceTestingSolution;
-} broadcastedSolution;
+} broadcastedSolutions[sizeof(miningSeeds) / sizeof(miningSeeds[0])];
 #endif
 
 static struct
@@ -6504,7 +6513,35 @@ static void minerProcessor(void* ProcedureArgument)
         _rdrand64_step((unsigned long long*)&nonce[16]);
         _rdrand64_step((unsigned long long*)&nonce[24]);
 
-        random(miningPublicKeys[0], nonce, (unsigned char*)&neuronLinks[miningProcessorIndex], sizeof(neuronLinks[0]));
+        unsigned int miningIdIndex;
+
+        unsigned int minScore = NUMBER_OF_SOLUTION_NONCES, minScoreIndex = 0;
+        for (miningIdIndex = 0; miningIdIndex < sizeof(miningSeeds) / sizeof(miningSeeds[0]); miningIdIndex++)
+        {
+            unsigned int score = 0;
+            for (unsigned int i = 0; i < NUMBER_OF_SOLUTION_NONCES; i++)
+            {
+                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)broadcastedSolutions[miningIdIndex].broadcastResourceTestingSolution.resourceTestingSolution.nonces[i]), ZERO)) != 0xFFFFFFFF)
+                {
+                    score++;
+                }
+            }
+            if (score < MIN_SCORE)
+            {
+                break;
+            }
+            if (score < minScore)
+            {
+                minScore = score;
+                minScoreIndex = miningIdIndex;
+            }
+        }
+        if (miningIdIndex == sizeof(miningSeeds) / sizeof(miningSeeds[0]))
+        {
+            miningIdIndex = minScoreIndex;
+        }
+
+        random(miningPublicKeys[miningIdIndex], nonce, (unsigned char*)&neuronLinks[miningProcessorIndex], sizeof(neuronLinks[0]));
         for (unsigned int i = 0; i < NUMBER_OF_NEURONS; i++)
         {
             neuronLinks[miningProcessorIndex][i][0] %= NUMBER_OF_NEURONS;
@@ -6561,9 +6598,9 @@ static void minerProcessor(void* ProcedureArgument)
         {
             for (unsigned int i = 0; i < NUMBER_OF_SOLUTION_NONCES; i++)
             {
-                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)broadcastedSolution.broadcastResourceTestingSolution.resourceTestingSolution.nonces[i]), ZERO)) == 0xFFFFFFFF)
+                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)broadcastedSolutions[miningIdIndex].broadcastResourceTestingSolution.resourceTestingSolution.nonces[i]), ZERO)) == 0xFFFFFFFF)
                 {
-                    *((__m256i*)broadcastedSolution.broadcastResourceTestingSolution.resourceTestingSolution.nonces[i]) = *((__m256i*)nonce);
+                    *((__m256i*)broadcastedSolutions[miningIdIndex].broadcastResourceTestingSolution.resourceTestingSolution.nonces[i]) = *((__m256i*)nonce);
 
                     break;
                 }
@@ -6585,7 +6622,7 @@ static void emptyCallback(EFI_EVENT Event, void* Context)
 }
 
 #if NUMBER_OF_MINING_PROCESSORS
-static void saveSolution()
+static void saveSolutions()
 {
     const unsigned long long beginningTick = __rdtsc();
 
@@ -6597,8 +6634,16 @@ static void saveSolution()
     }
     else
     {
-        unsigned long long size = sizeof(broadcastedSolution.broadcastResourceTestingSolution.resourceTestingSolution);
-        status = dataFile->Write(dataFile, &size, &broadcastedSolution.broadcastResourceTestingSolution.resourceTestingSolution);
+        unsigned long long totalSize = 0;
+        for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
+        {
+            unsigned long long size = sizeof(broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution);
+            if (status = dataFile->Write(dataFile, &size, &broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution))
+            {
+                break;
+            }
+            totalSize += size;
+        }
         dataFile->Close(dataFile);
         if (status)
         {
@@ -6606,7 +6651,7 @@ static void saveSolution()
         }
         else
         {
-            setNumber(message, size, TRUE);
+            setNumber(message, totalSize, TRUE);
             appendText(message, L" bytes of the solution data are saved (");
             appendNumber(message, (__rdtsc() - beginningTick) * 1000000 / frequency, TRUE);
             appendText(message, L" microseconds).");
@@ -6862,9 +6907,12 @@ static BOOLEAN initialize()
     bs->SetMem(&broadcastedComputors.broadcastComputors.computors.signature, sizeof(broadcastedComputors.broadcastComputors.computors.signature), 0);
 
 #if NUMBER_OF_MINING_PROCESSORS
-    broadcastedSolution.header.size = sizeof(broadcastedSolution);
-    broadcastedSolution.header.protocol = VERSION_B;
-    broadcastedSolution.header.type = BROADCAST_RESOURCE_TESTING_SOLUTION;
+    for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
+    {
+        broadcastedSolutions[i].header.size = sizeof(broadcastedSolutions[i]);
+        broadcastedSolutions[i].header.protocol = VERSION_B;
+        broadcastedSolutions[i].header.type = BROADCAST_RESOURCE_TESTING_SOLUTION;
+    }
 #endif
     broadcastedTick.header.size = sizeof(broadcastedTick);
     broadcastedTick.header.protocol = VERSION_B;
@@ -7243,31 +7291,36 @@ static BOOLEAN initialize()
         }
         else
         {
-            unsigned long long size = sizeof(broadcastedSolution.broadcastResourceTestingSolution.resourceTestingSolution);
-            status = dataFile->Read(dataFile, &size, &broadcastedSolution.broadcastResourceTestingSolution.resourceTestingSolution);
+            for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
+            {
+                unsigned long long size = sizeof(broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution);
+                if (status = dataFile->Read(dataFile, &size, &broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution))
+                {
+                    break;
+                }
+                if (size < sizeof(broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution))
+                {
+                    if (!size)
+                    {
+                        *((__m256i*)broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey) = *((__m256i*)miningPublicKeys[i]);
+                        bs->SetMem(&broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces, sizeof(broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces), 0);
+                    }
+                    else
+                    {
+                        dataFile->Close(dataFile);
+
+                        log(L"Solution data file is too small!");
+
+                        return FALSE;
+                    }
+                }
+            }
             dataFile->Close(dataFile);
             if (status)
             {
                 logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status, __LINE__);
 
                 return FALSE;
-            }
-            else
-            {
-                if (size < sizeof(broadcastedSolution.broadcastResourceTestingSolution.resourceTestingSolution))
-                {
-                    if (!size)
-                    {
-                        *((__m256i*)broadcastedSolution.broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey) = *((__m256i*)miningPublicKeys[0]);
-                        bs->SetMem(&broadcastedSolution.broadcastResourceTestingSolution.resourceTestingSolution.nonces, sizeof(broadcastedSolution.broadcastResourceTestingSolution.resourceTestingSolution.nonces), 0);
-                    }
-                    else
-                    {
-                        log(L"Solution data file is too small!");
-
-                        return FALSE;
-                    }
-                }
             }
         }
 #endif
@@ -7559,6 +7612,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
     if (initialize())
     {
+#if NUMBER_OF_COMPUTING_PROCESSORS
         log(L"Computing ids:");
         for (unsigned int i = 0; i < sizeof(computingSeeds) / sizeof(computingSeeds[0]); i++)
         {
@@ -7568,6 +7622,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                 log(message);
             }
         }
+#endif
+#if NUMBER_OF_MINING_PROCESSORS
         log(L"Mining ids:");
         for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
         {
@@ -7577,6 +7633,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                 log(message);
             }
         }
+#endif
 
         EFI_STATUS status;
 
@@ -8417,16 +8474,23 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     appendText(message, L".");
                                     appendNumber(message, (tickDuration % frequency) * 10 / frequency, FALSE);
 #if NUMBER_OF_MINING_PROCESSORS
-                                    appendText(message, L" s | Score = ");
-                                    int score = 0;
-                                    for (unsigned int i = 0; i < NUMBER_OF_SOLUTION_NONCES; i++)
+                                    appendText(message, L" s | Scores = ");
+                                    for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
                                     {
-                                        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)broadcastedSolution.broadcastResourceTestingSolution.resourceTestingSolution.nonces[i]), ZERO)) != 0xFFFFFFFF)
+                                        int score = 0;
+                                        for (unsigned int j = 0; j < NUMBER_OF_SOLUTION_NONCES; j++)
                                         {
-                                            score++;
+                                            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces[j]), ZERO)) != 0xFFFFFFFF)
+                                            {
+                                                score++;
+                                            }
                                         }
+                                        if (i)
+                                        {
+                                            appendText(message, L"+");
+                                        }
+                                        appendNumber(message, score, TRUE);
                                     }
-                                    appendNumber(message, score, TRUE);
                                     appendText(message, L" (");
                                     appendNumber(message, (numberOfMiningIterations - prevNumberOfMiningIterations) * frequency / (curTimeTick - prevMiningPerformanceTick), TRUE);
                                     prevMiningPerformanceTick = curTimeTick;
@@ -9557,27 +9621,35 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     bool shouldBeBroadcasted = !(dayIndex(time.Year - 2000, time.Month, time.Day) % 7);
                                     if (!shouldBeBroadcasted)
                                     {
-                                        for (unsigned int i = 0; i < sizeof(resourceTestingSolutionIdentitiesToBroadcast) / sizeof(resourceTestingSolutionIdentitiesToBroadcast[0]); i++)
+                                        for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
                                         {
-                                            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)broadcastedSolution.broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey), *((__m256i*)resourceTestingSolutionIdentitiesToBroadcast[i]))) == 0xFFFFFFFF)
+                                            for (unsigned int j = 0; j < sizeof(resourceTestingSolutionIdentitiesToBroadcast) / sizeof(resourceTestingSolutionIdentitiesToBroadcast[0]); j++)
                                             {
-                                                shouldBeBroadcasted = true;
+                                                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey), *((__m256i*)resourceTestingSolutionIdentitiesToBroadcast[j]))) == 0xFFFFFFFF)
+                                                {
+                                                    shouldBeBroadcasted = true; // TODO: Add multiseed support
 
-                                                break;
+                                                    break;
+                                                }
                                             }
                                         }
                                     }
 
                                     //if (shouldBeBroadcasted)
                                     {
-                                        _rdrand16_step(&broadcastedSolution.header.nonce);
-                                        for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
+                                        unsigned short random;
+                                        _rdrand16_step(&random);
+                                        for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
                                         {
-                                            push(&peers[i], &broadcastedSolution.header, true);
+                                            broadcastedSolutions[i].header.nonce = random;
+                                            for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
+                                            {
+                                                push(&peers[j], &broadcastedSolutions[i].header, true);
+                                            }
                                         }
                                     }
 
-                                    saveSolution();
+                                    saveSolutions();
                                 }
 #endif
 
@@ -9655,7 +9727,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             saveSystem();
 #endif
 #if NUMBER_OF_MINING_PROCESSORS
-                            saveSolution();
+                            saveSolutions();
 #endif
 
                             setText(message, L"Qubic ");
