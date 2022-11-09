@@ -24,16 +24,12 @@ static const unsigned char defaultRouteMask[4] = { 0, 0, 0, 0 };
 static const unsigned char defaultRouteGateway[4] = { 0, 0, 0, 0 };
 static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
-static unsigned short SOLUTION_FILE_NAME[] = L"solution.data";
-static unsigned short SPECTRUM_FILE_NAME[] = L"spectrum.data";
-static unsigned short SYSTEM_FILE_NAME[] = L"system.data";
+static unsigned short SYSTEM_FILE_NAME[] = L"system";
+static unsigned short SOLUTION_FILE_NAME[] = L"solution.???";
+static unsigned short SPECTRUM_FILE_NAME[] = L"spectrum.???";
 static unsigned short TICKS_FILE_NAME[] = L"ticks.???";
 static unsigned short TICK_TRANSACTION_DIGESTS_FILE_NAME[] = L"tick_transaction_digests.???";
-static unsigned short TICK_TRANSACTIONS_FILE_NAME[] = L"tick_transactions.??.???";
-
-static unsigned char resourceTestingSolutionIdentitiesToBroadcast[][70 + 1] = {
-    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-};
+static unsigned short TICK_TRANSACTIONS_FILE_NAME[] = L"tick_transactions_??.???";
 
 static unsigned char extraComputorsToSetMaxRevenueTo[][70 + 1] = {
     "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
@@ -47,13 +43,13 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 56
-#define VERSION_C 2
+#define VERSION_B 57
+#define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
-#define EPOCH 29 // Do NOT change!
-#define TICK 3510100 // Do NOT change!
+#define EPOCH 30 // Do NOT change!
+#define TICK 3510200 // Do NOT change!
 
 #include <intrin.h>
 
@@ -1306,47 +1302,9 @@ static EFI_BOOT_SERVICES* bs;
 
 #if AVX512
 static __m512i zero, moveThetaPrev, moveThetaNext, rhoB, rhoG, rhoK, rhoM, rhoS, pi1B, pi1G, pi1K, pi1M, pi1S, pi2S1, pi2S2, pi2BG, pi2KM, pi2S3, padding;
+static __m512i K12RoundConst0, K12RoundConst1, K12RoundConst2, K12RoundConst3, K12RoundConst4, K12RoundConst5, K12RoundConst6, K12RoundConst7, K12RoundConst8, K12RoundConst9, K12RoundConst10, K12RoundConst11;
 
-static const unsigned long long K12RoundConstants[12]
-= {
-    0x000000008000808bULL,
-    0x800000000000008bULL,
-    0x8000000000008089ULL,
-    0x8000000000008003ULL,
-    0x8000000000008002ULL,
-    0x8000000000000080ULL,
-    0x000000000000800aULL,
-    0x800000008000000aULL,
-    0x8000000080008081ULL,
-    0x8000000000008080ULL,
-    0x0000000080000001ULL,
-    0x8000000080008008ULL
-};
-
-#define KeccakP_Round(i) \
-    __m512i b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96); \
-    __m512i b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0); \
-    b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1); \
-    __m512i b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK)); \
-    __m512i b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM)); \
-    __m512i b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS)); \
-    __m512i b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG)); \
-    b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB)); \
-    Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), _mm512_maskz_loadu_epi64(0x01, &K12RoundConstants[i])); \
-    Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2); \
-    Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2); \
-    Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2); \
-    Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2); \
-    b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou); \
-    b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou); \
-    b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou); \
-    b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou); \
-    Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1); \
-    Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3); \
-    Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1); \
-    Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3); \
-    Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou)
-#endif
+#else
 
 #define KeccakF1600RoundConstant0   0x000000008000808bULL
 #define KeccakF1600RoundConstant1   0x800000000000008bULL
@@ -1360,25 +1318,6 @@ static const unsigned long long K12RoundConstants[12]
 #define KeccakF1600RoundConstant9   0x8000000000008080ULL
 #define KeccakF1600RoundConstant10  0x0000000080000001ULL
 
-#if AVX512
-#define declareABCDE __m512i Baeiou, Gaeiou, Kaeiou, Maeiou, Saeiou;
-
-#define copyFromState(state) \
-    Baeiou = _mm512_maskz_loadu_epi64(0x1F, state); \
-    Gaeiou = _mm512_maskz_loadu_epi64(0x1F, state + 40); \
-    Kaeiou = _mm512_maskz_loadu_epi64(0x1F, state + 80); \
-    Maeiou = _mm512_maskz_loadu_epi64(0x1F, state + 120); \
-    Saeiou = _mm512_maskz_loadu_epi64(0x1F, state + 160);
-
-#define copyToState(state) \
-	_mm512_mask_storeu_epi64(state, 0x1F, Baeiou); \
-    _mm512_mask_storeu_epi64(state + 40, 0x1F, Gaeiou); \
-    _mm512_mask_storeu_epi64(state + 80, 0x1F, Kaeiou); \
-    _mm512_mask_storeu_epi64(state + 120, 0x1F, Maeiou); \
-    _mm512_mask_storeu_epi64(state + 160, 0x1F, Saeiou);
-
-
-#else
 #define declareABCDE \
     unsigned long long Aba, Abe, Abi, Abo, Abu; \
     unsigned long long Aga, Age, Agi, Ago, Agu; \
@@ -1559,7 +1498,6 @@ static const unsigned long long K12RoundConstants[12]
     state[22] = Asi; \
     state[23] = Aso; \
     state[24] = Asu;
-#endif
 
 #define rounds12 \
     Ca = Aba^Aga^Aka^Ama^Asa; \
@@ -1658,7 +1596,8 @@ static const unsigned long long K12RoundConstants[12]
     Ase =   Bse ^((~Bsi)&  Bso ); \
     Asi =   Bsi ^((~Bso)&  Bsu ); \
     Aso =   Bso ^((~Bsu)&  Bsa ); \
-    Asu =   Bsu ^((~Bsa)&  Bse ); \
+    Asu =   Bsu ^((~Bsa)&  Bse );
+#endif
 
 #define K12_security        128
 #define K12_capacity        (2 * K12_security)
@@ -1681,10 +1620,284 @@ static void KeccakP1600_Permute_12rounds(unsigned char* state)
     __m512i Kaeiou = _mm512_maskz_loadu_epi64(0x1F, state + 80);
     __m512i Maeiou = _mm512_maskz_loadu_epi64(0x1F, state + 120);
     __m512i Saeiou = _mm512_maskz_loadu_epi64(0x1F, state + 160);
-    for (unsigned __int8 i = 0; i < 12; )
-    {
-        KeccakP_Round(i++);
-    }
+    __m512i b0, b1, b2, b3, b4, b5;
+
+    b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+    b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+    b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+    b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+    b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+    b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+    b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+    b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+    Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst0);
+    Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+    Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+    Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+    Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+    b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+    b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+    b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+    b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+    Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+    Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+    Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+    Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+    Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
+    b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+    b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+    b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+    b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+    b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+    b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+    b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+    b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+    Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst1);
+    Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+    Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+    Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+    Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+    b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+    b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+    b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+    b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+    Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+    Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+    Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+    Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+    Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
+    b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+    b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+    b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+    b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+    b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+    b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+    b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+    b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+    Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst2);
+    Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+    Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+    Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+    Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+    b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+    b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+    b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+    b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+    Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+    Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+    Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+    Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+    Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
+    b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+    b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+    b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+    b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+    b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+    b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+    b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+    b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+    Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst3);
+    Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+    Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+    Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+    Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+    b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+    b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+    b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+    b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+    Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+    Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+    Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+    Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+    Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
+    b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+    b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+    b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+    b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+    b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+    b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+    b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+    b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+    Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst4);
+    Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+    Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+    Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+    Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+    b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+    b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+    b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+    b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+    Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+    Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+    Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+    Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+    Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
+    b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+    b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+    b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+    b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+    b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+    b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+    b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+    b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+    Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst5);
+    Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+    Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+    Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+    Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+    b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+    b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+    b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+    b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+    Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+    Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+    Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+    Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+    Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
+    b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+    b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+    b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+    b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+    b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+    b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+    b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+    b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+    Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst6);
+    Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+    Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+    Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+    Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+    b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+    b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+    b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+    b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+    Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+    Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+    Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+    Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+    Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
+    b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+    b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+    b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+    b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+    b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+    b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+    b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+    b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+    Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst7);
+    Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+    Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+    Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+    Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+    b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+    b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+    b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+    b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+    Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+    Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+    Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+    Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+    Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
+    b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+    b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+    b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+    b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+    b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+    b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+    b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+    b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+    Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst8);
+    Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+    Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+    Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+    Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+    b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+    b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+    b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+    b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+    Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+    Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+    Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+    Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+    Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
+    b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+    b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+    b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+    b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+    b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+    b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+    b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+    b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+    Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst9);
+    Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+    Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+    Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+    Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+    b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+    b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+    b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+    b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+    Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+    Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+    Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+    Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+    Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
+    b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+    b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+    b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+    b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+    b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+    b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+    b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+    b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+    Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst10);
+    Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+    Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+    Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+    Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+    b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+    b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+    b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+    b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+    Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+    Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+    Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+    Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+    Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
+    b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+    b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+    b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+    b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+    b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+    b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+    b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+    b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+    Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst11);
+    Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+    Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+    Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+    Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+    b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+    b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+    b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+    b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+    Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+    Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+    Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+    Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+    Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
     _mm512_mask_storeu_epi64(state, 0x1F, Baeiou);
     _mm512_mask_storeu_epi64(state + 40, 0x1F, Gaeiou);
     _mm512_mask_storeu_epi64(state + 80, 0x1F, Kaeiou);
@@ -1706,10 +1919,14 @@ static void KangarooTwelve_F_Absorb(KangarooTwelve_F* instance, unsigned char* d
     {
         if (!instance->byteIOIndex && dataByteLen >= i + K12_rateInBytes)
         {
-            declareABCDE
 #if AVX512
-                copyFromState(instance->state)
+            __m512i Baeiou = _mm512_maskz_loadu_epi64(0x1F, instance->state);
+            __m512i Gaeiou = _mm512_maskz_loadu_epi64(0x1F, instance->state + 40);
+            __m512i Kaeiou = _mm512_maskz_loadu_epi64(0x1F, instance->state + 80);
+            __m512i Maeiou = _mm512_maskz_loadu_epi64(0x1F, instance->state + 120);
+            __m512i Saeiou = _mm512_maskz_loadu_epi64(0x1F, instance->state + 160);
 #else
+            declareABCDE
                 unsigned long long* stateAsLanes = (unsigned long long*)instance->state;
             copyFromState(stateAsLanes)
 #endif
@@ -1722,10 +1939,283 @@ static void KangarooTwelve_F_Absorb(KangarooTwelve_F* instance, unsigned char* d
                 Kaeiou = _mm512_xor_si512(Kaeiou, _mm512_maskz_loadu_epi64(0x1F, data + 80));
                 Maeiou = _mm512_xor_si512(Maeiou, _mm512_maskz_loadu_epi64(0x1F, data + 120));
                 Saeiou = _mm512_xor_si512(Saeiou, _mm512_maskz_loadu_epi64(0x01, data + 160));
-                for (unsigned __int8 j = 0; j < 12; )
-                {
-                    KeccakP_Round(j++);
-                }
+                __m512i b0, b1, b2, b3, b4, b5;
+
+                b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+                b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+                b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+                b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+                b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+                b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+                b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+                b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+                Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst0);
+                Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+                Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+                Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+                Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+                b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+                b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+                b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+                b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+                Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+                Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+                Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+                Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+                Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
+                b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+                b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+                b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+                b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+                b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+                b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+                b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+                b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+                Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst1);
+                Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+                Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+                Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+                Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+                b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+                b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+                b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+                b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+                Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+                Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+                Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+                Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+                Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
+                b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+                b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+                b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+                b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+                b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+                b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+                b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+                b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+                Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst2);
+                Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+                Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+                Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+                Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+                b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+                b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+                b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+                b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+                Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+                Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+                Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+                Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+                Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
+                b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+                b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+                b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+                b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+                b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+                b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+                b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+                b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+                Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst3);
+                Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+                Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+                Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+                Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+                b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+                b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+                b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+                b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+                Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+                Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+                Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+                Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+                Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
+                b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+                b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+                b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+                b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+                b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+                b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+                b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+                b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+                Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst4);
+                Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+                Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+                Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+                Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+                b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+                b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+                b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+                b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+                Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+                Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+                Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+                Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+                Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
+                b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+                b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+                b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+                b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+                b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+                b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+                b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+                b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+                Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst5);
+                Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+                Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+                Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+                Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+                b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+                b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+                b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+                b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+                Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+                Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+                Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+                Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+                Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
+                b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+                b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+                b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+                b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+                b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+                b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+                b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+                b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+                Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst6);
+                Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+                Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+                Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+                Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+                b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+                b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+                b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+                b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+                Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+                Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+                Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+                Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+                Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
+                b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+                b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+                b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+                b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+                b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+                b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+                b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+                b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+                Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst7);
+                Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+                Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+                Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+                Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+                b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+                b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+                b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+                b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+                Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+                Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+                Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+                Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+                Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
+                b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+                b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+                b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+                b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+                b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+                b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+                b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+                b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+                Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst8);
+                Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+                Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+                Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+                Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+                b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+                b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+                b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+                b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+                Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+                Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+                Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+                Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+                Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
+                b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+                b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+                b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+                b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+                b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+                b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+                b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+                b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+                Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst9);
+                Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+                Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+                Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+                Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+                b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+                b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+                b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+                b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+                Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+                Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+                Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+                Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+                Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
+                b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+                b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+                b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+                b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+                b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+                b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+                b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+                b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+                Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst10);
+                Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+                Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+                Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+                Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+                b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+                b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+                b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+                b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+                Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+                Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+                Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+                Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+                Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
+                b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+                b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+                b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+                b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+                b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+                b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+                b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+                b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+                Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst11);
+                Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+                Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+                Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+                Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+                b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+                b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+                b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+                b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+                Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+                Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+                Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+                Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+                Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
 #else
                 Aba ^= ((unsigned long long*)data)[0];
                 Abe ^= ((unsigned long long*)data)[1];
@@ -1754,7 +2244,11 @@ static void KangarooTwelve_F_Absorb(KangarooTwelve_F* instance, unsigned char* d
                 modifiedDataByteLen -= K12_rateInBytes;
             }
 #if AVX512
-            copyToState(instance->state)
+            _mm512_mask_storeu_epi64(instance->state, 0x1F, Baeiou);
+            _mm512_mask_storeu_epi64(instance->state + 40, 0x1F, Gaeiou);
+            _mm512_mask_storeu_epi64(instance->state + 80, 0x1F, Kaeiou);
+            _mm512_mask_storeu_epi64(instance->state + 120, 0x1F, Maeiou);
+            _mm512_mask_storeu_epi64(instance->state + 160, 0x1F, Saeiou);
 #else
             copyToState(stateAsLanes)
 #endif
@@ -1858,7 +2352,7 @@ static void KangarooTwelve(unsigned char* input, unsigned int inputByteLen, unsi
     KangarooTwelve_F_Absorb(&finalNode, input, len);
     input += len;
     inputByteLen -= len;
-    if ((len == K12_chunkSize) && inputByteLen)
+    if (len == K12_chunkSize && inputByteLen)
     {
         blockNumber = 1;
         queueAbsorbedLen = 0;
@@ -1959,15 +2453,14 @@ static void KangarooTwelve(unsigned char* input, unsigned int inputByteLen, unsi
     {
         if (queueAbsorbedLen)
         {
-            ++blockNumber;
+            blockNumber++;
             queueNode.state[queueNode.byteIOIndex] ^= K12_suffixLeaf;
             queueNode.state[K12_rateInBytes - 1] ^= 0x80;
             KeccakP1600_Permute_12rounds(queueNode.state);
             KangarooTwelve_F_Absorb(&finalNode, queueNode.state, K12_capacityInBytes);
         }
-        --blockNumber;
         unsigned int n = 0;
-        for (unsigned long long v = blockNumber; v && (n < sizeof(unsigned long long)); ++n, v >>= 8)
+        for (unsigned long long v = --blockNumber; v && (n < sizeof(unsigned long long)); ++n, v >>= 8)
         {
         }
         unsigned char encbuf[sizeof(unsigned long long) + 1 + 2];
@@ -1988,6 +2481,274 @@ static void KangarooTwelve(unsigned char* input, unsigned int inputByteLen, unsi
 
 static void KangarooTwelve64To32(unsigned char* input, unsigned char* output)
 {
+#if AVX512
+    __m512i Baeiou = _mm512_maskz_loadu_epi64(0x1F, input);
+    __m512i Gaeiou = _mm512_set_epi64(0, 0, 0, 0, 0x0700, ((unsigned long long*)input)[7], ((unsigned long long*)input)[6], ((unsigned long long*)input)[5]);
+
+    __m512i b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, zero, 0x96), zero, padding, 0x96);
+    __m512i b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+    b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+    __m512i b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(zero, b0, b1, 0x96), rhoK));
+    __m512i b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(zero, b0, b1, 0x96), rhoM));
+    __m512i b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(padding, b0, b1, 0x96), rhoS));
+    __m512i b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+    b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+    Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst0);
+    Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+    __m512i Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+    __m512i Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+    __m512i Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+    b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+    b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+    b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+    b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+    Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+    Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+    Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+    Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+    Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
+    b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+    b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+    b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+    b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+    b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+    b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+    b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+    b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+    Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst1);
+    Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+    Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+    Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+    Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+    b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+    b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+    b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+    b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+    Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+    Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+    Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+    Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+    Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
+    b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+    b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+    b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+    b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+    b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+    b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+    b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+    b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+    Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst2);
+    Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+    Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+    Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+    Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+    b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+    b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+    b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+    b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+    Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+    Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+    Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+    Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+    Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
+    b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+    b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+    b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+    b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+    b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+    b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+    b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+    b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+    Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst3);
+    Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+    Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+    Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+    Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+    b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+    b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+    b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+    b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+    Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+    Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+    Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+    Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+    Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
+    b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+    b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+    b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+    b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+    b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+    b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+    b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+    b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+    Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst4);
+    Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+    Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+    Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+    Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+    b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+    b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+    b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+    b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+    Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+    Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+    Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+    Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+    Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
+    b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+    b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+    b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+    b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+    b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+    b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+    b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+    b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+    Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst5);
+    Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+    Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+    Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+    Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+    b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+    b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+    b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+    b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+    Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+    Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+    Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+    Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+    Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
+    b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+    b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+    b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+    b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+    b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+    b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+    b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+    b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+    Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst6);
+    Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+    Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+    Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+    Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+    b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+    b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+    b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+    b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+    Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+    Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+    Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+    Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+    Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
+    b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+    b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+    b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+    b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+    b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+    b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+    b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+    b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+    Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst7);
+    Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+    Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+    Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+    Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+    b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+    b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+    b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+    b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+    Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+    Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+    Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+    Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+    Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
+    b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+    b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+    b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+    b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+    b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+    b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+    b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+    b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+    Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst8);
+    Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+    Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+    Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+    Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+    b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+    b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+    b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+    b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+    Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+    Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+    Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+    Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+    Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
+    b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+    b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+    b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+    b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+    b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+    b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+    b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+    b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+    Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst9);
+    Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+    Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+    Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+    Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+    b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+    b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+    b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+    b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+    Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+    Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+    Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+    Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+    Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
+    b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+    b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+    b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+    b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+    b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+    b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+    b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+    b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+    Baeiou = _mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst10);
+    Gaeiou = _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2);
+    Kaeiou = _mm512_ternarylogic_epi64(b2, b3, b4, 0xD2);
+    Maeiou = _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2);
+    Saeiou = _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2);
+    b0 = _mm512_permutex2var_epi64(_mm512_unpacklo_epi64(Baeiou, Gaeiou), pi2S1, Saeiou);
+    b2 = _mm512_permutex2var_epi64(_mm512_unpackhi_epi64(Baeiou, Gaeiou), pi2S2, Saeiou);
+    b1 = _mm512_unpacklo_epi64(Kaeiou, Maeiou);
+    b3 = _mm512_unpackhi_epi64(Kaeiou, Maeiou);
+    Baeiou = _mm512_permutex2var_epi64(b0, pi2BG, b1);
+    Gaeiou = _mm512_permutex2var_epi64(b2, pi2BG, b3);
+    Kaeiou = _mm512_permutex2var_epi64(b0, pi2KM, b1);
+    Maeiou = _mm512_permutex2var_epi64(b2, pi2KM, b3);
+    Saeiou = _mm512_mask_blend_epi64(0x10, _mm512_permutex2var_epi64(b0, pi2S3, b1), Saeiou);
+
+    b0 = _mm512_ternarylogic_epi64(_mm512_ternarylogic_epi64(Baeiou, Gaeiou, Kaeiou, 0x96), Maeiou, Saeiou, 0x96);
+    b1 = _mm512_permutexvar_epi64(moveThetaPrev, b0);
+    b0 = _mm512_rol_epi64(_mm512_permutexvar_epi64(moveThetaNext, b0), 1);
+    b2 = _mm512_permutexvar_epi64(pi1K, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Kaeiou, b0, b1, 0x96), rhoK));
+    b3 = _mm512_permutexvar_epi64(pi1M, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Maeiou, b0, b1, 0x96), rhoM));
+    b4 = _mm512_permutexvar_epi64(pi1S, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Saeiou, b0, b1, 0x96), rhoS));
+    b5 = _mm512_permutexvar_epi64(pi1G, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Gaeiou, b0, b1, 0x96), rhoG));
+    b0 = _mm512_permutexvar_epi64(pi1B, _mm512_rolv_epi64(_mm512_ternarylogic_epi64(Baeiou, b0, b1, 0x96), rhoB));
+
+    _mm512_mask_storeu_epi64(output, 0xF, _mm512_permutex2var_epi64(_mm512_permutex2var_epi64(_mm512_unpacklo_epi64(_mm512_xor_si512(_mm512_ternarylogic_epi64(b0, b5, b2, 0xD2), K12RoundConst11), _mm512_ternarylogic_epi64(b5, b2, b3, 0xD2)), pi2S1, _mm512_ternarylogic_epi64(b4, b0, b5, 0xD2)), pi2BG, _mm512_unpacklo_epi64(_mm512_ternarylogic_epi64(b2, b3, b4, 0xD2), _mm512_ternarylogic_epi64(b3, b4, b0, 0xD2))));
+#else
     unsigned long long Aba, Abe, Abi, Abo, Abu;
     unsigned long long Aga, Age, Agi, Ago, Agu;
     unsigned long long Aka, Ake, Aki, Ako, Aku;
@@ -2671,6 +3432,7 @@ static void KangarooTwelve64To32(unsigned char* input, unsigned char* output)
     ((unsigned long long*)output)[1] = Bbe ^ _andn_u64(Bbi, Bbo);
     ((unsigned long long*)output)[2] = Bbi ^ _andn_u64(Bbo, Bbu);
     ((unsigned long long*)output)[3] = Bbo ^ _andn_u64(Bbu, Bba);
+#endif
 }
 
 void random(unsigned char* publicKey, unsigned char* nonce, unsigned char* output, unsigned int outputSize)
@@ -4645,6 +5407,7 @@ typedef struct
 {
     unsigned char computorPublicKey[32];
     unsigned char nonces[NUMBER_OF_SOLUTION_NONCES][32];
+    unsigned char signature[SIGNATURE_SIZE];
 } ResourceTestingSolution;
 
 typedef struct
@@ -5517,22 +6280,50 @@ static void requestProcessor(void* ProcedureArgument)
                     BroadcastResourceTestingSolution* request = (BroadcastResourceTestingSolution*)((char*)processor->cache + sizeof(RequestResponseHeader));
                     if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->resourceTestingSolution.computorPublicKey), ZERO)) != 0xFFFFFFFF)
                     {
-                        bool shouldBeBroadcasted = !(dayIndex(time.Year - 2000, time.Month, time.Day) % 7);
-                        if (!shouldBeBroadcasted)
+                        unsigned char digest[32];
+                        request->resourceTestingSolution.computorPublicKey[0] ^= BROADCAST_RESOURCE_TESTING_SOLUTION;
+                        KangarooTwelve((unsigned char*)&request->resourceTestingSolution, sizeof(ResourceTestingSolution) - SIGNATURE_SIZE, digest, sizeof(digest));
+                        if (verify(request->resourceTestingSolution.computorPublicKey, digest, request->resourceTestingSolution.signature))
                         {
-                            for (unsigned int j = 0; j < sizeof(resourceTestingSolutionIdentitiesToBroadcast) / sizeof(resourceTestingSolutionIdentitiesToBroadcast[0]); j++)
+                            request->resourceTestingSolution.computorPublicKey[0] ^= BROADCAST_RESOURCE_TESTING_SOLUTION;
+
+#if NUMBER_OF_MINING_PROCESSORS
+                            for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
                             {
-                                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->resourceTestingSolution.computorPublicKey), *((__m256i*)resourceTestingSolutionIdentitiesToBroadcast[j]))) == 0xFFFFFFFF)
+                                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->resourceTestingSolution.computorPublicKey), *((__m256i*)miningPublicKeys[i]))) == 0xFFFFFFFF)
                                 {
-                                    shouldBeBroadcasted = true;
+                                    for (unsigned int j = 0; j < NUMBER_OF_SOLUTION_NONCES; j++)
+                                    {
+                                        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->resourceTestingSolution.nonces[j]), ZERO)) != 0xFFFFFFFF)
+                                        {
+                                            unsigned int k;
+                                            for (k = 0; k < NUMBER_OF_SOLUTION_NONCES; k++)
+                                            {
+                                                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces[k]), *((__m256i*)request->resourceTestingSolution.nonces[j]))) == 0xFFFFFFFF)
+                                                {
+                                                    break;
+                                                }
+                                            }
+                                            if (k == NUMBER_OF_SOLUTION_NONCES)
+                                            {
+                                                for (k = 0; k < NUMBER_OF_SOLUTION_NONCES; k++)
+                                                {
+                                                    if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces[k]), ZERO)) == 0xFFFFFFFF)
+                                                    {
+                                                        *((__m256i*)broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces[k]) = *((__m256i*)request->resourceTestingSolution.nonces[j]);
+
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
 
                                     break;
                                 }
                             }
-                        }
+#endif
 
-                        //if (shouldBeBroadcasted)
-                        {
                             responseSize = requestHeader->size;
                         }
                     }
@@ -5591,9 +6382,10 @@ static void requestProcessor(void* ProcedureArgument)
                         unsigned char digest[32];
                         request->tick.computorIndex ^= BROADCAST_TICK;
                         KangarooTwelve((unsigned char*)&request->tick, sizeof(Tick) - SIGNATURE_SIZE, digest, sizeof(digest));
-                        request->tick.computorIndex ^= BROADCAST_TICK;
                         if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->tick.computorIndex], digest, request->tick.signature))
                         {
+                            request->tick.computorIndex ^= BROADCAST_TICK;
+
                             while (_InterlockedCompareExchange8(&tickLocks[request->tick.computorIndex], 1, 0))
                             {
                                 _mm_pause();
@@ -5650,9 +6442,10 @@ static void requestProcessor(void* ProcedureArgument)
                                 unsigned char digest[32];
                                 request->revenues.computorIndex ^= BROADCAST_REVENUES;
                                 KangarooTwelve((unsigned char*)&request->revenues, sizeof(Revenues) - SIGNATURE_SIZE, digest, sizeof(digest));
-                                request->revenues.computorIndex ^= BROADCAST_REVENUES;
                                 if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->revenues.computorIndex], digest, request->revenues.signature))
                                 {
+                                    request->revenues.computorIndex ^= BROADCAST_REVENUES;
+
 #if NUMBER_OF_COMPUTING_PROCESSORS
                                     bs->CopyMem(&revenues[request->revenues.computorIndex], &request->revenues, sizeof(Revenues));
 #endif
@@ -5673,9 +6466,10 @@ static void requestProcessor(void* ProcedureArgument)
                         unsigned char digest[32];
                         request->message.sourcePublicKey[0] ^= BROADCAST_MESSAGE;
                         KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
-                        request->message.sourcePublicKey[0] ^= BROADCAST_MESSAGE;
                         if (verify(request->message.sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastMessage) + request->message.messageSize)))
                         {
+                            request->message.sourcePublicKey[0] ^= BROADCAST_MESSAGE;
+
                             /*if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->message.destinationPublicKey), *((__m256i*)ownPublicKey))) == 0xFFFFFFFF)
                             {
                                 //log(L"Receives a message for self.");
@@ -5697,9 +6491,10 @@ static void requestProcessor(void* ProcedureArgument)
                         unsigned char digest[32];
                         request->transfer.sourcePublicKey[0] ^= BROADCAST_TRANSFER;
                         KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
-                        request->transfer.sourcePublicKey[0] ^= BROADCAST_TRANSFER;
                         if (verify(request->transfer.sourcePublicKey, digest, ((const unsigned char*)processor->cache + requestHeader->size - SIGNATURE_SIZE)))
                         {
+                            request->transfer.sourcePublicKey[0] ^= BROADCAST_TRANSFER;
+
 #if NUMBER_OF_COMPUTING_PROCESSORS
                             unsigned int tick = system.tick;
                             if (request->transfer.tick > tick && request->transfer.tick - tick <= NUMBER_OF_COMPUTORS)
@@ -5736,9 +6531,10 @@ static void requestProcessor(void* ProcedureArgument)
                         unsigned char digest[32];
                         request->invocation.sourcePublicKey[0] ^= BROADCAST_INVOCATION;
                         KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
-                        request->invocation.sourcePublicKey[0] ^= BROADCAST_INVOCATION;
                         if (verify(request->invocation.sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastInvocation) + request->invocation.invocationSize)))
                         {
+                            request->invocation.sourcePublicKey[0] ^= BROADCAST_INVOCATION;
+
                             responseSize = requestHeader->size;
                         }
                     }
@@ -5760,9 +6556,10 @@ static void requestProcessor(void* ProcedureArgument)
                         unsigned char digest[32];
                         request->tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
                         KangarooTwelve((unsigned char*)&request->tickData, sizeof(TickData) - SIGNATURE_SIZE, digest, sizeof(digest));
-                        request->tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
                         if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->tickData.computorIndex], digest, request->tickData.signature))
                         {
+                            request->tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
+
 #if NUMBER_OF_COMPUTING_PROCESSORS
                             if (request->tickData.tick > TICK && request->tickData.tick <= TICK + MAX_NUMBER_OF_TICKS_PER_EPOCH)
                             {
@@ -5813,9 +6610,10 @@ static void requestProcessor(void* ProcedureArgument)
                         unsigned char digest[32];
                         request->question.sourcePublicKey[0] ^= BROADCAST_QUESTION;
                         KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
-                        request->question.sourcePublicKey[0] ^= BROADCAST_QUESTION;
                         if (verify(request->question.sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastQuestion) + request->question.questionSize)))
                         {
+                            request->question.sourcePublicKey[0] ^= BROADCAST_QUESTION;
+
                             responseSize = requestHeader->size;
                         }
                     }
@@ -5833,9 +6631,10 @@ static void requestProcessor(void* ProcedureArgument)
                             unsigned char digest[32];
                             request->answer.computorIndex ^= BROADCAST_ANSWER;
                             KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
-                            request->answer.computorIndex ^= BROADCAST_ANSWER;
                             if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->answer.computorIndex], digest, ((const unsigned char*)request + sizeof(BroadcastAnswer) + request->answer.answerSize)))
                             {
+                                request->answer.computorIndex ^= BROADCAST_ANSWER;
+
                                 responseSize = requestHeader->size;
                             }
                         }
@@ -5914,11 +6713,11 @@ static void requestProcessor(void* ProcedureArgument)
                                 unsigned char digest[32];
                                 tick.computorIndex ^= BROADCAST_TICK;
                                 KangarooTwelve((unsigned char*)&tick, sizeof(Tick) - SIGNATURE_SIZE, digest, sizeof(digest));
-                                tick.computorIndex ^= BROADCAST_TICK;
                                 if (!verify(broadcastedComputors.broadcastComputors.computors.publicKeys[tick.computorIndex], digest, request->quorumTick.indexedSignatures[i]))
                                 {
                                     break;
                                 }
+                                tick.computorIndex ^= BROADCAST_TICK;
                             }
                         }
                         if (i == QUORUM)
@@ -5972,9 +6771,10 @@ static void requestProcessor(void* ProcedureArgument)
                         unsigned char digest[32];
                         request->tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
                         KangarooTwelve((unsigned char*)&request->tickData, sizeof(TickData) - SIGNATURE_SIZE, digest, sizeof(digest));
-                        request->tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
                         if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->tickData.computorIndex], digest, request->tickData.signature))
                         {
+                            request->tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
+
                             TickData* futureTickData = &tickData[request->tickData.tick - TICK - 1];
                             if (futureTickData->epoch)
                             {
@@ -6102,9 +6902,10 @@ static void requestProcessor(void* ProcedureArgument)
                         unsigned char digest[32];
                         request->message.sourcePublicKey[0] ^= BROADCAST_MESSAGE;
                         KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
-                        request->message.sourcePublicKey[0] ^= BROADCAST_MESSAGE;
                         if (verify(request->message.sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastMessage) + request->message.messageSize)))
                         {
+                            request->message.sourcePublicKey[0] ^= BROADCAST_MESSAGE;
+
                             /*if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->message.destinationPublicKey), *((__m256i*)ownPublicKey))) == 0xFFFFFFFF)
                             {
                                 //log(L"Receives a message for self.");
@@ -6126,9 +6927,10 @@ static void requestProcessor(void* ProcedureArgument)
                         unsigned char digest[32];
                         request->transfer.sourcePublicKey[0] ^= BROADCAST_TRANSFER;
                         KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
-                        request->transfer.sourcePublicKey[0] ^= BROADCAST_TRANSFER;
                         if (verify(request->transfer.sourcePublicKey, digest, ((const unsigned char*)processor->cache + requestHeader->size - SIGNATURE_SIZE)))
                         {
+                            request->transfer.sourcePublicKey[0] ^= BROADCAST_TRANSFER;
+
                             pushToSome(responseHeader);
                         }
                     }
@@ -6144,9 +6946,10 @@ static void requestProcessor(void* ProcedureArgument)
                         unsigned char digest[32];
                         request->invocation.sourcePublicKey[0] ^= BROADCAST_INVOCATION;
                         KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
-                        request->invocation.sourcePublicKey[0] ^= BROADCAST_INVOCATION;
                         if (verify(request->invocation.sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastInvocation) + request->invocation.invocationSize)))
                         {
+                            request->invocation.sourcePublicKey[0] ^= BROADCAST_INVOCATION;
+
                             pushToSome(responseHeader);
                         }
                     }
@@ -6161,9 +6964,10 @@ static void requestProcessor(void* ProcedureArgument)
                         unsigned char digest[32];
                         request->question.sourcePublicKey[0] ^= BROADCAST_QUESTION;
                         KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
-                        request->question.sourcePublicKey[0] ^= BROADCAST_QUESTION;
                         if (verify(request->question.sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastQuestion) + request->question.questionSize)))
                         {
+                            request->question.sourcePublicKey[0] ^= BROADCAST_QUESTION;
+
                             pushToSome(responseHeader);
                         }
                     }
@@ -6181,9 +6985,10 @@ static void requestProcessor(void* ProcedureArgument)
                             unsigned char digest[32];
                             request->answer.computorIndex ^= BROADCAST_ANSWER;
                             KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
-                            request->answer.computorIndex ^= BROADCAST_ANSWER;
                             if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->answer.computorIndex], digest, ((const unsigned char*)request + sizeof(BroadcastAnswer) + request->answer.answerSize)))
                             {
+                                request->answer.computorIndex ^= BROADCAST_ANSWER;
+
                                 pushToSome(responseHeader);
                             }
                         }
@@ -6820,6 +7625,19 @@ static BOOLEAN initialize()
     pi2S3 = _mm512_setr_epi64(4, 5, 12, 13, 4, 5, 6, 7);
     padding = _mm512_maskz_set1_epi64(1, 0x8000000000000000);
 
+    K12RoundConst0 = _mm512_maskz_set1_epi64(1, 0x000000008000808bULL);
+    K12RoundConst1 = _mm512_maskz_set1_epi64(1, 0x800000000000008bULL);
+    K12RoundConst2 = _mm512_maskz_set1_epi64(1, 0x8000000000008089ULL);
+    K12RoundConst3 = _mm512_maskz_set1_epi64(1, 0x8000000000008003ULL);
+    K12RoundConst4 = _mm512_maskz_set1_epi64(1, 0x8000000000008002ULL);
+    K12RoundConst5 = _mm512_maskz_set1_epi64(1, 0x8000000000000080ULL);
+    K12RoundConst6 = _mm512_maskz_set1_epi64(1, 0x000000000000800aULL);
+    K12RoundConst7 = _mm512_maskz_set1_epi64(1, 0x800000008000000aULL);
+    K12RoundConst8 = _mm512_maskz_set1_epi64(1, 0x8000000080008081ULL);
+    K12RoundConst9 = _mm512_maskz_set1_epi64(1, 0x8000000000008080ULL);
+    K12RoundConst10 = _mm512_maskz_set1_epi64(1, 0x0000000080000001ULL);
+    K12RoundConst11 = _mm512_maskz_set1_epi64(1, 0x8000000080008008ULL);
+
     B1 = _mm256_set_epi64x(B14, B13, B12, B11);
     B2 = _mm256_set_epi64x(B24, B23, B22, B21);
     B3 = _mm256_set_epi64x(B34, B33, B32, B31);
@@ -6859,10 +7677,6 @@ static BOOLEAN initialize()
 
     getPublicKeyFromIdentity((const unsigned char*)ADMIN, adminPublicKey);
 
-    for (unsigned int i = 0; i < sizeof(resourceTestingSolutionIdentitiesToBroadcast) / sizeof(resourceTestingSolutionIdentitiesToBroadcast[0]); i++)
-    {
-        getPublicKeyFromIdentity(resourceTestingSolutionIdentitiesToBroadcast[i], resourceTestingSolutionIdentitiesToBroadcast[i]);
-    }
     for (unsigned int i = 0; i < sizeof(extraComputorsToSetMaxRevenueTo) / sizeof(extraComputorsToSetMaxRevenueTo[0]); i++)
     {
         getPublicKeyFromIdentity(extraComputorsToSetMaxRevenueTo[i], extraComputorsToSetMaxRevenueTo[i]);
@@ -7118,6 +7932,9 @@ static BOOLEAN initialize()
             }
         }
 
+        SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 4] = EPOCH / 100 + L'0';
+        SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 3] = (EPOCH % 100) / 10 + L'0';
+        SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 2] = EPOCH % 10 + L'0';
         if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SPECTRUM_FILE_NAME, EFI_FILE_MODE_READ, 0))
         {
             logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status, __LINE__);
@@ -7273,7 +8090,7 @@ static BOOLEAN initialize()
 #if NUMBER_OF_MINING_PROCESSORS
         unsigned char randomSeed[32];
         bs->SetMem(randomSeed, 32, 0);
-        randomSeed[0] = 200;
+        randomSeed[0] = 20;
         randomSeed[1] = 80;
         randomSeed[2] = 105;
         randomSeed[3] = 2;
@@ -7283,7 +8100,10 @@ static BOOLEAN initialize()
         randomSeed[7] = 28;
         random(randomSeed, randomSeed, (unsigned char*)miningData, sizeof(miningData));
 
-        if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SOLUTION_FILE_NAME, EFI_FILE_MODE_READ, 0))
+        SOLUTION_FILE_NAME[sizeof(SOLUTION_FILE_NAME) / sizeof(SOLUTION_FILE_NAME[0]) - 4] = EPOCH / 100 + L'0';
+        SOLUTION_FILE_NAME[sizeof(SOLUTION_FILE_NAME) / sizeof(SOLUTION_FILE_NAME[0]) - 3] = (EPOCH % 100) / 10 + L'0';
+        SOLUTION_FILE_NAME[sizeof(SOLUTION_FILE_NAME) / sizeof(SOLUTION_FILE_NAME[0]) - 2] = EPOCH % 10 + L'0';
+        if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SOLUTION_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, EFI_FILE_ARCHIVE))
         {
             logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status, __LINE__);
 
@@ -9618,34 +10438,20 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 {
                                     resourceTestingSolutionPublicationTick = curTimeTick;
 
-                                    bool shouldBeBroadcasted = !(dayIndex(time.Year - 2000, time.Month, time.Day) % 7);
-                                    if (!shouldBeBroadcasted)
+                                    unsigned short random;
+                                    _rdrand16_step(&random);
+                                    for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
                                     {
-                                        for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
+                                        broadcastedSolutions[i].header.nonce = random;
+                                        unsigned char digest[32];
+                                        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey[0] ^= BROADCAST_RESOURCE_TESTING_SOLUTION;
+                                        KangarooTwelve((unsigned char*)&broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution, sizeof(ResourceTestingSolution) - SIGNATURE_SIZE, digest, sizeof(digest));
+                                        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey[0] ^= BROADCAST_RESOURCE_TESTING_SOLUTION;
+                                        sign(miningSubseeds[i], miningPublicKeys[i], digest, broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.signature);
+                                        
+                                        for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
                                         {
-                                            for (unsigned int j = 0; j < sizeof(resourceTestingSolutionIdentitiesToBroadcast) / sizeof(resourceTestingSolutionIdentitiesToBroadcast[0]); j++)
-                                            {
-                                                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey), *((__m256i*)resourceTestingSolutionIdentitiesToBroadcast[j]))) == 0xFFFFFFFF)
-                                                {
-                                                    shouldBeBroadcasted = true; // TODO: Add multiseed support
-
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    //if (shouldBeBroadcasted)
-                                    {
-                                        unsigned short random;
-                                        _rdrand16_step(&random);
-                                        for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
-                                        {
-                                            broadcastedSolutions[i].header.nonce = random;
-                                            for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
-                                            {
-                                                push(&peers[j], &broadcastedSolutions[i].header, true);
-                                            }
+                                            push(&peers[j], &broadcastedSolutions[i].header, true);
                                         }
                                     }
 
@@ -9692,12 +10498,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         {
                                             closePeer(i);
                                         }
-                                    }
-                                    break;
-
-                                    case 0x10:
-                                    {
-                                        latestOwnTick = 0;
                                     }
                                     break;
 
