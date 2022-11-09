@@ -44,7 +44,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 57
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -5687,6 +5687,21 @@ typedef struct
     TickData tickData;
 } RespondTickData;
 
+#define BROADCAST_RESOURCE_TESTING_SOLUTION_RECEIPT 18
+
+typedef struct
+{
+    unsigned short epoch;
+    unsigned char computorPublicKey[32];
+    unsigned int score;
+    unsigned char signature[SIGNATURE_SIZE];
+} ResourceTestingSolutionReceipt;
+
+typedef struct
+{
+    ResourceTestingSolutionReceipt resourceTestingSolutionReceipt;
+} BroadcastResourceTestingSolutionReceipt;
+
 #define GET_COMPUTER_STATE 0
 
 typedef struct
@@ -6283,10 +6298,9 @@ static void requestProcessor(void* ProcedureArgument)
                         unsigned char digest[32];
                         request->resourceTestingSolution.computorPublicKey[0] ^= BROADCAST_RESOURCE_TESTING_SOLUTION;
                         KangarooTwelve((unsigned char*)&request->resourceTestingSolution, sizeof(ResourceTestingSolution) - SIGNATURE_SIZE, digest, sizeof(digest));
+                        request->resourceTestingSolution.computorPublicKey[0] ^= BROADCAST_RESOURCE_TESTING_SOLUTION;
                         if (verify(request->resourceTestingSolution.computorPublicKey, digest, request->resourceTestingSolution.signature))
                         {
-                            request->resourceTestingSolution.computorPublicKey[0] ^= BROADCAST_RESOURCE_TESTING_SOLUTION;
-
 #if NUMBER_OF_MINING_PROCESSORS
                             for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
                             {
@@ -6322,6 +6336,25 @@ static void requestProcessor(void* ProcedureArgument)
                                     break;
                                 }
                             }
+#endif
+
+                            responseSize = requestHeader->size;
+                        }
+                    }
+                }
+                break;
+
+                case BROADCAST_RESOURCE_TESTING_SOLUTION_RECEIPT:
+                {
+                    BroadcastResourceTestingSolutionReceipt* request = (BroadcastResourceTestingSolutionReceipt*)((char*)processor->cache + sizeof(RequestResponseHeader));
+                    if (request->resourceTestingSolutionReceipt.epoch == broadcastedComputors.broadcastComputors.computors.epoch)
+                    {
+                        unsigned char digest[32];
+                        KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
+                        if (verify(adminPublicKey, digest, request->resourceTestingSolutionReceipt.signature))
+                        {
+#if NUMBER_OF_MINING_PROCESSORS
+                            // TODO
 #endif
 
                             responseSize = requestHeader->size;
@@ -6382,10 +6415,9 @@ static void requestProcessor(void* ProcedureArgument)
                         unsigned char digest[32];
                         request->tick.computorIndex ^= BROADCAST_TICK;
                         KangarooTwelve((unsigned char*)&request->tick, sizeof(Tick) - SIGNATURE_SIZE, digest, sizeof(digest));
+                        request->tick.computorIndex ^= BROADCAST_TICK;
                         if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->tick.computorIndex], digest, request->tick.signature))
                         {
-                            request->tick.computorIndex ^= BROADCAST_TICK;
-
                             while (_InterlockedCompareExchange8(&tickLocks[request->tick.computorIndex], 1, 0))
                             {
                                 _mm_pause();
@@ -6442,10 +6474,9 @@ static void requestProcessor(void* ProcedureArgument)
                                 unsigned char digest[32];
                                 request->revenues.computorIndex ^= BROADCAST_REVENUES;
                                 KangarooTwelve((unsigned char*)&request->revenues, sizeof(Revenues) - SIGNATURE_SIZE, digest, sizeof(digest));
+                                request->revenues.computorIndex ^= BROADCAST_REVENUES;
                                 if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->revenues.computorIndex], digest, request->revenues.signature))
                                 {
-                                    request->revenues.computorIndex ^= BROADCAST_REVENUES;
-
 #if NUMBER_OF_COMPUTING_PROCESSORS
                                     bs->CopyMem(&revenues[request->revenues.computorIndex], &request->revenues, sizeof(Revenues));
 #endif
@@ -6466,10 +6497,9 @@ static void requestProcessor(void* ProcedureArgument)
                         unsigned char digest[32];
                         request->message.sourcePublicKey[0] ^= BROADCAST_MESSAGE;
                         KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
+                        request->message.sourcePublicKey[0] ^= BROADCAST_MESSAGE;
                         if (verify(request->message.sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastMessage) + request->message.messageSize)))
                         {
-                            request->message.sourcePublicKey[0] ^= BROADCAST_MESSAGE;
-
                             /*if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->message.destinationPublicKey), *((__m256i*)ownPublicKey))) == 0xFFFFFFFF)
                             {
                                 //log(L"Receives a message for self.");
@@ -6491,10 +6521,9 @@ static void requestProcessor(void* ProcedureArgument)
                         unsigned char digest[32];
                         request->transfer.sourcePublicKey[0] ^= BROADCAST_TRANSFER;
                         KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
+                        request->transfer.sourcePublicKey[0] ^= BROADCAST_TRANSFER;
                         if (verify(request->transfer.sourcePublicKey, digest, ((const unsigned char*)processor->cache + requestHeader->size - SIGNATURE_SIZE)))
                         {
-                            request->transfer.sourcePublicKey[0] ^= BROADCAST_TRANSFER;
-
 #if NUMBER_OF_COMPUTING_PROCESSORS
                             unsigned int tick = system.tick;
                             if (request->transfer.tick > tick && request->transfer.tick - tick <= NUMBER_OF_COMPUTORS)
@@ -6531,10 +6560,9 @@ static void requestProcessor(void* ProcedureArgument)
                         unsigned char digest[32];
                         request->invocation.sourcePublicKey[0] ^= BROADCAST_INVOCATION;
                         KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
+                        request->invocation.sourcePublicKey[0] ^= BROADCAST_INVOCATION;
                         if (verify(request->invocation.sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastInvocation) + request->invocation.invocationSize)))
                         {
-                            request->invocation.sourcePublicKey[0] ^= BROADCAST_INVOCATION;
-
                             responseSize = requestHeader->size;
                         }
                     }
@@ -6556,10 +6584,9 @@ static void requestProcessor(void* ProcedureArgument)
                         unsigned char digest[32];
                         request->tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
                         KangarooTwelve((unsigned char*)&request->tickData, sizeof(TickData) - SIGNATURE_SIZE, digest, sizeof(digest));
+                        request->tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
                         if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->tickData.computorIndex], digest, request->tickData.signature))
                         {
-                            request->tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
-
 #if NUMBER_OF_COMPUTING_PROCESSORS
                             if (request->tickData.tick > TICK && request->tickData.tick <= TICK + MAX_NUMBER_OF_TICKS_PER_EPOCH)
                             {
@@ -6610,10 +6637,9 @@ static void requestProcessor(void* ProcedureArgument)
                         unsigned char digest[32];
                         request->question.sourcePublicKey[0] ^= BROADCAST_QUESTION;
                         KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
+                        request->question.sourcePublicKey[0] ^= BROADCAST_QUESTION;
                         if (verify(request->question.sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastQuestion) + request->question.questionSize)))
                         {
-                            request->question.sourcePublicKey[0] ^= BROADCAST_QUESTION;
-
                             responseSize = requestHeader->size;
                         }
                     }
@@ -6631,10 +6657,9 @@ static void requestProcessor(void* ProcedureArgument)
                             unsigned char digest[32];
                             request->answer.computorIndex ^= BROADCAST_ANSWER;
                             KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
+                            request->answer.computorIndex ^= BROADCAST_ANSWER;
                             if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->answer.computorIndex], digest, ((const unsigned char*)request + sizeof(BroadcastAnswer) + request->answer.answerSize)))
                             {
-                                request->answer.computorIndex ^= BROADCAST_ANSWER;
-
                                 responseSize = requestHeader->size;
                             }
                         }
@@ -6713,11 +6738,11 @@ static void requestProcessor(void* ProcedureArgument)
                                 unsigned char digest[32];
                                 tick.computorIndex ^= BROADCAST_TICK;
                                 KangarooTwelve((unsigned char*)&tick, sizeof(Tick) - SIGNATURE_SIZE, digest, sizeof(digest));
+                                tick.computorIndex ^= BROADCAST_TICK;
                                 if (!verify(broadcastedComputors.broadcastComputors.computors.publicKeys[tick.computorIndex], digest, request->quorumTick.indexedSignatures[i]))
                                 {
                                     break;
                                 }
-                                tick.computorIndex ^= BROADCAST_TICK;
                             }
                         }
                         if (i == QUORUM)
@@ -6771,9 +6796,9 @@ static void requestProcessor(void* ProcedureArgument)
                         unsigned char digest[32];
                         request->tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
                         KangarooTwelve((unsigned char*)&request->tickData, sizeof(TickData) - SIGNATURE_SIZE, digest, sizeof(digest));
+                        request->tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
                         if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->tickData.computorIndex], digest, request->tickData.signature))
                         {
-                            request->tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
 
                             TickData* futureTickData = &tickData[request->tickData.tick - TICK - 1];
                             if (futureTickData->epoch)
@@ -6902,9 +6927,9 @@ static void requestProcessor(void* ProcedureArgument)
                         unsigned char digest[32];
                         request->message.sourcePublicKey[0] ^= BROADCAST_MESSAGE;
                         KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
+                        request->message.sourcePublicKey[0] ^= BROADCAST_MESSAGE;
                         if (verify(request->message.sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastMessage) + request->message.messageSize)))
                         {
-                            request->message.sourcePublicKey[0] ^= BROADCAST_MESSAGE;
 
                             /*if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->message.destinationPublicKey), *((__m256i*)ownPublicKey))) == 0xFFFFFFFF)
                             {
@@ -6927,10 +6952,9 @@ static void requestProcessor(void* ProcedureArgument)
                         unsigned char digest[32];
                         request->transfer.sourcePublicKey[0] ^= BROADCAST_TRANSFER;
                         KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
+                        request->transfer.sourcePublicKey[0] ^= BROADCAST_TRANSFER;
                         if (verify(request->transfer.sourcePublicKey, digest, ((const unsigned char*)processor->cache + requestHeader->size - SIGNATURE_SIZE)))
                         {
-                            request->transfer.sourcePublicKey[0] ^= BROADCAST_TRANSFER;
-
                             pushToSome(responseHeader);
                         }
                     }
@@ -6946,10 +6970,9 @@ static void requestProcessor(void* ProcedureArgument)
                         unsigned char digest[32];
                         request->invocation.sourcePublicKey[0] ^= BROADCAST_INVOCATION;
                         KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
+                        request->invocation.sourcePublicKey[0] ^= BROADCAST_INVOCATION;
                         if (verify(request->invocation.sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastInvocation) + request->invocation.invocationSize)))
                         {
-                            request->invocation.sourcePublicKey[0] ^= BROADCAST_INVOCATION;
-
                             pushToSome(responseHeader);
                         }
                     }
@@ -6964,10 +6987,9 @@ static void requestProcessor(void* ProcedureArgument)
                         unsigned char digest[32];
                         request->question.sourcePublicKey[0] ^= BROADCAST_QUESTION;
                         KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
+                        request->question.sourcePublicKey[0] ^= BROADCAST_QUESTION;
                         if (verify(request->question.sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastQuestion) + request->question.questionSize)))
                         {
-                            request->question.sourcePublicKey[0] ^= BROADCAST_QUESTION;
-
                             pushToSome(responseHeader);
                         }
                     }
@@ -6985,10 +7007,9 @@ static void requestProcessor(void* ProcedureArgument)
                             unsigned char digest[32];
                             request->answer.computorIndex ^= BROADCAST_ANSWER;
                             KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
+                            request->answer.computorIndex ^= BROADCAST_ANSWER;
                             if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->answer.computorIndex], digest, ((const unsigned char*)request + sizeof(BroadcastAnswer) + request->answer.answerSize)))
                             {
-                                request->answer.computorIndex ^= BROADCAST_ANSWER;
-
                                 pushToSome(responseHeader);
                             }
                         }
@@ -9785,7 +9806,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 {
                                                     if (status = peers[i].tcp4Protocol->Receive(peers[i].tcp4Protocol, &peers[i].receiveToken))
                                                     {
-                                                        logStatus(L"EFI_TCP4_PROTOCOL.Receive() fails", status, __LINE__);
+                                                        if (status != EFI_CONNECTION_FIN)
+                                                        {
+                                                            logStatus(L"EFI_TCP4_PROTOCOL.Receive() fails", status, __LINE__);
+                                                        }
 
                                                         closePeer(i);
                                                     }
