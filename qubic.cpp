@@ -31,8 +31,8 @@ static unsigned short TICKS_FILE_NAME[] = L"ticks.???";
 static unsigned short TICK_TRANSACTION_DIGESTS_FILE_NAME[] = L"tick_transaction_digests.???";
 static unsigned short TICK_TRANSACTIONS_FILE_NAME[] = L"tick_transactions_??.???";
 
-static unsigned char extraComputorsToSetMaxRevenueTo[][70 + 1] = {
-    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+static unsigned char computorsToSetMaxRevenueTo[][70 + 1] = {
+    "EEHHKLAELFGOMOEILMMPEAMGBHPNHJBKEAIINBIJDKGFPCABKGJEKLMGANFADFMJFCDFAL"
 };
 
 static const unsigned char knownPublicPeers[][4] = {
@@ -43,13 +43,13 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 57
-#define VERSION_C 1
+#define VERSION_B 58
+#define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
 #define EPOCH 30 // Do NOT change!
-#define TICK 3510200 // Do NOT change!
+#define TICK 3510300 // Do NOT change!
 
 #include <intrin.h>
 
@@ -5279,6 +5279,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 ////////// Qubic \\\\\\\\\\
 
 #define BUFFER_SIZE 1048576
+#define CRITICAL_TICK_DURATION 15
 #define DEJAVU_SWAP_LIMIT 28000000
 #define DISSEMINATION_MULTIPLIER 4
 #define ISSUANCE_RATE 1000000000000
@@ -5788,6 +5789,7 @@ static volatile char tickLocks[NUMBER_OF_COMPUTORS];
 static Tick latestTicks[NUMBER_OF_COMPUTORS];
 #if NUMBER_OF_COMPUTING_PROCESSORS
 static Tick actualTicks[NUMBER_OF_COMPUTORS];
+static bool tickShouldBeCreated = false;
 static Tick etalonTick;
 static __m256i etalonTickEssenceDigest;
 static bool nullNextTickDataDigestMustBeUsed = false;
@@ -7192,9 +7194,10 @@ static void closePeer(const unsigned int peerIndex)
         if (!peers[peerIndex].isConnectingAccepting && !peers[peerIndex].isReceiving && !peers[peerIndex].isTransmitting)
         {
             bs->CloseProtocol(peers[peerIndex].connectAcceptToken.NewChildHandle, &tcp4ProtocolGuid, ih, NULL);
-            if (peerIndex < NUMBER_OF_OUTGOING_CONNECTIONS)
+            EFI_STATUS status;
+            if (status = tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peers[peerIndex].connectAcceptToken.NewChildHandle))
             {
-                tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peers[peerIndex].connectAcceptToken.NewChildHandle);
+                logStatus(L"EFI_TCP4_SERVICE_BINDING_PROTOCOL.DestroyChild() fails", status, __LINE__);
             }
 
             peers[peerIndex].isConnectedAccepted = FALSE;
@@ -7224,7 +7227,11 @@ static void closeClient(const unsigned int clientIndex)
         if (!clients[clientIndex].isAccepting && !clients[clientIndex].isReceiving && !clients[clientIndex].isTransmitting)
         {
             bs->CloseProtocol(clients[clientIndex].acceptToken.NewChildHandle, &tcp4ProtocolGuid, ih, NULL);
-            // TODO: Add DestroyChild()
+            EFI_STATUS status;
+            if (status = tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, clients[clientIndex].acceptToken.NewChildHandle))
+            {
+                logStatus(L"EFI_TCP4_SERVICE_BINDING_PROTOCOL.DestroyChild() fails", status, __LINE__);
+            }
 
             clients[clientIndex].isAccepted = FALSE;
             clients[clientIndex].isClosing = FALSE;
@@ -7698,9 +7705,9 @@ static BOOLEAN initialize()
 
     getPublicKeyFromIdentity((const unsigned char*)ADMIN, adminPublicKey);
 
-    for (unsigned int i = 0; i < sizeof(extraComputorsToSetMaxRevenueTo) / sizeof(extraComputorsToSetMaxRevenueTo[0]); i++)
+    for (unsigned int i = 0; i < sizeof(computorsToSetMaxRevenueTo) / sizeof(computorsToSetMaxRevenueTo[0]); i++)
     {
-        getPublicKeyFromIdentity(extraComputorsToSetMaxRevenueTo[i], extraComputorsToSetMaxRevenueTo[i]);
+        getPublicKeyFromIdentity(computorsToSetMaxRevenueTo[i], computorsToSetMaxRevenueTo[i]);
     }
 
     frequency = __rdtsc();
@@ -8624,14 +8631,15 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             _rdrand64_step(&salt);
 
                             unsigned int latestOwnTick = 0;
-                            unsigned long long timingTick = 0, systemDataSavingTick = 0, loggingTick = 0, peerRefreshingTick = 0, resourceTestingSolutionPublicationTick = 0;
+                            unsigned long long latestTickTick = __rdtsc();
+                            unsigned long long clockTick = 0, systemDataSavingTick = 0, loggingTick = 0, peerRefreshingTick = 0, resourceTestingSolutionPublicationTick = 0;
                             while (!state)
                             {
                                 const unsigned long long curTimeTick = __rdtsc();
 
-                                if (curTimeTick - timingTick >= (frequency >> 1))
+                                if (curTimeTick - clockTick >= (frequency >> 1))
                                 {
-                                    timingTick = curTimeTick;
+                                    clockTick = curTimeTick;
                                 
                                     EFI_TIME newTime;
                                     if (!rs->GetTime(&newTime, NULL))
@@ -8649,18 +8657,18 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                         if (!spectrumDigestLevel)
                                         {
-                                            spectrumUpdatingBeginningTick = __rdtsc();
-                                            for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
-                                            {
-                                                spectrum[i].numberOfIncomingTransfers = latestOwnTick + 1;
-                                            }
-                                            setText(message, L"Spectrum updating takes ");
-                                            appendNumber(message, (__rdtsc() - spectrumUpdatingBeginningTick) * 1000000 / frequency, TRUE);
-                                            appendText(message, L" microseconds.");
-                                            log(message);
-
                                             spectrumDigestCalculationBeginningTick = __rdtsc();
                                             spectrumDigestLevel = 1;
+                                        }
+                                    }
+
+                                    if (requestedTickData.requestTickData.requestedTickData.tick != system.tick + 1
+                                        && tickData[system.tick + 1 - TICK].epoch != system.epoch && !nullNextTickDataDigestMustBeUsed)
+                                    {
+                                        requestedTickData.requestTickData.requestedTickData.tick = system.tick + 1;
+                                        for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
+                                        {
+                                            push(&peers[j], &requestedTickData.header, true);
                                         }
                                     }
 
@@ -8678,6 +8686,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         spectrumDigestLevelCompleteness = 0;
                                         spectrumDigestLevel = 0;
 
+                                        tickShouldBeCreated = true;
+                                    }
+
+                                    if (tickShouldBeCreated)
+                                    {
                                         broadcastedTick.broadcastTick.tick.epoch = system.epoch;
                                         broadcastedTick.broadcastTick.tick.tick = system.tick + 1;
 
@@ -8811,12 +8824,12 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         {
                                             broadcastedTick.broadcastTick.tick.computorIndex = ownComputorIndices[i] ^ BROADCAST_TICK;
                                             unsigned char saltedData[32 + 32];
-                                            *((__m256i*)&saltedData[0]) = *((__m256i*)computingPublicKeys[ownComputorIndicesMapping[i]]);
-                                            *((__m256i*)&saltedData[32]) = spectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1];
+                                            *((__m256i*) & saltedData[0]) = *((__m256i*)computingPublicKeys[ownComputorIndicesMapping[i]]);
+                                            *((__m256i*) & saltedData[32]) = spectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1];
                                             KangarooTwelve64To32(saltedData, broadcastedTick.broadcastTick.tick.saltedSpectrumDigest);
-                                            *((__m256i*)&saltedData[32]) = *((__m256i*)broadcastedTick.broadcastTick.tick.prevUniverseDigest);
+                                            *((__m256i*) & saltedData[32]) = *((__m256i*)broadcastedTick.broadcastTick.tick.prevUniverseDigest);
                                             KangarooTwelve64To32(saltedData, broadcastedTick.broadcastTick.tick.saltedUniverseDigest);
-                                            *((__m256i*)&saltedData[32]) = *((__m256i*)broadcastedTick.broadcastTick.tick.prevComputerDigest);
+                                            *((__m256i*) & saltedData[32]) = *((__m256i*)broadcastedTick.broadcastTick.tick.prevComputerDigest);
                                             KangarooTwelve64To32(saltedData, broadcastedTick.broadcastTick.tick.saltedComputerDigest);
 
                                             unsigned char digest[32];
@@ -8837,28 +8850,22 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             bs->CopyMem(&previousTicks[ownComputorIndices[i]], &actualTicks[ownComputorIndices[i]], sizeof(Tick));
                                             bs->CopyMem(&actualTicks[ownComputorIndices[i]], &broadcastedTick.broadcastTick.tick, sizeof(Tick));
                                             _InterlockedCompareExchange8(&tickLocks[ownComputorIndices[i]], 0, 1);
-
-                                            if (!i)
-                                            {
-                                                bs->CopyMem(&etalonTick, &broadcastedTick.broadcastTick.tick, sizeof(Tick));
-
-                                                TickEssence tickEssence;
-                                                *((unsigned long long*)&tickEssence.millisecond) = *((unsigned long long*)&broadcastedTick.broadcastTick.tick.millisecond);
-                                                *((__m256i*)tickEssence.initSpectrumDigest) = *((__m256i*)broadcastedTick.broadcastTick.tick.initSpectrumDigest);
-                                                *((__m256i*)tickEssence.initUniverseDigest) = *((__m256i*)broadcastedTick.broadcastTick.tick.initUniverseDigest);
-                                                *((__m256i*)tickEssence.initComputerDigest) = *((__m256i*)broadcastedTick.broadcastTick.tick.initComputerDigest);
-                                                *((__m256i*)tickEssence.prevSpectrumDigest) = *((__m256i*)broadcastedTick.broadcastTick.tick.prevSpectrumDigest);
-                                                *((__m256i*)tickEssence.prevUniverseDigest) = *((__m256i*)broadcastedTick.broadcastTick.tick.prevUniverseDigest);
-                                                *((__m256i*)tickEssence.prevComputerDigest) = *((__m256i*)broadcastedTick.broadcastTick.tick.prevComputerDigest);
-                                                *((__m256i*)tickEssence.spectrumDigest) = spectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1];
-                                                *((__m256i*)tickEssence.universeDigest) = *((__m256i*)broadcastedTick.broadcastTick.tick.prevUniverseDigest);
-                                                *((__m256i*)tickEssence.computerDigest) = *((__m256i*)broadcastedTick.broadcastTick.tick.prevComputerDigest);
-                                                *((__m256i*)tickEssence.nextTickDataDigest) = *((__m256i*)broadcastedTick.broadcastTick.tick.nextTickDataDigest);
-                                                KangarooTwelve((unsigned char*)&tickEssence, sizeof(TickEssence), (unsigned char*)&etalonTickEssenceDigest, 32);
-
-                                                nullNextTickDataDigestMustBeUsed = false;
-                                            }
                                         }
+
+                                        bs->CopyMem(&etalonTick, &broadcastedTick.broadcastTick.tick, sizeof(Tick));
+                                        TickEssence tickEssence;
+                                        *((unsigned long long*) & tickEssence.millisecond) = *((unsigned long long*) & broadcastedTick.broadcastTick.tick.millisecond);
+                                        *((__m256i*)tickEssence.initSpectrumDigest) = *((__m256i*)broadcastedTick.broadcastTick.tick.initSpectrumDigest);
+                                        *((__m256i*)tickEssence.initUniverseDigest) = *((__m256i*)broadcastedTick.broadcastTick.tick.initUniverseDigest);
+                                        *((__m256i*)tickEssence.initComputerDigest) = *((__m256i*)broadcastedTick.broadcastTick.tick.initComputerDigest);
+                                        *((__m256i*)tickEssence.prevSpectrumDigest) = *((__m256i*)broadcastedTick.broadcastTick.tick.prevSpectrumDigest);
+                                        *((__m256i*)tickEssence.prevUniverseDigest) = *((__m256i*)broadcastedTick.broadcastTick.tick.prevUniverseDigest);
+                                        *((__m256i*)tickEssence.prevComputerDigest) = *((__m256i*)broadcastedTick.broadcastTick.tick.prevComputerDigest);
+                                        *((__m256i*)tickEssence.spectrumDigest) = spectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1];
+                                        *((__m256i*)tickEssence.universeDigest) = *((__m256i*)broadcastedTick.broadcastTick.tick.prevUniverseDigest);
+                                        *((__m256i*)tickEssence.computerDigest) = *((__m256i*)broadcastedTick.broadcastTick.tick.prevComputerDigest);
+                                        *((__m256i*)tickEssence.nextTickDataDigest) = *((__m256i*)broadcastedTick.broadcastTick.tick.nextTickDataDigest);
+                                        KangarooTwelve((unsigned char*)&tickEssence, sizeof(TickEssence), (unsigned char*)&etalonTickEssenceDigest, 32);
                                     }
 
                                     tickNumberOfComputors = 0;
@@ -8871,7 +8878,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         tickNumberOfComputors = 0;
                                         tickNumberOfComputors2 = 0;
                                         futureTickNumberOfComputors = 0;
-                                        const unsigned int quorumTickIndex = etalonTick.tick - TICK - 1;
+                                        const unsigned int quorumTickIndex = system.tick - TICK;
                                         if (quorumTickIndex >= MAX_NUMBER_OF_TICKS_PER_EPOCH)
                                         {
                                             log(L"Too many ticks this epoch!");
@@ -8977,6 +8984,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                 _InterlockedCompareExchange8(&tickLocks[i], 0, 1);
                                             }
+
                                             if (tickNumberOfComputors >= QUORUM)
                                             {
                                                 quorumTicks[quorumTickIndex].numberOfComputorSignatures = QUORUM;
@@ -8998,13 +9006,18 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 tickNumberOfComputors = 0;
                                                 tickNumberOfComputors2 = 0;
                                                 futureTickNumberOfComputors = 0;
+                                                tickShouldBeCreated = false;
                                                 nullNextTickDataDigestMustBeUsed = false;
 
                                                 system.tick++;
+                                                latestTickTick = __rdtsc();
 
-                                                for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                                                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)quorumTicks[quorumTickIndex].nextTickDataDigest), ZERO)) != 0xFFFFFFFF)
                                                 {
-                                                    system.tickCounters[i] += counters[i];
+                                                    for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                                                    {
+                                                        system.tickCounters[i] += counters[i];
+                                                    }
                                                 }
 
                                                 for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
@@ -9085,6 +9098,15 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             }
                                             else
                                             {
+                                                if (futureTickNumberOfComputors > (NUMBER_OF_COMPUTORS - QUORUM) && requestedQuorumTick.requestQuorumTick.quorumTick.tick != system.tick + 1)
+                                                {
+                                                    requestedQuorumTick.requestQuorumTick.quorumTick.tick = system.tick + 1;
+                                                    for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
+                                                    {
+                                                        push(&peers[j], &requestedQuorumTick.header, true);
+                                                    }
+                                                }
+
                                                 unsigned int mostPopularUniqueTickEssenceDigestIndex = 0, totalUniqueTickEssenceDigestCounter = uniqueTickEssenceDigestCounters[0];
                                                 for (unsigned int i = 1; i < numberOfUniqueTickEssenceDigests; i++)
                                                 {
@@ -9094,50 +9116,55 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     }
                                                     totalUniqueTickEssenceDigestCounter += uniqueTickEssenceDigestCounters[i];
                                                 }
-                                                if (uniqueTickEssenceDigestCounters[mostPopularUniqueTickEssenceDigestIndex] + (NUMBER_OF_COMPUTORS - totalUniqueTickEssenceDigestCounter) < QUORUM)
+                                                if (uniqueTickEssenceDigestCounters[mostPopularUniqueTickEssenceDigestIndex] >= QUORUM)
                                                 {
-                                                    if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)etalonTick.nextTickDataDigest), ZERO)) != 0xFFFFFFFF)
+                                                    if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)etalonTick.nextTickDataDigest), ZERO)) == 0xFFFFFFFF)
                                                     {
-                                                        nullNextTickDataDigestMustBeUsed = true;
-                                                        latestOwnTick = 0;
+                                                        tickShouldBeCreated = true;
+                                                    }
+                                                    else
+                                                    {
+                                                        for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                                                        {
+                                                            if (actualTicks[i].epoch == system.epoch
+                                                                && actualTicks[i].tick == system.tick + 1
+                                                                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(tickEssenceDigests[i], uniqueTickEssenceDigests[mostPopularUniqueTickEssenceDigestIndex])) == 0xFFFFFFFF)
+                                                            {
+                                                                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[i].nextTickDataDigest), ZERO)) == 0xFFFFFFFF)
+                                                                {
+                                                                    nullNextTickDataDigestMustBeUsed = true;
+                                                                    tickShouldBeCreated = true;
+                                                                }
+                                                                else
+                                                                {
+                                                                    log(L"Report case A!");
+                                                                }
+
+                                                                break;
+                                                            }
+                                                        }
                                                     }
                                                 }
                                                 else
                                                 {
-                                                    for (unsigned int i = 0; i < numberOfUniqueTickEssenceDigests; i++)
+                                                    if (uniqueTickEssenceDigestCounters[mostPopularUniqueTickEssenceDigestIndex] + (NUMBER_OF_COMPUTORS - totalUniqueTickEssenceDigestCounter) < QUORUM)
                                                     {
-                                                        if (uniqueTickEssenceDigestCounters[i] >= QUORUM)
+                                                        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)etalonTick.nextTickDataDigest), ZERO)) != 0xFFFFFFFF)
                                                         {
-                                                            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)etalonTick.nextTickDataDigest), ZERO)) == 0xFFFFFFFF)
-                                                            {
-                                                                latestOwnTick = 0;
-
-                                                                if (requestedTickData.requestTickData.requestedTickData.tick != etalonTick.tick)
-                                                                {
-                                                                    requestedTickData.requestTickData.requestedTickData.tick = etalonTick.tick;
-                                                                    for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
-                                                                    {
-                                                                        push(&peers[j], &requestedTickData.header, true);
-                                                                    }
-                                                                }
-                                                            }
-                                                            else
-                                                            {
-                                                                nullNextTickDataDigestMustBeUsed = true;
-                                                                latestOwnTick = 0;
-                                                            }
-
-                                                            break;
+                                                            nullNextTickDataDigestMustBeUsed = true;
+                                                            tickShouldBeCreated = true;
+                                                        }
+                                                        else
+                                                        {
+                                                            log(L"Report case B!");
                                                         }
                                                     }
-                                                }
-
-                                                if (futureTickNumberOfComputors > (NUMBER_OF_COMPUTORS - QUORUM) && requestedQuorumTick.requestQuorumTick.quorumTick.tick != etalonTick.tick)
-                                                {
-                                                    requestedQuorumTick.requestQuorumTick.quorumTick.tick = etalonTick.tick;
-                                                    for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
+                                                    else
                                                     {
-                                                        push(&peers[j], &requestedQuorumTick.header, true);
+                                                        if (uniqueTickEssenceDigestCounters[mostPopularUniqueTickEssenceDigestIndex] > NUMBER_OF_COMPUTORS - QUORUM)
+                                                        {
+                                                            log(L"Report case C!");
+                                                        }
                                                     }
                                                 }
                                             }
@@ -9179,19 +9206,15 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
                                                 {
                                                     broadcastedRevenues.broadcastRevenues.revenues.revenues[j] = (system.tickCounters[j] >= maxCounter) ? (ISSUANCE_RATE / NUMBER_OF_COMPUTORS) : (system.tickCounters[j] * ((unsigned long long)(ISSUANCE_RATE / NUMBER_OF_COMPUTORS)) / maxCounter);
-                                                    for (unsigned int k = 0; k < sizeof(extraComputorsToSetMaxRevenueTo) / sizeof(extraComputorsToSetMaxRevenueTo[0]); k++)
+                                                    for (unsigned int k = 0; k < sizeof(computorsToSetMaxRevenueTo) / sizeof(computorsToSetMaxRevenueTo[0]); k++)
                                                     {
-                                                        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)broadcastedComputors.broadcastComputors.computors.publicKeys[j]), *((__m256i*)extraComputorsToSetMaxRevenueTo[k]))) == 0xFFFFFFFF)
+                                                        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)broadcastedComputors.broadcastComputors.computors.publicKeys[j]), *((__m256i*)computorsToSetMaxRevenueTo[k]))) == 0xFFFFFFFF)
                                                         {
                                                             broadcastedRevenues.broadcastRevenues.revenues.revenues[j] = ISSUANCE_RATE / NUMBER_OF_COMPUTORS;
 
                                                             break;
                                                         }
                                                     }
-                                                }
-                                                for (unsigned int j = 0; j < numberOfOwnComputorIndices; j++)
-                                                {
-                                                    broadcastedRevenues.broadcastRevenues.revenues.revenues[ownComputorIndices[j]] = ISSUANCE_RATE / NUMBER_OF_COMPUTORS;
                                                 }
                                             }
                                             else
