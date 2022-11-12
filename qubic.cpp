@@ -44,7 +44,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 58
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -5719,6 +5719,7 @@ static unsigned char computingSubseeds[sizeof(computingSeeds) / sizeof(computing
 #endif
 #if NUMBER_OF_MINING_PROCESSORS
 static unsigned char miningSubseeds[sizeof(miningSeeds) / sizeof(miningSeeds[0])][32], miningPrivateKeys[sizeof(miningSeeds) / sizeof(miningSeeds[0])][32], miningPublicKeys[sizeof(miningSeeds) / sizeof(miningSeeds[0])][32];
+static unsigned int receivedScores[sizeof(miningSeeds) / sizeof(miningSeeds[0])];
 #endif
 static unsigned char adminPublicKey[32];
 
@@ -6356,7 +6357,18 @@ static void requestProcessor(void* ProcedureArgument)
                         if (verify(adminPublicKey, digest, request->resourceTestingSolutionReceipt.signature))
                         {
 #if NUMBER_OF_MINING_PROCESSORS
-                            // TODO
+                            for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
+                            {
+                                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->resourceTestingSolutionReceipt.computorPublicKey), *((__m256i*)miningPublicKeys[i]))) == 0xFFFFFFFF)
+                                {
+                                    if (request->resourceTestingSolutionReceipt.score > receivedScores[i])
+                                    {
+                                        receivedScores[i] = request->resourceTestingSolutionReceipt.score;
+                                    }
+
+                                    break;
+                                }
+                            }
 #endif
 
                             responseSize = requestHeader->size;
@@ -7700,6 +7712,7 @@ static BOOLEAN initialize()
         }
         getPrivateKey(miningSubseeds[i], miningPrivateKeys[i]);
         getPublicKey(miningPrivateKeys[i], miningPublicKeys[i]);
+        receivedScores[i] = 0;
     }
 #endif
 
@@ -8691,6 +8704,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                     if (tickShouldBeCreated)
                                     {
+                                        tickShouldBeCreated = false;
+
                                         broadcastedTick.broadcastTick.tick.epoch = system.epoch;
                                         broadcastedTick.broadcastTick.tick.tick = system.tick + 1;
 
@@ -9006,7 +9021,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 tickNumberOfComputors = 0;
                                                 tickNumberOfComputors2 = 0;
                                                 futureTickNumberOfComputors = 0;
-                                                tickShouldBeCreated = false;
                                                 nullNextTickDataDigestMustBeUsed = false;
 
                                                 system.tick++;
@@ -9137,7 +9151,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                 }
                                                                 else
                                                                 {
-                                                                    log(L"Report case A!");
+                                                                    log(L"Report case D!");
                                                                 }
 
                                                                 break;
@@ -9156,14 +9170,35 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                         }
                                                         else
                                                         {
-                                                            log(L"Report case B!");
+                                                            log(L"Report case E!");
                                                         }
                                                     }
                                                     else
                                                     {
                                                         if (uniqueTickEssenceDigestCounters[mostPopularUniqueTickEssenceDigestIndex] > NUMBER_OF_COMPUTORS - QUORUM)
                                                         {
-                                                            log(L"Report case C!");
+                                                            for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                                                            {
+                                                                if (actualTicks[i].epoch == system.epoch
+                                                                    && actualTicks[i].tick == system.tick + 1
+                                                                    && _mm256_movemask_epi8(_mm256_cmpeq_epi64(tickEssenceDigests[i], uniqueTickEssenceDigests[mostPopularUniqueTickEssenceDigestIndex])) == 0xFFFFFFFF)
+                                                                {
+                                                                    if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)etalonTick.nextTickDataDigest), *((__m256i*)actualTicks[i].nextTickDataDigest))) != 0xFFFFFFFF)
+                                                                    {
+                                                                        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)etalonTick.nextTickDataDigest), ZERO)) != 0xFFFFFFFF)
+                                                                        {
+                                                                            nullNextTickDataDigestMustBeUsed = true;
+                                                                            tickShouldBeCreated = true;
+                                                                        }
+                                                                        else
+                                                                        {
+                                                                            log(L"Report case F!");
+                                                                        }
+                                                                    }
+
+                                                                    break;
+                                                                }
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -9353,6 +9388,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         {
                                             appendText(message, L"+");
                                         }
+                                        appendNumber(message, receivedScores[i], TRUE);
+                                        appendText(message, L"/");
                                         appendNumber(message, score, TRUE);
                                     }
                                     appendText(message, L" (");
