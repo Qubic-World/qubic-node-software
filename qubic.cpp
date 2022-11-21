@@ -43,13 +43,13 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 58
-#define VERSION_C 1
+#define VERSION_B 59
+#define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
 #define EPOCH 30 // Do NOT change!
-#define TICK 3510300 // Do NOT change!
+#define TICK 3520000 // Do NOT change!
 
 #include <intrin.h>
 
@@ -5602,8 +5602,6 @@ typedef struct
 
 #define REQUEST_COMPUTORS 11
 
-#define REQUEST_TICKS 12
-
 #define BROADCAST_TERMINATOR 13
 
 typedef struct
@@ -5793,9 +5791,7 @@ static Tick actualTicks[NUMBER_OF_COMPUTORS];
 static bool tickShouldBeCreated = false;
 static Tick etalonTick;
 static __m256i etalonTickEssenceDigest;
-static bool nullNextTickDataDigestMustBeUsed = false;
 #endif
-static Tick previousTicks[NUMBER_OF_COMPUTORS];
 static unsigned long long tickTicks[11];
 
 static unsigned long long* dejavu0 = NULL;
@@ -5842,6 +5838,8 @@ static EFI_EVENT minerEvents[NUMBER_OF_MINING_PROCESSORS];
 static unsigned int neuronLinks[NUMBER_OF_MINING_PROCESSORS][NUMBER_OF_NEURONS][2];
 static unsigned char neuronValues[NUMBER_OF_MINING_PROCESSORS][NUMBER_OF_NEURONS];
 static volatile long long numberOfMiningIterations = 0;
+static unsigned int validationNeuronLinks[NUMBER_OF_NEURONS][2];
+static unsigned char validationNeuronValues[NUMBER_OF_NEURONS];
 
 static struct
 {
@@ -5872,11 +5870,6 @@ static struct
 {
     RequestResponseHeader header;
 } requestedComputors;
-
-static struct
-{
-    RequestResponseHeader header;
-} requestedTicks;
 
 static struct
 {
@@ -6442,9 +6435,6 @@ static void requestProcessor(void* ProcedureArgument)
                                     && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->tick.nextTickDataDigest), ZERO)) == 0xFFFFFFFF
                                     && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)latestTicks[request->tick.computorIndex].nextTickDataDigest), ZERO)) != 0xFFFFFFFF))
                             {
-#if !NUMBER_OF_COMPUTING_PROCESSORS
-                                bs->CopyMem(&previousTicks[request->tick.computorIndex], &latestTicks[request->tick.computorIndex], sizeof(Tick));
-#endif
                                 bs->CopyMem(&latestTicks[request->tick.computorIndex], &request->tick, sizeof(Tick));
                             }
 
@@ -6455,7 +6445,6 @@ static void requestProcessor(void* ProcedureArgument)
                                         && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->tick.nextTickDataDigest), ZERO)) == 0xFFFFFFFF
                                         && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[request->tick.computorIndex].nextTickDataDigest), ZERO)) != 0xFFFFFFFF)))
                             {
-                                bs->CopyMem(&previousTicks[request->tick.computorIndex], &actualTicks[request->tick.computorIndex], sizeof(Tick));
                                 bs->CopyMem(&actualTicks[request->tick.computorIndex], &request->tick, sizeof(Tick));
                             }
 #endif
@@ -6783,7 +6772,6 @@ static void requestProcessor(void* ProcedureArgument)
                                     }
                                     if (actualTicks[tick.computorIndex].tick <= tick.tick)
                                     {
-                                        bs->CopyMem(&previousTicks[tick.computorIndex], &actualTicks[tick.computorIndex], sizeof(Tick));
                                         bs->CopyMem(&actualTicks[tick.computorIndex], &tick, sizeof(Tick));
                                     }
                                     _InterlockedCompareExchange8(&tickLocks[tick.computorIndex], 0, 1);
@@ -7736,7 +7724,6 @@ static BOOLEAN initialize()
 #if NUMBER_OF_COMPUTING_PROCESSORS
     bs->SetMem(&actualTicks, sizeof(actualTicks), 0);
 #endif
-    bs->SetMem(&previousTicks, sizeof(previousTicks), 0);
     bs->SetMem(&tickTicks, sizeof(tickTicks), 0);
     bs->SetMem(&broadcastedTick, sizeof(broadcastedTick), 0);
 
@@ -7784,10 +7771,6 @@ static BOOLEAN initialize()
     requestedComputors.header.protocol = VERSION_B;
     requestedComputors.header.type = REQUEST_COMPUTORS;
     requestedComputors.header.nonce = 0;
-    requestedTicks.header.size = sizeof(requestedTicks);
-    requestedTicks.header.protocol = VERSION_B;
-    requestedTicks.header.type = REQUEST_TICKS;
-    requestedTicks.header.nonce = 0;
     requestedQuorumTick.header.size = sizeof(requestedQuorumTick);
     requestedQuorumTick.header.protocol = VERSION_B;
     requestedQuorumTick.header.type = REQUEST_QUORUM_TICK;
@@ -8131,7 +8114,7 @@ static BOOLEAN initialize()
 #if NUMBER_OF_MINING_PROCESSORS
         unsigned char randomSeed[32];
         bs->SetMem(randomSeed, 32, 0);
-        randomSeed[0] = 20;
+        randomSeed[0] = 2;
         randomSeed[1] = 80;
         randomSeed[2] = 105;
         randomSeed[3] = 2;
@@ -8643,6 +8626,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             unsigned long long salt;
                             _rdrand64_step(&salt);
 
+                            unsigned long long tickTimeTick = 0;
                             unsigned int latestOwnTick = 0;
                             unsigned long long latestTickTick = __rdtsc();
                             unsigned long long clockTick = 0, systemDataSavingTick = 0, loggingTick = 0, peerRefreshingTick = 0, resourceTestingSolutionPublicationTick = 0;
@@ -8676,7 +8660,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     }
 
                                     if (requestedTickData.requestTickData.requestedTickData.tick != system.tick + 1
-                                        && tickData[system.tick + 1 - TICK].epoch != system.epoch && !nullNextTickDataDigestMustBeUsed)
+                                        && tickData[system.tick + 1 - TICK].epoch != system.epoch)
                                     {
                                         requestedTickData.requestTickData.requestedTickData.tick = system.tick + 1;
                                         for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
@@ -8823,10 +8807,15 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         appendNumber(message, broadcastedTick.broadcastTick.tick.millisecond % 100 / 10, FALSE);
                                         appendNumber(message, broadcastedTick.broadcastTick.tick.millisecond % 10, FALSE);
                                         appendText(message, L".");
-                                        log(message);
+                                        if (curTimeTick - tickTimeTick >= frequency)
+                                        {
+                                            tickTimeTick = curTimeTick;
+
+                                            log(message);
+                                        }
 
                                         TickData* nextTickData = &tickData[system.tick + 1 - TICK];
-                                        if (nextTickData->epoch == system.epoch && !nullNextTickDataDigestMustBeUsed)
+                                        if (nextTickData->epoch == system.epoch)
                                         {
                                             KangarooTwelve((unsigned char*)nextTickData, sizeof(TickData), broadcastedTick.broadcastTick.tick.nextTickDataDigest, 32);
                                         }
@@ -8862,7 +8851,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 _mm_pause();
                                             }
                                             bs->CopyMem(&latestTicks[ownComputorIndices[i]], &broadcastedTick.broadcastTick.tick, sizeof(Tick));
-                                            bs->CopyMem(&previousTicks[ownComputorIndices[i]], &actualTicks[ownComputorIndices[i]], sizeof(Tick));
                                             bs->CopyMem(&actualTicks[ownComputorIndices[i]], &broadcastedTick.broadcastTick.tick, sizeof(Tick));
                                             _InterlockedCompareExchange8(&tickLocks[ownComputorIndices[i]], 0, 1);
                                         }
@@ -9021,7 +9009,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 tickNumberOfComputors = 0;
                                                 tickNumberOfComputors2 = 0;
                                                 futureTickNumberOfComputors = 0;
-                                                nullNextTickDataDigestMustBeUsed = false;
 
                                                 system.tick++;
                                                 latestTickTick = __rdtsc();
@@ -9042,7 +9029,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     }
                                                     if (latestTicks[i].tick == system.tick + 1)
                                                     {
-                                                        bs->CopyMem(&previousTicks[i], &actualTicks[i], sizeof(Tick));
                                                         bs->CopyMem(&actualTicks[i], &latestTicks[i], sizeof(Tick));
                                                     }
                                                     _InterlockedCompareExchange8(&tickLocks[i], 0, 1);
@@ -9134,7 +9120,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 {
                                                     if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)etalonTick.nextTickDataDigest), ZERO)) == 0xFFFFFFFF)
                                                     {
-                                                        tickShouldBeCreated = true;
+                                                        log(L"Report case A!");
                                                     }
                                                     else
                                                     {
@@ -9146,12 +9132,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                             {
                                                                 if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[i].nextTickDataDigest), ZERO)) == 0xFFFFFFFF)
                                                                 {
-                                                                    nullNextTickDataDigestMustBeUsed = true;
-                                                                    tickShouldBeCreated = true;
+                                                                    log(L"Report case B!");
                                                                 }
                                                                 else
                                                                 {
-                                                                    log(L"Report case D!");
+                                                                    log(L"Report case C!");
                                                                 }
 
                                                                 break;
@@ -9165,8 +9150,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     {
                                                         if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)etalonTick.nextTickDataDigest), ZERO)) != 0xFFFFFFFF)
                                                         {
-                                                            nullNextTickDataDigestMustBeUsed = true;
-                                                            tickShouldBeCreated = true;
+                                                            log(L"Report case D!");
                                                         }
                                                         else
                                                         {
@@ -9187,12 +9171,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     {
                                                                         if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)etalonTick.nextTickDataDigest), ZERO)) != 0xFFFFFFFF)
                                                                         {
-                                                                            nullNextTickDataDigestMustBeUsed = true;
-                                                                            tickShouldBeCreated = true;
+                                                                            log(L"Report case F!");
                                                                         }
                                                                         else
                                                                         {
-                                                                            log(L"Report case F!");
+                                                                            log(L"Report case G!");
                                                                         }
                                                                     }
 
@@ -9542,9 +9525,12 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                         _InterlockedIncrement64(&numberOfDisseminatedRequests);
                                                     }
 
-                                                    bs->CopyMem(ptr, &requestedTicks, requestedTicks.header.size);
-                                                    peers[i].dataToTransmitSize += requestedTicks.header.size;
+#if NUMBER_OF_COMPUTING_PROCESSORS
+                                                    requestedQuorumTick.requestQuorumTick.quorumTick.tick = system.tick + 1;
+                                                    bs->CopyMem(ptr, &requestedQuorumTick, requestedQuorumTick.header.size);
+                                                    peers[i].dataToTransmitSize += requestedQuorumTick.header.size;
                                                     _InterlockedIncrement64(&numberOfDisseminatedRequests);
+#endif
 
                                                     _InterlockedIncrement64(&numberOfDisseminatedRequests);
 
@@ -9690,9 +9676,12 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                                 _InterlockedIncrement64(&numberOfDisseminatedRequests);
                                                                             }
 
-                                                                            bs->CopyMem(ptr, &requestedTicks, requestedTicks.header.size);
-                                                                            peers[i].dataToTransmitSize += requestedTicks.header.size;
+#if NUMBER_OF_COMPUTING_PROCESSORS
+                                                                            requestedQuorumTick.requestQuorumTick.quorumTick.tick = system.tick + 1;
+                                                                            bs->CopyMem(ptr, &requestedQuorumTick, requestedQuorumTick.header.size);
+                                                                            peers[i].dataToTransmitSize += requestedQuorumTick.header.size;
                                                                             _InterlockedIncrement64(&numberOfDisseminatedRequests);
+#endif
 
                                                                             _InterlockedIncrement64(&numberOfDisseminatedRequests);
 
@@ -9722,61 +9711,51 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                 }
                                                                 break;
 
-                                                                case REQUEST_TICKS:
-                                                                {
-                                                                    unsigned short computorIndices[NUMBER_OF_COMPUTORS];
-                                                                    unsigned short numberOfComputorIndices = NUMBER_OF_COMPUTORS;
-                                                                    for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
-                                                                    {
-                                                                        computorIndices[j] = j;
-                                                                    }
-                                                                    while (numberOfComputorIndices)
-                                                                    {
-                                                                        unsigned short random;
-                                                                        _rdrand16_step(&random);
-                                                                        const unsigned short index = random % numberOfComputorIndices;
-                                                                        if (latestTicks[index].epoch)
-                                                                        {
-                                                                            bs->CopyMem(&broadcastedTick.broadcastTick.tick, &latestTicks[index], sizeof(Tick));
-
-                                                                            push(&peers[i], &broadcastedTick.header, true);
-                                                                        }
-#if NUMBER_OF_COMPUTING_PROCESSORS
-                                                                        if (actualTicks[index].epoch
-                                                                            && actualTicks[index].tick != latestTicks[index].tick)
-                                                                        {
-                                                                            bs->CopyMem(&broadcastedTick.broadcastTick.tick, &actualTicks[index], sizeof(Tick));
-
-                                                                            push(&peers[i], &broadcastedTick.header, true);
-                                                                        }
-#endif
-                                                                        if (previousTicks[index].epoch
-                                                                            && previousTicks[index].tick != latestTicks[index].tick
-#if NUMBER_OF_COMPUTING_PROCESSORS
-                                                                            && previousTicks[index].tick != actualTicks[index].tick
-#endif
-                                                                            )
-                                                                        {
-                                                                            bs->CopyMem(&broadcastedTick.broadcastTick.tick, &previousTicks[index], sizeof(Tick));
-
-                                                                            push(&peers[i], &broadcastedTick.header, true);
-                                                                        }
-
-                                                                        computorIndices[index] = computorIndices[--numberOfComputorIndices];
-                                                                    }
-
-                                                                    _InterlockedIncrement64(&numberOfProcessedRequests);
-                                                                }
-                                                                break;
-
                                                                 case REQUEST_QUORUM_TICK:
                                                                 {
 #if NUMBER_OF_COMPUTING_PROCESSORS
                                                                     RequestQuorumTick* request = (RequestQuorumTick*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader));
-                                                                    if (request->quorumTick.tick > TICK && request->quorumTick.tick <= system.tick)
+                                                                    if (request->quorumTick.tick == system.tick + 1)
+#endif
                                                                     {
-                                                                        bs->CopyMem(&respondedQuorumTick.respondQuorumTick.quorumTick, &quorumTicks[request->quorumTick.tick - TICK - 1], sizeof(QuorumTick));
-                                                                        push(&peers[i], &respondedQuorumTick.header, true);
+                                                                        unsigned short computorIndices[NUMBER_OF_COMPUTORS];
+                                                                        unsigned short numberOfComputorIndices = NUMBER_OF_COMPUTORS;
+                                                                        for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
+                                                                        {
+                                                                            computorIndices[j] = j;
+                                                                        }
+                                                                        while (numberOfComputorIndices)
+                                                                        {
+                                                                            unsigned short random;
+                                                                            _rdrand16_step(&random);
+                                                                            const unsigned short index = random % numberOfComputorIndices;
+                                                                            if (latestTicks[index].epoch)
+                                                                            {
+                                                                                bs->CopyMem(&broadcastedTick.broadcastTick.tick, &latestTicks[index], sizeof(Tick));
+
+                                                                                push(&peers[i], &broadcastedTick.header, true);
+                                                                            }
+#if NUMBER_OF_COMPUTING_PROCESSORS
+                                                                            if (actualTicks[index].epoch
+                                                                                && actualTicks[index].tick != latestTicks[index].tick)
+                                                                            {
+                                                                                bs->CopyMem(&broadcastedTick.broadcastTick.tick, &actualTicks[index], sizeof(Tick));
+
+                                                                                push(&peers[i], &broadcastedTick.header, true);
+                                                                            }
+#endif
+
+                                                                            computorIndices[index] = computorIndices[--numberOfComputorIndices];
+                                                                        }
+                                                                    }
+#if NUMBER_OF_COMPUTING_PROCESSORS
+                                                                    else
+                                                                    {
+                                                                        if (request->quorumTick.tick > TICK && request->quorumTick.tick <= system.tick)
+                                                                        {
+                                                                            bs->CopyMem(&respondedQuorumTick.respondQuorumTick.quorumTick, &quorumTicks[request->quorumTick.tick - TICK - 1], sizeof(QuorumTick));
+                                                                            push(&peers[i], &respondedQuorumTick.header, true);
+                                                                        }
                                                                     }
 #endif
 
@@ -10526,6 +10505,71 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     _rdrand16_step(&random);
                                     for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
                                     {
+                                        for (unsigned int j = 0; j < NUMBER_OF_SOLUTION_NONCES; j++)
+                                        {
+                                            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces[j]), ZERO)) != 0xFFFFFFFF)
+                                            {
+                                                ::random(broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey, broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces[j], (unsigned char*)validationNeuronLinks, sizeof(validationNeuronLinks));
+                                                for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
+                                                {
+                                                    validationNeuronLinks[k][0] %= NUMBER_OF_NEURONS;
+                                                    validationNeuronLinks[k][1] %= NUMBER_OF_NEURONS;
+                                                }
+
+                                                bs->SetMem(validationNeuronValues, sizeof(validationNeuronValues), 0xFF);
+
+                                                unsigned int limiter = 10000;
+                                                int outputLength = 0;
+                                                while (outputLength < (sizeof(miningData) << 3))
+                                                {
+                                                    const unsigned int prevValue0 = validationNeuronValues[NUMBER_OF_NEURONS - 1];
+                                                    const unsigned int prevValue1 = validationNeuronValues[NUMBER_OF_NEURONS - 2];
+
+                                                    for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
+                                                    {
+                                                        validationNeuronValues[k] = ~(validationNeuronValues[validationNeuronLinks[k][0]] & validationNeuronValues[validationNeuronLinks[k][1]]);
+                                                    }
+
+                                                    if (validationNeuronValues[NUMBER_OF_NEURONS - 1] != prevValue0
+                                                        && validationNeuronValues[NUMBER_OF_NEURONS - 2] == prevValue1)
+                                                    {
+                                                        if (!((miningData[outputLength >> 6] >> (outputLength & 63)) & 1))
+                                                        {
+                                                            break;
+                                                        }
+
+                                                        outputLength++;
+                                                    }
+                                                    else
+                                                    {
+                                                        if (validationNeuronValues[NUMBER_OF_NEURONS - 2] != prevValue1
+                                                            && validationNeuronValues[NUMBER_OF_NEURONS - 1] == prevValue0)
+                                                        {
+                                                            if ((miningData[outputLength >> 6] >> (outputLength & 63)) & 1)
+                                                            {
+                                                                break;
+                                                            }
+
+                                                            outputLength++;
+                                                        }
+                                                        else
+                                                        {
+                                                            if (!(--limiter))
+                                                            {
+                                                                break;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
+                                                if (outputLength < SOLUTION_THRESHOLD)
+                                                {
+                                                    *((__m256i*)broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces[j]) = ZERO;
+                                                    log(L"An invalid resource testing solution is removed!");
+                                                }
+                                            }
+                                        }
+
                                         broadcastedSolutions[i].header.nonce = random;
                                         unsigned char digest[32];
                                         broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey[0] ^= BROADCAST_RESOURCE_TESTING_SOLUTION;
