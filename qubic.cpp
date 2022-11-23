@@ -43,13 +43,13 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 59
+#define VERSION_B 60
 #define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
-#define EPOCH 30 // Do NOT change!
-#define TICK 3520000 // Do NOT change!
+#define EPOCH 32 // Do NOT change!
+#define TICK 3530000 // Do NOT change!
 
 #include <intrin.h>
 
@@ -5732,6 +5732,8 @@ static CHAR16 message[16384], timestampedMessage[16384];
 
 static EFI_FILE_PROTOCOL* root = NULL;
 
+static bool caseA = false, caseB = false, caseC = false, caseD = false, caseE = false, caseF = false, caseG = false;
+
 #if NUMBER_OF_COMPUTING_PROCESSORS
 static EFI_FILE_PROTOCOL* ticksFile = NULL;
 static EFI_FILE_PROTOCOL* tickTransactionDigestsFile = NULL;
@@ -8121,7 +8123,7 @@ static BOOLEAN initialize()
         randomSeed[4] = 212;
         randomSeed[5] = 16;
         randomSeed[6] = 70;
-        randomSeed[7] = 28;
+        randomSeed[7] = 2;
         random(randomSeed, randomSeed, (unsigned char*)miningData, sizeof(miningData));
 
         SOLUTION_FILE_NAME[sizeof(SOLUTION_FILE_NAME) / sizeof(SOLUTION_FILE_NAME[0]) - 4] = EPOCH / 100 + L'0';
@@ -9013,6 +9015,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 system.tick++;
                                                 latestTickTick = __rdtsc();
 
+                                                caseG = caseF = caseE = caseD = caseC = caseB = caseA = false;
+
                                                 if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)quorumTicks[quorumTickIndex].nextTickDataDigest), ZERO)) != 0xFFFFFFFF)
                                                 {
                                                     for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
@@ -9120,7 +9124,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 {
                                                     if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)etalonTick.nextTickDataDigest), ZERO)) == 0xFFFFFFFF)
                                                     {
-                                                        log(L"Report case A!");
+                                                        caseA = true;
                                                     }
                                                     else
                                                     {
@@ -9132,11 +9136,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                             {
                                                                 if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[i].nextTickDataDigest), ZERO)) == 0xFFFFFFFF)
                                                                 {
-                                                                    log(L"Report case B!");
+                                                                    caseB = true;
                                                                 }
                                                                 else
                                                                 {
-                                                                    log(L"Report case C!");
+                                                                    caseC = true;
                                                                 }
 
                                                                 break;
@@ -9150,11 +9154,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     {
                                                         if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)etalonTick.nextTickDataDigest), ZERO)) != 0xFFFFFFFF)
                                                         {
-                                                            log(L"Report case D!");
+                                                            caseD = true;
                                                         }
                                                         else
                                                         {
-                                                            log(L"Report case E!");
+                                                            caseE = true;
                                                         }
                                                     }
                                                     else
@@ -9171,11 +9175,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     {
                                                                         if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)etalonTick.nextTickDataDigest), ZERO)) != 0xFFFFFFFF)
                                                                         {
-                                                                            log(L"Report case F!");
+                                                                            caseF = true;
                                                                         }
                                                                         else
                                                                         {
-                                                                            log(L"Report case G!");
+                                                                            caseG = true;
                                                                         }
                                                                     }
 
@@ -9287,7 +9291,15 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         }
                                     }
 
-                                    setText(message, L"[+");
+                                    setText(message, caseA ? L"A" : L".");
+                                    appendText(message, caseB ? L"B" : L".");
+                                    appendText(message, caseC ? L"C" : L".");
+                                    appendText(message, caseD ? L"D" : L".");
+                                    appendText(message, caseE ? L"E" : L".");
+                                    appendText(message, caseF ? L"F" : L".");
+                                    appendText(message, caseG ? L"G " : L". ");
+
+                                    appendText(message, L"[+");
                                     appendNumber(message, numberOfProcessedRequests - prevNumberOfProcessedRequests, TRUE);
                                     appendText(message, L" -");
                                     appendNumber(message, numberOfDiscardedRequests - prevNumberOfDiscardedRequests, TRUE);
