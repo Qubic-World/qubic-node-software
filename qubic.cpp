@@ -44,7 +44,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 60
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -5733,6 +5733,7 @@ static CHAR16 message[16384], timestampedMessage[16384];
 static EFI_FILE_PROTOCOL* root = NULL;
 
 static bool caseA = false, caseB = false, caseC = false, caseD = false, caseE = false, caseF = false, caseG = false;
+static int counterX = 0, counterY = 0, counterZ = 0;
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
 static EFI_FILE_PROTOCOL* ticksFile = NULL;
@@ -6786,6 +6787,7 @@ static void requestProcessor(void* ProcedureArgument)
 
                 case RESPOND_TICK_DATA:
                 {
+                    counterZ++;
                     RespondTickData* request = (RespondTickData*)((char*)processor->cache + sizeof(RequestResponseHeader));
                     if (request->tickData.epoch == broadcastedComputors.broadcastComputors.computors.epoch
                         && request->tickData.tick > TICK && request->tickData.tick <= TICK + MAX_NUMBER_OF_TICKS_PER_EPOCH
@@ -8664,6 +8666,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     if (requestedTickData.requestTickData.requestedTickData.tick != system.tick + 1
                                         && tickData[system.tick + 1 - TICK].epoch != system.epoch)
                                     {
+                                        counterX++;
                                         requestedTickData.requestTickData.requestedTickData.tick = system.tick + 1;
                                         for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
                                         {
@@ -9298,6 +9301,12 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     appendText(message, caseE ? L"E" : L".");
                                     appendText(message, caseF ? L"F" : L".");
                                     appendText(message, caseG ? L"G " : L". ");
+                                    appendNumber(message, counterX, TRUE);
+                                    appendText(message, L"/");
+                                    appendNumber(message, counterY, TRUE);
+                                    appendText(message, L"/");
+                                    appendNumber(message, counterZ, TRUE);
+                                    appendText(message, L" ");
 
                                     appendText(message, L"[+");
                                     appendNumber(message, numberOfProcessedRequests - prevNumberOfProcessedRequests, TRUE);
@@ -9778,6 +9787,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                 case REQUEST_TICK_DATA:
                                                                 {
 #if NUMBER_OF_COMPUTING_PROCESSORS
+                                                                    counterY++;
                                                                     RequestTickData* request = (RequestTickData*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader));
                                                                     if (request->requestedTickData.tick > TICK && request->requestedTickData.tick <= TICK + MAX_NUMBER_OF_TICKS_PER_EPOCH
                                                                         && tickData[request->requestedTickData.tick - TICK - 1].epoch)
