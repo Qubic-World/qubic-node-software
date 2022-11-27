@@ -44,7 +44,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 60
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -5733,7 +5733,7 @@ static CHAR16 message[16384], timestampedMessage[16384];
 static EFI_FILE_PROTOCOL* root = NULL;
 
 static bool caseA = false, caseB = false, caseC = false, caseD = false, caseE = false, caseF = false, caseG = false;
-static int counterX = 0, counterY = 0, counterZ = 0;
+static int counterX = 0, counterY = 0, counterZ = 0, counterZ2 = 0;
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
 static EFI_FILE_PROTOCOL* ticksFile = NULL;
@@ -6787,7 +6787,7 @@ static void requestProcessor(void* ProcedureArgument)
 
                 case RESPOND_TICK_DATA:
                 {
-                    counterZ++;
+                    counterZ2++;
                     RespondTickData* request = (RespondTickData*)((char*)processor->cache + sizeof(RequestResponseHeader));
                     if (request->tickData.epoch == broadcastedComputors.broadcastComputors.computors.epoch
                         && request->tickData.tick > TICK && request->tickData.tick <= TICK + MAX_NUMBER_OF_TICKS_PER_EPOCH
@@ -9306,6 +9306,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     appendNumber(message, counterY, TRUE);
                                     appendText(message, L"/");
                                     appendNumber(message, counterZ, TRUE);
+                                    appendText(message, L"/");
+                                    appendNumber(message, counterZ2, TRUE);
                                     appendText(message, L" ");
 
                                     appendText(message, L"[+");
@@ -9792,6 +9794,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     if (request->requestedTickData.tick > TICK && request->requestedTickData.tick <= TICK + MAX_NUMBER_OF_TICKS_PER_EPOCH
                                                                         && tickData[request->requestedTickData.tick - TICK - 1].epoch)
                                                                     {
+                                                                        counterZ++;
                                                                         bs->CopyMem(&respondedTickData.respondTickData.tickData, &tickData[request->requestedTickData.tick - TICK - 1], sizeof(TickData));
                                                                         push(&peers[i], &respondedTickData.header, true);
                                                                     }
