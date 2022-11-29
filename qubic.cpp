@@ -44,7 +44,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 60
-#define VERSION_C 2
+#define VERSION_C 3
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -6577,6 +6577,7 @@ static void requestProcessor(void* ProcedureArgument)
 
                 case BROADCAST_FUTURE_TICK_DATA:
                 {
+                    counterX++;
                     BroadcastFutureTickData* request = (BroadcastFutureTickData*)((char*)processor->cache + sizeof(RequestResponseHeader));
                     if (request->tickData.epoch == broadcastedComputors.broadcastComputors.computors.epoch
                         && request->tickData.tick % NUMBER_OF_COMPUTORS == request->tickData.computorIndex
@@ -6787,7 +6788,7 @@ static void requestProcessor(void* ProcedureArgument)
 
                 case RESPOND_TICK_DATA:
                 {
-                    counterZ2++;
+                    counterY++;
                     RespondTickData* request = (RespondTickData*)((char*)processor->cache + sizeof(RequestResponseHeader));
                     if (request->tickData.epoch == broadcastedComputors.broadcastComputors.computors.epoch
                         && request->tickData.tick > TICK && request->tickData.tick <= TICK + MAX_NUMBER_OF_TICKS_PER_EPOCH
@@ -6799,13 +6800,14 @@ static void requestProcessor(void* ProcedureArgument)
                         && request->tickData.second <= 59
                         && request->tickData.millisecond <= 999)
                     {
+                        counterZ++;
                         unsigned char digest[32];
                         request->tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
                         KangarooTwelve((unsigned char*)&request->tickData, sizeof(TickData) - SIGNATURE_SIZE, digest, sizeof(digest));
                         request->tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
                         if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->tickData.computorIndex], digest, request->tickData.signature))
                         {
-
+                            counterZ2++;
                             TickData* futureTickData = &tickData[request->tickData.tick - TICK - 1];
                             if (futureTickData->epoch)
                             {
@@ -8666,7 +8668,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     if (requestedTickData.requestTickData.requestedTickData.tick != system.tick + 1
                                         && tickData[system.tick + 1 - TICK].epoch != system.epoch)
                                     {
-                                        counterX++;
                                         requestedTickData.requestTickData.requestedTickData.tick = system.tick + 1;
                                         for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
                                         {
@@ -9789,12 +9790,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                 case REQUEST_TICK_DATA:
                                                                 {
 #if NUMBER_OF_COMPUTING_PROCESSORS
-                                                                    counterY++;
                                                                     RequestTickData* request = (RequestTickData*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader));
                                                                     if (request->requestedTickData.tick > TICK && request->requestedTickData.tick <= TICK + MAX_NUMBER_OF_TICKS_PER_EPOCH
                                                                         && tickData[request->requestedTickData.tick - TICK - 1].epoch)
                                                                     {
-                                                                        counterZ++;
                                                                         bs->CopyMem(&respondedTickData.respondTickData.tickData, &tickData[request->requestedTickData.tick - TICK - 1], sizeof(TickData));
                                                                         push(&peers[i], &respondedTickData.header, true);
                                                                     }
