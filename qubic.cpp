@@ -44,7 +44,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 61
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -54,8 +54,10 @@ static const unsigned char knownPublicPeers[][4] = {
 #include <intrin.h>
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
-//#include "qubics.h"
+#include "qubics.h"
 #endif
+
+#define NUMBER_OF_TEST_ITERATIONS 1000000
 
 
 
@@ -10641,6 +10643,208 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     case 0x0B:
                                     {
                                         log(L"[F4] Close all connections | [Pause] Toggle logging | [ESC] Shut down.");
+                                    }
+                                    break;
+
+                                    case 0x0C:
+                                    {
+                                        {
+                                            unsigned int i, j;
+                                            unsigned long long delta = __rdtsc();
+                                            bool_2 data;
+                                            for (i = 0; i < NUMBER_OF_TEST_ITERATIONS; i++)
+                                            {
+                                                for (j = 0; j < 2; j++)
+                                                {
+                                                    data.set(j, j);
+                                                }
+                                            }
+                                            delta = __rdtsc() - delta;
+                                            setText(message, L"bool_2.set: ");
+                                            appendNumber(message, delta / j, TRUE);
+                                            log(message);
+                                        }
+                                        {
+                                            unsigned int i, j;
+                                            unsigned long long delta = __rdtsc();
+                                            bool_2 data;
+                                            for (i = 0; i < NUMBER_OF_TEST_ITERATIONS; i++)
+                                            {
+                                                for (j = 0; j < 2; j++)
+                                                {
+                                                    data.get(j);
+                                                }
+                                            }
+                                            delta = __rdtsc() - delta;
+                                            setText(message, L"bool_2.get: ");
+                                            appendNumber(message, delta / j, TRUE);
+                                            log(message);
+                                        }
+
+                                        {
+                                            unsigned int i, j;
+                                            unsigned long long delta = __rdtsc();
+                                            bool_65536 data;
+                                            for (i = 0; i < NUMBER_OF_TEST_ITERATIONS; i++)
+                                            {
+                                                for (j = 0; j < 65536; j++)
+                                                {
+                                                    data.set(j, j);
+                                                }
+                                            }
+                                            delta = __rdtsc() - delta;
+                                            setText(message, L"bool_65536.set: ");
+                                            appendNumber(message, delta / j, TRUE);
+                                            log(message);
+                                        }
+                                        {
+                                            unsigned int i, j;
+                                            unsigned long long delta = __rdtsc();
+                                            bool_65536 data;
+                                            for (i = 0; i < NUMBER_OF_TEST_ITERATIONS; i++)
+                                            {
+                                                for (j = 0; j < 65536; j++)
+                                                {
+                                                    data.get(j);
+                                                }
+                                            }
+                                            delta = __rdtsc() - delta;
+                                            setText(message, L"bool_65536.get: ");
+                                            appendNumber(message, delta / j, TRUE);
+                                            log(message);
+                                        }
+
+                                        {
+                                            unsigned int i, j;
+                                            unsigned long long delta = __rdtsc();
+                                            bool_1048576 data;
+                                            for (i = 0; i < NUMBER_OF_TEST_ITERATIONS; i++)
+                                            {
+                                                for (j = 0; j < 1048576; j++)
+                                                {
+                                                    //data.set(j, j);
+                                                }
+                                            }
+                                            delta = __rdtsc() - delta;
+                                            setText(message, L"bool_1048576.set: ");
+                                            appendNumber(message, delta / j, TRUE);
+                                            log(message);
+                                        }
+                                        {
+                                            unsigned int i, j;
+                                            unsigned long long delta = __rdtsc();
+                                            bool_1048576 data;
+                                            for (i = 0; i < NUMBER_OF_TEST_ITERATIONS; i++)
+                                            {
+                                                for (j = 0; j < 1048576; j++)
+                                                {
+                                                    //data.get(j);
+                                                }
+                                            }
+                                            delta = __rdtsc() - delta;
+                                            setText(message, L"bool_1048576.get: ");
+                                            appendNumber(message, delta / j, TRUE);
+                                            log(message);
+                                        }
+
+                                        {
+                                            unsigned int i, j;
+                                            unsigned long long delta = __rdtsc();
+                                            uint64_2 data;
+                                            for (i = 0; i < NUMBER_OF_TEST_ITERATIONS; i++)
+                                            {
+                                                for (j = 0; j < 2; j++)
+                                                {
+                                                    //data.set(j, j);
+                                                }
+                                            }
+                                            delta = __rdtsc() - delta;
+                                            setText(message, L"uint64_2.set: ");
+                                            appendNumber(message, delta / j, TRUE);
+                                            log(message);
+                                        }
+                                        {
+                                            unsigned int i, j;
+                                            unsigned long long delta = __rdtsc();
+                                            uint64_2 data;
+                                            for (i = 0; i < NUMBER_OF_TEST_ITERATIONS; i++)
+                                            {
+                                                for (j = 0; j < 2; j++)
+                                                {
+                                                    //data.get(j);
+                                                }
+                                            }
+                                            delta = __rdtsc() - delta;
+                                            setText(message, L"uint64_2.get: ");
+                                            appendNumber(message, delta / j, TRUE);
+                                            log(message);
+                                        }
+
+                                        {
+                                            unsigned int i, j;
+                                            unsigned long long delta = __rdtsc();
+                                            uint64_65536 data;
+                                            for (i = 0; i < NUMBER_OF_TEST_ITERATIONS; i++)
+                                            {
+                                                for (j = 0; j < 65536; j++)
+                                                {
+                                                    //data.set(j, j);
+                                                }
+                                            }
+                                            delta = __rdtsc() - delta;
+                                            setText(message, L"uint64_65536.set: ");
+                                            appendNumber(message, delta / j, TRUE);
+                                            log(message);
+                                        }
+                                        {
+                                            unsigned int i, j;
+                                            unsigned long long delta = __rdtsc();
+                                            uint64_65536 data;
+                                            for (i = 0; i < NUMBER_OF_TEST_ITERATIONS; i++)
+                                            {
+                                                for (j = 0; j < 65536; j++)
+                                                {
+                                                    //data.get(j);
+                                                }
+                                            }
+                                            delta = __rdtsc() - delta;
+                                            setText(message, L"uint64_65536.get: ");
+                                            appendNumber(message, delta / j, TRUE);
+                                            log(message);
+                                        }
+
+                                        {
+                                            unsigned int i, j;
+                                            unsigned long long delta = __rdtsc();
+                                            uint64_1048576 data;
+                                            for (i = 0; i < NUMBER_OF_TEST_ITERATIONS; i++)
+                                            {
+                                                for (j = 0; j < 1048576; j++)
+                                                {
+                                                    //data.set(j, j);
+                                                }
+                                            }
+                                            delta = __rdtsc() - delta;
+                                            setText(message, L"uint64_1048576.set: ");
+                                            appendNumber(message, delta / j, TRUE);
+                                            log(message);
+                                        }
+                                        {
+                                            unsigned int i, j;
+                                            unsigned long long delta = __rdtsc();
+                                            uint64_1048576 data;
+                                            for (i = 0; i < NUMBER_OF_TEST_ITERATIONS; i++)
+                                            {
+                                                for (j = 0; j < 1048576; j++)
+                                                {
+                                                    //data.get(j);
+                                                }
+                                            }
+                                            delta = __rdtsc() - delta;
+                                            setText(message, L"uint64_1048576.get: ");
+                                            appendNumber(message, delta / j, TRUE);
+                                            log(message);
+                                        }
                                     }
                                     break;
 
