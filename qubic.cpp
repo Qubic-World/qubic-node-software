@@ -43,13 +43,13 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 60
-#define VERSION_C 3
+#define VERSION_B 61
+#define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
-#define EPOCH 32 // Do NOT change!
-#define TICK 3530000 // Do NOT change!
+#define EPOCH 33 // Do NOT change!
+#define TICK 3540000 // Do NOT change!
 
 #include <intrin.h>
 
@@ -8125,7 +8125,7 @@ static BOOLEAN initialize()
         randomSeed[2] = 105;
         randomSeed[3] = 2;
         randomSeed[4] = 212;
-        randomSeed[5] = 16;
+        randomSeed[5] = 80;
         randomSeed[6] = 70;
         randomSeed[7] = 2;
         random(randomSeed, randomSeed, (unsigned char*)miningData, sizeof(miningData));
