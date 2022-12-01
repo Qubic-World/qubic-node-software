@@ -43,21 +43,19 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 61
-#define VERSION_C 1
+#define VERSION_B 62
+#define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
 #define EPOCH 33 // Do NOT change!
-#define TICK 3540000 // Do NOT change!
+#define TICK 3550000 // Do NOT change!
 
 #include <intrin.h>
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
-#include "qubics.h"
+//#include "qubics.h"
 #endif
-
-#define NUMBER_OF_TEST_ITERATIONS 1000000
 
 
 
@@ -6444,7 +6442,7 @@ static void requestProcessor(void* ProcedureArgument)
                             }
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
-                            if (request->tick.tick == system.tick + 1
+                            if (request->tick.tick == system.tick
                                 && (request->tick.tick > actualTicks[request->tick.computorIndex].tick
                                     || (request->tick.tick == actualTicks[request->tick.computorIndex].tick
                                         && _mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->tick.nextTickDataDigest), ZERO)) == 0xFFFFFFFF
@@ -6597,9 +6595,9 @@ static void requestProcessor(void* ProcedureArgument)
                         if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->tickData.computorIndex], digest, request->tickData.signature))
                         {
 #if NUMBER_OF_COMPUTING_PROCESSORS
-                            if (request->tickData.tick > TICK && request->tickData.tick <= TICK + MAX_NUMBER_OF_TICKS_PER_EPOCH)
+                            if (request->tickData.tick >= TICK && request->tickData.tick < TICK + MAX_NUMBER_OF_TICKS_PER_EPOCH)
                             {
-                                TickData* futureTickData = &tickData[request->tickData.tick - TICK - 1];
+                                TickData* futureTickData = &tickData[request->tickData.tick - TICK];
                                 if (futureTickData->epoch)
                                 {
                                     if (request->tickData.millisecond != futureTickData->millisecond
@@ -6708,7 +6706,7 @@ static void requestProcessor(void* ProcedureArgument)
                     RespondQuorumTick* request = (RespondQuorumTick*)((char*)processor->cache + sizeof(RequestResponseHeader));
                     if (request->quorumTick.numberOfComputorSignatures == QUORUM
                         && request->quorumTick.epoch == broadcastedComputors.broadcastComputors.computors.epoch
-                        && request->quorumTick.tick == system.tick + 1
+                        && request->quorumTick.tick == system.tick
                         && request->quorumTick.month >= 1 && request->quorumTick.month <= 12
                         && request->quorumTick.day >= 1 && request->quorumTick.day <= ((request->quorumTick.month == 1 || request->quorumTick.month == 3 || request->quorumTick.month == 5 || request->quorumTick.month == 7 || request->quorumTick.month == 8 || request->quorumTick.month == 10 || request->quorumTick.month == 12) ? 31 : ((request->quorumTick.month == 4 || request->quorumTick.month == 6 || request->quorumTick.month == 9 || request->quorumTick.month == 11) ? 30 : ((request->quorumTick.year & 3) ? 28 : 29)))
                         && request->quorumTick.hour <= 23
@@ -6793,7 +6791,7 @@ static void requestProcessor(void* ProcedureArgument)
                     counterY++;
                     RespondTickData* request = (RespondTickData*)((char*)processor->cache + sizeof(RequestResponseHeader));
                     if (request->tickData.epoch == broadcastedComputors.broadcastComputors.computors.epoch
-                        && request->tickData.tick > TICK && request->tickData.tick <= TICK + MAX_NUMBER_OF_TICKS_PER_EPOCH
+                        && request->tickData.tick >= TICK && request->tickData.tick < TICK + MAX_NUMBER_OF_TICKS_PER_EPOCH
                         && request->tickData.tick % NUMBER_OF_COMPUTORS == request->tickData.computorIndex
                         && request->tickData.month >= 1 && request->tickData.month <= 12
                         && request->tickData.day >= 1 && request->tickData.day <= ((request->tickData.month == 1 || request->tickData.month == 3 || request->tickData.month == 5 || request->tickData.month == 7 || request->tickData.month == 8 || request->tickData.month == 10 || request->tickData.month == 12) ? 31 : ((request->tickData.month == 4 || request->tickData.month == 6 || request->tickData.month == 9 || request->tickData.month == 11) ? 30 : ((request->tickData.year & 3) ? 28 : 29)))
@@ -6810,7 +6808,7 @@ static void requestProcessor(void* ProcedureArgument)
                         if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->tickData.computorIndex], digest, request->tickData.signature))
                         {
                             counterZ2++;
-                            TickData* futureTickData = &tickData[request->tickData.tick - TICK - 1];
+                            TickData* futureTickData = &tickData[request->tickData.tick - TICK];
                             if (futureTickData->epoch)
                             {
                                 if (request->tickData.millisecond != futureTickData->millisecond
@@ -8699,7 +8697,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         tickShouldBeCreated = false;
 
                                         broadcastedTick.broadcastTick.tick.epoch = system.epoch;
-                                        broadcastedTick.broadcastTick.tick.tick = system.tick + 1;
+                                        broadcastedTick.broadcastTick.tick.tick = system.tick;
 
                                         *((__m256i*)broadcastedTick.broadcastTick.tick.prevSpectrumDigest) = *((__m256i*)broadcastedTick.broadcastTick.tick.initSpectrumDigest) = initSpectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1];
                                         *((__m256i*)broadcastedTick.broadcastTick.tick.prevUniverseDigest) = *((__m256i*)broadcastedTick.broadcastTick.tick.initUniverseDigest) = ZERO;
@@ -8911,7 +8909,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 }
 
                                                 if (actualTicks[i].epoch == system.epoch
-                                                    && actualTicks[i].tick == system.tick + 1)
+                                                    && actualTicks[i].tick == system.tick)
                                                 {
                                                     tickNumberOfComputors2++;
 
@@ -8988,7 +8986,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     }
                                                 }
 
-                                                if (latestTicks[i].tick > system.tick + 1)
+                                                if (latestTicks[i].tick > system.tick)
                                                 {
                                                     futureTickNumberOfComputors++;
                                                 }
@@ -9037,7 +9035,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     {
                                                         _mm_pause();
                                                     }
-                                                    if (latestTicks[i].tick == system.tick + 1)
+                                                    if (latestTicks[i].tick == system.tick)
                                                     {
                                                         bs->CopyMem(&actualTicks[i], &latestTicks[i], sizeof(Tick));
                                                     }
@@ -9063,7 +9061,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                 for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
                                                 {
-                                                    if ((system.tick + 3) % NUMBER_OF_COMPUTORS == ownComputorIndices[i])
+                                                    if ((system.tick + 2) % NUMBER_OF_COMPUTORS == ownComputorIndices[i])
                                                     {
                                                         EFI_TIME newTime;
                                                         if (status = rs->GetTime(&newTime, NULL))
@@ -9074,7 +9072,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                         {
                                                             broadcastedFutureTickData.broadcastFutureTickData.tickData.computorIndex = ownComputorIndices[i] ^ BROADCAST_FUTURE_TICK_DATA;
                                                             broadcastedFutureTickData.broadcastFutureTickData.tickData.epoch = system.epoch;
-                                                            broadcastedFutureTickData.broadcastFutureTickData.tickData.tick = system.tick + 3;
+                                                            broadcastedFutureTickData.broadcastFutureTickData.tickData.tick = system.tick + 2;
 
                                                             broadcastedFutureTickData.broadcastFutureTickData.tickData.millisecond = newTime.Nanosecond / 1000000;
                                                             broadcastedFutureTickData.broadcastFutureTickData.tickData.second = newTime.Second;
@@ -9099,7 +9097,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                 push(&peers[j], &broadcastedFutureTickData.header, true);
                                                             }
 
-                                                            bs->CopyMem(&tickData[broadcastedFutureTickData.broadcastFutureTickData.tickData.tick - TICK - 1], &broadcastedFutureTickData.broadcastFutureTickData.tickData, sizeof(TickData));
+                                                            bs->CopyMem(&tickData[broadcastedFutureTickData.broadcastFutureTickData.tickData.tick - TICK], &broadcastedFutureTickData.broadcastFutureTickData.tickData, sizeof(TickData));
                                                         }
 
                                                         break;
@@ -9108,9 +9106,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             }
                                             else
                                             {
-                                                if (futureTickNumberOfComputors > (NUMBER_OF_COMPUTORS - QUORUM) && requestedQuorumTick.requestQuorumTick.quorumTick.tick != system.tick + 1)
+                                                if (futureTickNumberOfComputors > (NUMBER_OF_COMPUTORS - QUORUM) && requestedQuorumTick.requestQuorumTick.quorumTick.tick != system.tick)
                                                 {
-                                                    requestedQuorumTick.requestQuorumTick.quorumTick.tick = system.tick + 1;
+                                                    requestedQuorumTick.requestQuorumTick.quorumTick.tick = system.tick;
                                                     for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
                                                     {
                                                         push(&peers[j], &requestedQuorumTick.header, true);
@@ -9137,7 +9135,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                         for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
                                                         {
                                                             if (actualTicks[i].epoch == system.epoch
-                                                                && actualTicks[i].tick == system.tick + 1
+                                                                && actualTicks[i].tick == system.tick
                                                                 && _mm256_movemask_epi8(_mm256_cmpeq_epi64(tickEssenceDigests[i], uniqueTickEssenceDigests[mostPopularUniqueTickEssenceDigestIndex])) == 0xFFFFFFFF)
                                                             {
                                                                 if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[i].nextTickDataDigest), ZERO)) == 0xFFFFFFFF)
@@ -9174,7 +9172,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                             for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
                                                             {
                                                                 if (actualTicks[i].epoch == system.epoch
-                                                                    && actualTicks[i].tick == system.tick + 1
+                                                                    && actualTicks[i].tick == system.tick
                                                                     && _mm256_movemask_epi8(_mm256_cmpeq_epi64(tickEssenceDigests[i], uniqueTickEssenceDigests[mostPopularUniqueTickEssenceDigestIndex])) == 0xFFFFFFFF)
                                                                 {
                                                                     if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)etalonTick.nextTickDataDigest), *((__m256i*)actualTicks[i].nextTickDataDigest))) != 0xFFFFFFFF)
@@ -9552,7 +9550,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     }
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
-                                                    requestedQuorumTick.requestQuorumTick.quorumTick.tick = system.tick + 1;
+                                                    requestedQuorumTick.requestQuorumTick.quorumTick.tick = system.tick;
                                                     bs->CopyMem(ptr, &requestedQuorumTick, requestedQuorumTick.header.size);
                                                     peers[i].dataToTransmitSize += requestedQuorumTick.header.size;
                                                     _InterlockedIncrement64(&numberOfDisseminatedRequests);
@@ -9703,7 +9701,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                             }
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
-                                                                            requestedQuorumTick.requestQuorumTick.quorumTick.tick = system.tick + 1;
+                                                                            requestedQuorumTick.requestQuorumTick.quorumTick.tick = system.tick;
                                                                             bs->CopyMem(ptr, &requestedQuorumTick, requestedQuorumTick.header.size);
                                                                             peers[i].dataToTransmitSize += requestedQuorumTick.header.size;
                                                                             _InterlockedIncrement64(&numberOfDisseminatedRequests);
@@ -9741,7 +9739,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                 {
 #if NUMBER_OF_COMPUTING_PROCESSORS
                                                                     RequestQuorumTick* request = (RequestQuorumTick*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader));
-                                                                    if (request->quorumTick.tick == system.tick + 1)
+                                                                    if (request->quorumTick.tick == system.tick)
 #endif
                                                                     {
                                                                         unsigned short computorIndices[NUMBER_OF_COMPUTORS];
@@ -9777,9 +9775,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 #if NUMBER_OF_COMPUTING_PROCESSORS
                                                                     else
                                                                     {
-                                                                        if (request->quorumTick.tick > TICK && request->quorumTick.tick <= system.tick)
+                                                                        if (request->quorumTick.tick >= TICK && request->quorumTick.tick < system.tick)
                                                                         {
-                                                                            bs->CopyMem(&respondedQuorumTick.respondQuorumTick.quorumTick, &quorumTicks[request->quorumTick.tick - TICK - 1], sizeof(QuorumTick));
+                                                                            bs->CopyMem(&respondedQuorumTick.respondQuorumTick.quorumTick, &quorumTicks[request->quorumTick.tick - TICK], sizeof(QuorumTick));
                                                                             push(&peers[i], &respondedQuorumTick.header, true);
                                                                         }
                                                                     }
@@ -9793,10 +9791,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                 {
 #if NUMBER_OF_COMPUTING_PROCESSORS
                                                                     RequestTickData* request = (RequestTickData*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader));
-                                                                    if (request->requestedTickData.tick > TICK && request->requestedTickData.tick <= TICK + MAX_NUMBER_OF_TICKS_PER_EPOCH
-                                                                        && tickData[request->requestedTickData.tick - TICK - 1].epoch)
+                                                                    if (request->requestedTickData.tick >= TICK && request->requestedTickData.tick < TICK + MAX_NUMBER_OF_TICKS_PER_EPOCH
+                                                                        && tickData[request->requestedTickData.tick - TICK].epoch)
                                                                     {
-                                                                        bs->CopyMem(&respondedTickData.respondTickData.tickData, &tickData[request->requestedTickData.tick - TICK - 1], sizeof(TickData));
+                                                                        bs->CopyMem(&respondedTickData.respondTickData.tickData, &tickData[request->requestedTickData.tick - TICK], sizeof(TickData));
                                                                         push(&peers[i], &respondedTickData.header, true);
                                                                     }
 #endif
@@ -10643,208 +10641,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     case 0x0B:
                                     {
                                         log(L"[F4] Close all connections | [Pause] Toggle logging | [ESC] Shut down.");
-                                    }
-                                    break;
-
-                                    case 0x0C:
-                                    {
-                                        {
-                                            unsigned int i, j;
-                                            unsigned long long delta = __rdtsc();
-                                            bool_2 data;
-                                            for (i = 0; i < NUMBER_OF_TEST_ITERATIONS; i++)
-                                            {
-                                                for (j = 0; j < 2; j++)
-                                                {
-                                                    data.set(j, j);
-                                                }
-                                            }
-                                            delta = __rdtsc() - delta;
-                                            setText(message, L"bool_2.set: ");
-                                            appendNumber(message, delta / j, TRUE);
-                                            log(message);
-                                        }
-                                        {
-                                            unsigned int i, j;
-                                            unsigned long long delta = __rdtsc();
-                                            bool_2 data;
-                                            for (i = 0; i < NUMBER_OF_TEST_ITERATIONS; i++)
-                                            {
-                                                for (j = 0; j < 2; j++)
-                                                {
-                                                    data.get(j);
-                                                }
-                                            }
-                                            delta = __rdtsc() - delta;
-                                            setText(message, L"bool_2.get: ");
-                                            appendNumber(message, delta / j, TRUE);
-                                            log(message);
-                                        }
-
-                                        {
-                                            unsigned int i, j;
-                                            unsigned long long delta = __rdtsc();
-                                            bool_65536 data;
-                                            for (i = 0; i < NUMBER_OF_TEST_ITERATIONS; i++)
-                                            {
-                                                for (j = 0; j < 65536; j++)
-                                                {
-                                                    data.set(j, j);
-                                                }
-                                            }
-                                            delta = __rdtsc() - delta;
-                                            setText(message, L"bool_65536.set: ");
-                                            appendNumber(message, delta / j, TRUE);
-                                            log(message);
-                                        }
-                                        {
-                                            unsigned int i, j;
-                                            unsigned long long delta = __rdtsc();
-                                            bool_65536 data;
-                                            for (i = 0; i < NUMBER_OF_TEST_ITERATIONS; i++)
-                                            {
-                                                for (j = 0; j < 65536; j++)
-                                                {
-                                                    data.get(j);
-                                                }
-                                            }
-                                            delta = __rdtsc() - delta;
-                                            setText(message, L"bool_65536.get: ");
-                                            appendNumber(message, delta / j, TRUE);
-                                            log(message);
-                                        }
-
-                                        {
-                                            unsigned int i, j;
-                                            unsigned long long delta = __rdtsc();
-                                            bool_1048576 data;
-                                            for (i = 0; i < NUMBER_OF_TEST_ITERATIONS; i++)
-                                            {
-                                                for (j = 0; j < 1048576; j++)
-                                                {
-                                                    //data.set(j, j);
-                                                }
-                                            }
-                                            delta = __rdtsc() - delta;
-                                            setText(message, L"bool_1048576.set: ");
-                                            appendNumber(message, delta / j, TRUE);
-                                            log(message);
-                                        }
-                                        {
-                                            unsigned int i, j;
-                                            unsigned long long delta = __rdtsc();
-                                            bool_1048576 data;
-                                            for (i = 0; i < NUMBER_OF_TEST_ITERATIONS; i++)
-                                            {
-                                                for (j = 0; j < 1048576; j++)
-                                                {
-                                                    //data.get(j);
-                                                }
-                                            }
-                                            delta = __rdtsc() - delta;
-                                            setText(message, L"bool_1048576.get: ");
-                                            appendNumber(message, delta / j, TRUE);
-                                            log(message);
-                                        }
-
-                                        {
-                                            unsigned int i, j;
-                                            unsigned long long delta = __rdtsc();
-                                            uint64_2 data;
-                                            for (i = 0; i < NUMBER_OF_TEST_ITERATIONS; i++)
-                                            {
-                                                for (j = 0; j < 2; j++)
-                                                {
-                                                    //data.set(j, j);
-                                                }
-                                            }
-                                            delta = __rdtsc() - delta;
-                                            setText(message, L"uint64_2.set: ");
-                                            appendNumber(message, delta / j, TRUE);
-                                            log(message);
-                                        }
-                                        {
-                                            unsigned int i, j;
-                                            unsigned long long delta = __rdtsc();
-                                            uint64_2 data;
-                                            for (i = 0; i < NUMBER_OF_TEST_ITERATIONS; i++)
-                                            {
-                                                for (j = 0; j < 2; j++)
-                                                {
-                                                    //data.get(j);
-                                                }
-                                            }
-                                            delta = __rdtsc() - delta;
-                                            setText(message, L"uint64_2.get: ");
-                                            appendNumber(message, delta / j, TRUE);
-                                            log(message);
-                                        }
-
-                                        {
-                                            unsigned int i, j;
-                                            unsigned long long delta = __rdtsc();
-                                            uint64_65536 data;
-                                            for (i = 0; i < NUMBER_OF_TEST_ITERATIONS; i++)
-                                            {
-                                                for (j = 0; j < 65536; j++)
-                                                {
-                                                    //data.set(j, j);
-                                                }
-                                            }
-                                            delta = __rdtsc() - delta;
-                                            setText(message, L"uint64_65536.set: ");
-                                            appendNumber(message, delta / j, TRUE);
-                                            log(message);
-                                        }
-                                        {
-                                            unsigned int i, j;
-                                            unsigned long long delta = __rdtsc();
-                                            uint64_65536 data;
-                                            for (i = 0; i < NUMBER_OF_TEST_ITERATIONS; i++)
-                                            {
-                                                for (j = 0; j < 65536; j++)
-                                                {
-                                                    //data.get(j);
-                                                }
-                                            }
-                                            delta = __rdtsc() - delta;
-                                            setText(message, L"uint64_65536.get: ");
-                                            appendNumber(message, delta / j, TRUE);
-                                            log(message);
-                                        }
-
-                                        {
-                                            unsigned int i, j;
-                                            unsigned long long delta = __rdtsc();
-                                            uint64_1048576 data;
-                                            for (i = 0; i < NUMBER_OF_TEST_ITERATIONS; i++)
-                                            {
-                                                for (j = 0; j < 1048576; j++)
-                                                {
-                                                    //data.set(j, j);
-                                                }
-                                            }
-                                            delta = __rdtsc() - delta;
-                                            setText(message, L"uint64_1048576.set: ");
-                                            appendNumber(message, delta / j, TRUE);
-                                            log(message);
-                                        }
-                                        {
-                                            unsigned int i, j;
-                                            unsigned long long delta = __rdtsc();
-                                            uint64_1048576 data;
-                                            for (i = 0; i < NUMBER_OF_TEST_ITERATIONS; i++)
-                                            {
-                                                for (j = 0; j < 1048576; j++)
-                                                {
-                                                    //data.get(j);
-                                                }
-                                            }
-                                            delta = __rdtsc() - delta;
-                                            setText(message, L"uint64_1048576.get: ");
-                                            appendNumber(message, delta / j, TRUE);
-                                            log(message);
-                                        }
                                     }
                                     break;
 
