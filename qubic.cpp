@@ -44,7 +44,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 62
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -5733,7 +5733,6 @@ static CHAR16 message[16384], timestampedMessage[16384];
 static EFI_FILE_PROTOCOL* root = NULL;
 
 static bool caseA = false, caseB = false, caseC = false, caseD = false, caseE = false, caseF = false, caseG = false;
-static int counterX = 0, counterY = 0, counterZ = 0, counterZ2 = 0;
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
 static EFI_FILE_PROTOCOL* ticksFile = NULL;
@@ -5791,7 +5790,8 @@ static volatile char tickLocks[NUMBER_OF_COMPUTORS];
 static Tick latestTicks[NUMBER_OF_COMPUTORS];
 #if NUMBER_OF_COMPUTING_PROCESSORS
 static Tick actualTicks[NUMBER_OF_COMPUTORS];
-static bool tickShouldBeCreated = false;
+static bool tickMustBeCreated = false, nextTickDataDigestMustBeNull = false;
+static __m256i targetNextTickDataDigest;
 static Tick etalonTick;
 static __m256i etalonTickEssenceDigest;
 #endif
@@ -6577,7 +6577,6 @@ static void requestProcessor(void* ProcedureArgument)
 
                 case BROADCAST_FUTURE_TICK_DATA:
                 {
-                    counterX++;
                     BroadcastFutureTickData* request = (BroadcastFutureTickData*)((char*)processor->cache + sizeof(RequestResponseHeader));
                     if (request->tickData.epoch == broadcastedComputors.broadcastComputors.computors.epoch
                         && request->tickData.tick % NUMBER_OF_COMPUTORS == request->tickData.computorIndex
@@ -6781,61 +6780,6 @@ static void requestProcessor(void* ProcedureArgument)
                                     _InterlockedCompareExchange8(&tickLocks[tick.computorIndex], 0, 1);
                                 }
                             }
-                        }
-                    }
-                }
-                break;
-
-                case RESPOND_TICK_DATA:
-                {
-                    counterY++;
-                    RespondTickData* request = (RespondTickData*)((char*)processor->cache + sizeof(RequestResponseHeader));
-                    if (request->tickData.epoch == broadcastedComputors.broadcastComputors.computors.epoch
-                        && request->tickData.tick >= TICK && request->tickData.tick < TICK + MAX_NUMBER_OF_TICKS_PER_EPOCH
-                        && request->tickData.tick % NUMBER_OF_COMPUTORS == request->tickData.computorIndex
-                        && request->tickData.month >= 1 && request->tickData.month <= 12
-                        && request->tickData.day >= 1 && request->tickData.day <= ((request->tickData.month == 1 || request->tickData.month == 3 || request->tickData.month == 5 || request->tickData.month == 7 || request->tickData.month == 8 || request->tickData.month == 10 || request->tickData.month == 12) ? 31 : ((request->tickData.month == 4 || request->tickData.month == 6 || request->tickData.month == 9 || request->tickData.month == 11) ? 30 : ((request->tickData.year & 3) ? 28 : 29)))
-                        && request->tickData.hour <= 23
-                        && request->tickData.minute <= 59
-                        && request->tickData.second <= 59
-                        && request->tickData.millisecond <= 999)
-                    {
-                        counterZ++;
-                        unsigned char digest[32];
-                        request->tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
-                        KangarooTwelve((unsigned char*)&request->tickData, sizeof(TickData) - SIGNATURE_SIZE, digest, sizeof(digest));
-                        request->tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
-                        if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->tickData.computorIndex], digest, request->tickData.signature))
-                        {
-                            counterZ2++;
-                            TickData* futureTickData = &tickData[request->tickData.tick - TICK];
-                            if (futureTickData->epoch)
-                            {
-                                if (request->tickData.millisecond != futureTickData->millisecond
-                                    || request->tickData.second != futureTickData->second
-                                    || request->tickData.minute != futureTickData->minute
-                                    || request->tickData.hour != futureTickData->hour
-                                    || request->tickData.day != futureTickData->day
-                                    || request->tickData.month != futureTickData->month
-                                    || request->tickData.year != futureTickData->year)
-                                {
-                                    system.faults[request->tickData.computorIndex] |= MULTIPLE_FUTURE_TICK_DATA_VERSIONS_FAULT;
-                                }
-                                else
-                                {
-                                    for (unsigned int i = 0; i < NUMBER_OF_TRANSACTIONS_PER_TICK; i++)
-                                    {
-                                        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->tickData.transactionDigests[i]), *((__m256i*)futureTickData->transactionDigests[i]))) != 0xFFFFFFFF)
-                                        {
-                                            system.faults[request->tickData.computorIndex] |= MULTIPLE_FUTURE_TICK_DATA_VERSIONS_FAULT;
-
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-
-                            bs->CopyMem(futureTickData, &request->tickData, sizeof(TickData));
                         }
                     }
                 }
@@ -7682,6 +7626,8 @@ static BOOLEAN initialize()
     ZERO = _mm256_setzero_si256();
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
+    targetNextTickDataDigest = ZERO;
+
     for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
     {
         tickTransactionsFiles[i] = NULL;
@@ -8689,12 +8635,12 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         spectrumDigestLevelCompleteness = 0;
                                         spectrumDigestLevel = 0;
 
-                                        tickShouldBeCreated = true;
+                                        tickMustBeCreated = true;
                                     }
 
-                                    if (tickShouldBeCreated)
+                                    if (tickMustBeCreated)
                                     {
-                                        tickShouldBeCreated = false;
+                                        tickMustBeCreated = false;
 
                                         broadcastedTick.broadcastTick.tick.epoch = system.epoch;
                                         broadcastedTick.broadcastTick.tick.tick = system.tick;
@@ -8821,7 +8767,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         }
 
                                         TickData* nextTickData = &tickData[system.tick + 1 - TICK];
-                                        if (nextTickData->epoch == system.epoch)
+                                        if (nextTickData->epoch == system.epoch && !nextTickDataDigestMustBeNull)
                                         {
                                             KangarooTwelve((unsigned char*)nextTickData, sizeof(TickData), broadcastedTick.broadcastTick.tick.nextTickDataDigest, 32);
                                         }
@@ -9019,6 +8965,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 system.tick++;
                                                 latestTickTick = __rdtsc();
 
+                                                nextTickDataDigestMustBeNull = false;
+                                                targetNextTickDataDigest = ZERO;
+
                                                 caseG = caseF = caseE = caseD = caseC = caseB = caseA = false;
 
                                                 if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)quorumTicks[quorumTickIndex].nextTickDataDigest), ZERO)) != 0xFFFFFFFF)
@@ -9126,29 +9075,28 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 }
                                                 if (uniqueTickEssenceDigestCounters[mostPopularUniqueTickEssenceDigestIndex] >= QUORUM)
                                                 {
-                                                    if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)etalonTick.nextTickDataDigest), ZERO)) == 0xFFFFFFFF)
-                                                    {
-                                                        caseA = true;
-                                                    }
-                                                    else
-                                                    {
-                                                        for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
-                                                        {
-                                                            if (actualTicks[i].epoch == system.epoch
-                                                                && actualTicks[i].tick == system.tick
-                                                                && _mm256_movemask_epi8(_mm256_cmpeq_epi64(tickEssenceDigests[i], uniqueTickEssenceDigests[mostPopularUniqueTickEssenceDigestIndex])) == 0xFFFFFFFF)
-                                                            {
-                                                                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[i].nextTickDataDigest), ZERO)) == 0xFFFFFFFF)
-                                                                {
-                                                                    caseB = true;
-                                                                }
-                                                                else
-                                                                {
-                                                                    caseC = true;
-                                                                }
+                                                    tickMustBeCreated = true;
 
-                                                                break;
+                                                    for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                                                    {
+                                                        if (actualTicks[i].epoch == system.epoch
+                                                            && actualTicks[i].tick == system.tick
+                                                            && _mm256_movemask_epi8(_mm256_cmpeq_epi64(tickEssenceDigests[i], uniqueTickEssenceDigests[mostPopularUniqueTickEssenceDigestIndex])) == 0xFFFFFFFF)
+                                                        {
+                                                            if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)actualTicks[i].nextTickDataDigest), ZERO)) == 0xFFFFFFFF)
+                                                            {
+                                                                caseB = true;
+
+                                                                nextTickDataDigestMustBeNull = true;
                                                             }
+                                                            else
+                                                            {
+                                                                caseC = true;
+
+                                                                targetNextTickDataDigest = *((__m256i*)actualTicks[i].nextTickDataDigest);
+                                                            }
+
+                                                            break;
                                                         }
                                                     }
                                                 }
@@ -9302,14 +9250,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     appendText(message, caseE ? L"E" : L".");
                                     appendText(message, caseF ? L"F" : L".");
                                     appendText(message, caseG ? L"G " : L". ");
-                                    appendNumber(message, counterX, TRUE);
-                                    appendText(message, L"/");
-                                    appendNumber(message, counterY, TRUE);
-                                    appendText(message, L"/");
-                                    appendNumber(message, counterZ, TRUE);
-                                    appendText(message, L"/");
-                                    appendNumber(message, counterZ2, TRUE);
-                                    appendText(message, L" ");
 
                                     appendText(message, L"[+");
                                     appendNumber(message, numberOfProcessedRequests - prevNumberOfProcessedRequests, TRUE);
@@ -9802,6 +9742,75 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     _InterlockedIncrement64(&numberOfProcessedRequests);
                                                                 }
                                                                 break;
+
+#if NUMBER_OF_COMPUTING_PROCESSORS
+                                                                case RESPOND_TICK_DATA:
+                                                                {
+                                                                    RespondTickData* request = (RespondTickData*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader));
+                                                                    if (request->tickData.epoch == broadcastedComputors.broadcastComputors.computors.epoch
+                                                                        && request->tickData.tick == system.tick + 1
+                                                                        && request->tickData.tick % NUMBER_OF_COMPUTORS == request->tickData.computorIndex
+                                                                        && request->tickData.month >= 1 && request->tickData.month <= 12
+                                                                        && request->tickData.day >= 1 && request->tickData.day <= ((request->tickData.month == 1 || request->tickData.month == 3 || request->tickData.month == 5 || request->tickData.month == 7 || request->tickData.month == 8 || request->tickData.month == 10 || request->tickData.month == 12) ? 31 : ((request->tickData.month == 4 || request->tickData.month == 6 || request->tickData.month == 9 || request->tickData.month == 11) ? 30 : ((request->tickData.year & 3) ? 28 : 29)))
+                                                                        && request->tickData.hour <= 23
+                                                                        && request->tickData.minute <= 59
+                                                                        && request->tickData.second <= 59
+                                                                        && request->tickData.millisecond <= 999)
+                                                                    {
+                                                                        unsigned char digest[32];
+                                                                        request->tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
+                                                                        KangarooTwelve((unsigned char*)&request->tickData, sizeof(TickData) - SIGNATURE_SIZE, digest, sizeof(digest));
+                                                                        request->tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
+                                                                        if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->tickData.computorIndex], digest, request->tickData.signature))
+                                                                        {
+                                                                            TickData* futureTickData = &tickData[request->tickData.tick - TICK];
+                                                                            if (futureTickData->epoch)
+                                                                            {
+                                                                                if (request->tickData.millisecond != futureTickData->millisecond
+                                                                                    || request->tickData.second != futureTickData->second
+                                                                                    || request->tickData.minute != futureTickData->minute
+                                                                                    || request->tickData.hour != futureTickData->hour
+                                                                                    || request->tickData.day != futureTickData->day
+                                                                                    || request->tickData.month != futureTickData->month
+                                                                                    || request->tickData.year != futureTickData->year)
+                                                                                {
+                                                                                    system.faults[request->tickData.computorIndex] |= MULTIPLE_FUTURE_TICK_DATA_VERSIONS_FAULT;
+                                                                                }
+                                                                                else
+                                                                                {
+                                                                                    for (unsigned int i = 0; i < NUMBER_OF_TRANSACTIONS_PER_TICK; i++)
+                                                                                    {
+                                                                                        if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)request->tickData.transactionDigests[i]), *((__m256i*)futureTickData->transactionDigests[i]))) != 0xFFFFFFFF)
+                                                                                        {
+                                                                                            system.faults[request->tickData.computorIndex] |= MULTIPLE_FUTURE_TICK_DATA_VERSIONS_FAULT;
+
+                                                                                            break;
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                            }
+
+                                                                            if (!nextTickDataDigestMustBeNull)
+                                                                            {
+                                                                                if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(targetNextTickDataDigest, ZERO)) == 0xFFFFFFFF)
+                                                                                {
+                                                                                    bs->CopyMem(futureTickData, &request->tickData, sizeof(TickData));
+                                                                                }
+                                                                                else
+                                                                                {
+                                                                                    unsigned char digest[32];
+                                                                                    KangarooTwelve((unsigned char*)&request->tickData, sizeof(TickData), digest, 32);
+                                                                                    if (_mm256_movemask_epi8(_mm256_cmpeq_epi64(*((__m256i*)digest), targetNextTickDataDigest)) == 0xFFFFFFFF)
+                                                                                    {
+                                                                                        bs->CopyMem(futureTickData, &request->tickData, sizeof(TickData));
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                                break;
+#endif
 
                                                                 default:
                                                                 {
