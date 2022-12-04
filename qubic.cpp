@@ -43,13 +43,13 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 62
-#define VERSION_C 1
+#define VERSION_B 63
+#define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
 #define EPOCH 33 // Do NOT change!
-#define TICK 3550000 // Do NOT change!
+#define TICK 3560000 // Do NOT change!
 
 #include <intrin.h>
 
