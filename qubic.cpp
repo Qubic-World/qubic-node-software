@@ -44,7 +44,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 63
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -5296,7 +5296,8 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define MAX_NUMBER_OF_PUBLIC_PEERS 256
 #define MAX_NUMBER_OF_SMART_CONTRACTS 1024
 #define NUMBER_OF_COMPUTORS 676
-#define MAX_NUMBER_OF_TICKS_PER_EPOCH (((12 * 60 * 24 * 7 + NUMBER_OF_COMPUTORS - 1) / NUMBER_OF_COMPUTORS) * NUMBER_OF_COMPUTORS)
+#define TARGET_TICK_DURATION 5
+#define MAX_NUMBER_OF_TICKS_PER_EPOCH (((((60 * 60 * 24 * 7) / TARGET_TICK_DURATION) + NUMBER_OF_COMPUTORS - 1) / NUMBER_OF_COMPUTORS) * NUMBER_OF_COMPUTORS)
 #define MAX_QUESTION_SIZE 1024
 #define MAX_SMART_CONTRACT_STATE_SIZE 1073741824
 #define MAX_TRANSFER_DESCRIPTION_SIZE 112
@@ -9091,6 +9092,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                             }
                                                             else
                                                             {
+                                                                nextTickDataDigestMustBeNull = false;
                                                                 targetNextTickDataDigest = *((__m256i*)actualTicks[i].nextTickDataDigest);
                                                             }
 
@@ -9100,12 +9102,24 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 }
                                                 else
                                                 {
-                                                    if (uniqueTickEssenceDigestCounters[mostPopularUniqueTickEssenceDigestIndex] + (NUMBER_OF_COMPUTORS - totalUniqueTickEssenceDigestCounter) < QUORUM
-                                                        && !EQUAL(*((__m256i*)etalonTick.nextTickDataDigest), ZERO))
+                                                    if (uniqueTickEssenceDigestCounters[mostPopularUniqueTickEssenceDigestIndex] + (NUMBER_OF_COMPUTORS - totalUniqueTickEssenceDigestCounter) < QUORUM)
                                                     {
-                                                        tickMustBeCreated = true;
+                                                        if (!EQUAL(*((__m256i*)etalonTick.nextTickDataDigest), ZERO))
+                                                        {
+                                                            tickMustBeCreated = true;
 
-                                                        nextTickDataDigestMustBeNull = true;
+                                                            nextTickDataDigestMustBeNull = true;
+                                                        }
+                                                    }
+                                                    else
+                                                    {
+                                                        if (uniqueTickEssenceDigestCounters[mostPopularUniqueTickEssenceDigestIndex] > NUMBER_OF_COMPUTORS - QUORUM
+                                                            && (__rdtsc() - latestTickTick > TARGET_TICK_DURATION * 3ULL * frequency))
+                                                        {
+                                                            tickMustBeCreated = true;
+
+                                                            nextTickDataDigestMustBeNull = true;
+                                                        }
                                                     }
                                                 }
                                             }
