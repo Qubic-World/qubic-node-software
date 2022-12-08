@@ -25,7 +25,7 @@ static const unsigned char defaultRouteGateway[4] = { 0, 0, 0, 0 };
 static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 static unsigned short SYSTEM_FILE_NAME[] = L"system";
-static unsigned short SOLUTION_FILE_NAME[] = L"solution.???";
+static unsigned short SOLUTION_FILE_NAME[] = L"solution.034";
 static unsigned short SPECTRUM_FILE_NAME[] = L"spectrum.???";
 static unsigned short TICKS_FILE_NAME[] = L"ticks.???";
 static unsigned short TICK_TRANSACTION_DIGESTS_FILE_NAME[] = L"tick_transaction_digests.???";
@@ -44,12 +44,11 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 64
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
-#define EPOCH 34 // Do NOT change!
-#define TICK 3570000 // Do NOT change!
+#define INITIAL_TICK 3570000
 
 #include <intrin.h>
 
@@ -5285,7 +5284,8 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 ////////// Qubic \\\\\\\\\\
 
 #define BUFFER_SIZE 1048576
-#define CRITICAL_TICK_DURATION 15
+#define TARGET_TICK_DURATION 5
+#define CRITICAL_TICK_DURATION 60
 #define DEJAVU_SWAP_LIMIT 28000000
 #define DISSEMINATION_MULTIPLIER 4
 #define ISSUANCE_RATE 1000000000000
@@ -5297,7 +5297,6 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define MAX_NUMBER_OF_SMART_CONTRACTS 1024
 #define MAX_TRANSFER_AMOUNT (ISSUANCE_RATE * 1000ULL)
 #define NUMBER_OF_COMPUTORS 676
-#define TARGET_TICK_DURATION 5
 #define MAX_NUMBER_OF_TICKS_PER_EPOCH (((((60 * 60 * 24 * 7) / TARGET_TICK_DURATION) + NUMBER_OF_COMPUTORS - 1) / NUMBER_OF_COMPUTORS) * NUMBER_OF_COMPUTORS)
 #define MAX_QUESTION_SIZE 1024
 #define MAX_SMART_CONTRACT_STATE_SIZE 1073741824
@@ -6546,9 +6545,9 @@ static void requestProcessor(void* ProcedureArgument)
                     if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->tickData.computorIndex], digest, request->tickData.signature))
                     {
 #if NUMBER_OF_COMPUTING_PROCESSORS
-                        if (request->tickData.tick >= TICK && request->tickData.tick < TICK + MAX_NUMBER_OF_TICKS_PER_EPOCH)
+                        if (request->tickData.tick >= INITIAL_TICK && request->tickData.tick < INITIAL_TICK + MAX_NUMBER_OF_TICKS_PER_EPOCH)
                         {
-                            TickData* futureTickData = &tickData[request->tickData.tick - TICK];
+                            TickData* futureTickData = &tickData[request->tickData.tick - INITIAL_TICK];
                             if (futureTickData->epoch)
                             {
                                 if (request->tickData.millisecond != futureTickData->millisecond
@@ -7614,9 +7613,6 @@ static BOOLEAN initialize()
         }
         else
         {
-            bs->SetMem(&system, sizeof(system), 0);
-            system.version = VERSION_B;
-
             unsigned long long size = sizeof(system);
             status = dataFile->Read(dataFile, &size, &system);
             dataFile->Close(dataFile);
@@ -7628,20 +7624,22 @@ static BOOLEAN initialize()
             }
             else
             {
-                if (system.epoch < EPOCH)
+                if (size != sizeof(system))
                 {
-                    bs->SetMem(system.tickCounters, sizeof(system.tickCounters), 0);
+                    logStatus(L"EFI_FILE_PROTOCOL.Read() reads invalid number of bytes", size, __LINE__);
+
+                    return FALSE;
                 }
-                system.epoch = EPOCH;
-                system.tick = TICK;
-                bs->SetMem(system.faults, sizeof(system.faults), 0);
-                system.epochBeginningMonth = system.epochBeginningDay = 1;
+                else
+                {
+                    system.version = VERSION_B;
+                }
             }
         }
 
-        SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 4] = EPOCH / 100 + L'0';
-        SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 3] = (EPOCH % 100) / 10 + L'0';
-        SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 2] = EPOCH % 10 + L'0';
+        SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 4] = system.epoch / 100 + L'0';
+        SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 3] = (system.epoch % 100) / 10 + L'0';
+        SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 2] = system.epoch % 10 + L'0';
         if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SPECTRUM_FILE_NAME, EFI_FILE_MODE_READ, 0))
         {
             logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status, __LINE__);
@@ -7678,10 +7676,10 @@ static BOOLEAN initialize()
 
             for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
             {
-                if (spectrum[i].incomingAmount - spectrum[i].outgoingAmount)
+                if (initSpectrum[i].incomingAmount - initSpectrum[i].outgoingAmount)
                 {
                     numberOfEntities++;
-                    totalAmount += spectrum[i].incomingAmount - spectrum[i].outgoingAmount;
+                    totalAmount += initSpectrum[i].incomingAmount - initSpectrum[i].outgoingAmount;
                 }
             }
 
@@ -7698,9 +7696,9 @@ static BOOLEAN initialize()
         {
             unsigned int numberOfTicksToProcess = 0;
 
-            TICKS_FILE_NAME[sizeof(TICKS_FILE_NAME) / sizeof(TICKS_FILE_NAME[0]) - 4] = EPOCH / 100 + L'0';
-            TICKS_FILE_NAME[sizeof(TICKS_FILE_NAME) / sizeof(TICKS_FILE_NAME[0]) - 3] = (EPOCH % 100) / 10 + L'0';
-            TICKS_FILE_NAME[sizeof(TICKS_FILE_NAME) / sizeof(TICKS_FILE_NAME[0]) - 2] = EPOCH % 10 + L'0';
+            TICKS_FILE_NAME[sizeof(TICKS_FILE_NAME) / sizeof(TICKS_FILE_NAME[0]) - 4] = system.epoch / 100 + L'0';
+            TICKS_FILE_NAME[sizeof(TICKS_FILE_NAME) / sizeof(TICKS_FILE_NAME[0]) - 3] = (system.epoch % 100) / 10 + L'0';
+            TICKS_FILE_NAME[sizeof(TICKS_FILE_NAME) / sizeof(TICKS_FILE_NAME[0]) - 2] = system.epoch % 10 + L'0';
             if (status = root->Open(root, (void**)&ticksFile, (CHAR16*)TICKS_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, EFI_FILE_ARCHIVE))
             {
                 logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status, __LINE__);
@@ -7729,9 +7727,9 @@ static BOOLEAN initialize()
                 }
             }
 
-            TICK_TRANSACTION_DIGESTS_FILE_NAME[sizeof(TICK_TRANSACTION_DIGESTS_FILE_NAME) / sizeof(TICK_TRANSACTION_DIGESTS_FILE_NAME[0]) - 4] = EPOCH / 100 + L'0';
-            TICK_TRANSACTION_DIGESTS_FILE_NAME[sizeof(TICK_TRANSACTION_DIGESTS_FILE_NAME) / sizeof(TICK_TRANSACTION_DIGESTS_FILE_NAME[0]) - 3] = (EPOCH % 100) / 10 + L'0';
-            TICK_TRANSACTION_DIGESTS_FILE_NAME[sizeof(TICK_TRANSACTION_DIGESTS_FILE_NAME) / sizeof(TICK_TRANSACTION_DIGESTS_FILE_NAME[0]) - 2] = EPOCH % 10 + L'0';
+            TICK_TRANSACTION_DIGESTS_FILE_NAME[sizeof(TICK_TRANSACTION_DIGESTS_FILE_NAME) / sizeof(TICK_TRANSACTION_DIGESTS_FILE_NAME[0]) - 4] = system.epoch / 100 + L'0';
+            TICK_TRANSACTION_DIGESTS_FILE_NAME[sizeof(TICK_TRANSACTION_DIGESTS_FILE_NAME) / sizeof(TICK_TRANSACTION_DIGESTS_FILE_NAME[0]) - 3] = (system.epoch % 100) / 10 + L'0';
+            TICK_TRANSACTION_DIGESTS_FILE_NAME[sizeof(TICK_TRANSACTION_DIGESTS_FILE_NAME) / sizeof(TICK_TRANSACTION_DIGESTS_FILE_NAME[0]) - 2] = system.epoch % 10 + L'0';
             if (status = root->Open(root, (void**)&tickTransactionDigestsFile, (CHAR16*)TICK_TRANSACTION_DIGESTS_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, EFI_FILE_ARCHIVE))
             {
                 logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status, __LINE__);
@@ -7762,9 +7760,9 @@ static BOOLEAN initialize()
             {
                 TICK_TRANSACTIONS_FILE_NAME[sizeof(TICK_TRANSACTIONS_FILE_NAME) / sizeof(TICK_TRANSACTIONS_FILE_NAME[0]) - 7] = i / 26 + L'a';
                 TICK_TRANSACTIONS_FILE_NAME[sizeof(TICK_TRANSACTIONS_FILE_NAME) / sizeof(TICK_TRANSACTIONS_FILE_NAME[0]) - 6] = i % 26 + L'a';
-                TICK_TRANSACTIONS_FILE_NAME[sizeof(TICK_TRANSACTIONS_FILE_NAME) / sizeof(TICK_TRANSACTIONS_FILE_NAME[0]) - 4] = EPOCH / 100 + L'0';
-                TICK_TRANSACTIONS_FILE_NAME[sizeof(TICK_TRANSACTIONS_FILE_NAME) / sizeof(TICK_TRANSACTIONS_FILE_NAME[0]) - 3] = (EPOCH % 100) / 10 + L'0';
-                TICK_TRANSACTIONS_FILE_NAME[sizeof(TICK_TRANSACTIONS_FILE_NAME) / sizeof(TICK_TRANSACTIONS_FILE_NAME[0]) - 2] = EPOCH % 10 + L'0';
+                TICK_TRANSACTIONS_FILE_NAME[sizeof(TICK_TRANSACTIONS_FILE_NAME) / sizeof(TICK_TRANSACTIONS_FILE_NAME[0]) - 4] = system.epoch / 100 + L'0';
+                TICK_TRANSACTIONS_FILE_NAME[sizeof(TICK_TRANSACTIONS_FILE_NAME) / sizeof(TICK_TRANSACTIONS_FILE_NAME[0]) - 3] = (system.epoch % 100) / 10 + L'0';
+                TICK_TRANSACTIONS_FILE_NAME[sizeof(TICK_TRANSACTIONS_FILE_NAME) / sizeof(TICK_TRANSACTIONS_FILE_NAME[0]) - 2] = system.epoch % 10 + L'0';
                 if (status = root->Open(root, (void**)&tickTransactionsFiles[i], (CHAR16*)TICK_TRANSACTIONS_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, EFI_FILE_ARCHIVE))
                 {
                     logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status, __LINE__);
@@ -7807,9 +7805,6 @@ static BOOLEAN initialize()
         randomSeed[7] = 112;
         random(randomSeed, randomSeed, (unsigned char*)miningData, sizeof(miningData));
 
-        SOLUTION_FILE_NAME[sizeof(SOLUTION_FILE_NAME) / sizeof(SOLUTION_FILE_NAME[0]) - 4] = EPOCH / 100 + L'0';
-        SOLUTION_FILE_NAME[sizeof(SOLUTION_FILE_NAME) / sizeof(SOLUTION_FILE_NAME[0]) - 3] = (EPOCH % 100) / 10 + L'0';
-        SOLUTION_FILE_NAME[sizeof(SOLUTION_FILE_NAME) / sizeof(SOLUTION_FILE_NAME[0]) - 2] = EPOCH % 10 + L'0';
         if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SOLUTION_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, EFI_FILE_ARCHIVE))
         {
             logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status, __LINE__);
@@ -8295,7 +8290,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 }
 
                                 if (requestedTickData.requestTickData.requestedTickData.tick != system.tick + 1
-                                    && (tickData[system.tick + 1 - TICK].epoch != system.epoch || !EQUAL(targetNextTickDataDigest, ZERO)))
+                                    && (tickData[system.tick + 1 - INITIAL_TICK].epoch != system.epoch || !EQUAL(targetNextTickDataDigest, ZERO)))
                                 {
                                     requestedTickData.requestTickData.requestedTickData.tick = system.tick + 1;
                                     for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
@@ -8335,7 +8330,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     unsigned short prevTickMillisecond;
                                     unsigned char prevTickSecond, prevTickMinute, prevTickHour, prevTickDay, prevTickMonth, prevTickYear;
 
-                                    if (system.tick == TICK)
+                                    if (system.tick == INITIAL_TICK)
                                     {
                                         prevTickMillisecond = system.epochBeginningMillisecond;
                                         prevTickSecond = system.epochBeginningSecond;
@@ -8347,7 +8342,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     }
                                     else
                                     {
-                                        QuorumTick* prevTick = &quorumTicks[system.tick - TICK - 1];
+                                        QuorumTick* prevTick = &quorumTicks[system.tick - INITIAL_TICK - 1];
                                         prevTickMillisecond = prevTick->millisecond;
                                         prevTickSecond = prevTick->second;
                                         prevTickMinute = prevTick->minute;
@@ -8357,10 +8352,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         prevTickYear = prevTick->year;
                                     }
 
-                                    TickData* curTickData = &tickData[system.tick - TICK];
+                                    TickData* curTickData = &tickData[system.tick - INITIAL_TICK];
                                     unsigned char curTickDataDigest[32];
                                     KangarooTwelve((unsigned char*)curTickData, sizeof(TickData), curTickDataDigest, sizeof(curTickDataDigest));
-                                    if (curTickData->epoch == system.epoch && system.tick > TICK && EQUAL(*((__m256i*)quorumTicks[system.tick - TICK - 1].nextTickDataDigest), *((__m256i*)curTickDataDigest))
+                                    if (curTickData->epoch == system.epoch && system.tick > INITIAL_TICK && EQUAL(*((__m256i*)quorumTicks[system.tick - INITIAL_TICK - 1].nextTickDataDigest), *((__m256i*)curTickDataDigest))
                                         && (curTickData->year > prevTickYear
                                             || (curTickData->year == prevTickYear && (curTickData->month > prevTickMonth
                                                 || (curTickData->month == prevTickMonth && (curTickData->day > prevTickDay
@@ -8449,7 +8444,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         log(message);
                                     }
 
-                                    TickData* nextTickData = &tickData[system.tick + 1 - TICK];
+                                    TickData* nextTickData = &tickData[system.tick + 1 - INITIAL_TICK];
                                     if (nextTickData->epoch == system.epoch && !nextTickDataDigestMustBeNull)
                                     {
                                         KangarooTwelve((unsigned char*)nextTickData, sizeof(TickData), broadcastedTick.broadcastTick.tick.nextTickDataDigest, 32);
@@ -8516,7 +8511,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     tickNumberOfComputors = 0;
                                     tickNumberOfComputors2 = 0;
                                     futureTickNumberOfComputors = 0;
-                                    const unsigned int quorumTickIndex = system.tick - TICK;
+                                    const unsigned int quorumTickIndex = system.tick - INITIAL_TICK;
                                     if (quorumTickIndex >= MAX_NUMBER_OF_TICKS_PER_EPOCH)
                                     {
                                         log(L"Too many ticks this epoch!");
@@ -8727,7 +8722,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                             push(&peers[j], &broadcastedFutureTickData.header, true);
                                                         }
 
-                                                        bs->CopyMem(&tickData[broadcastedFutureTickData.broadcastFutureTickData.tickData.tick - TICK], &broadcastedFutureTickData.broadcastFutureTickData.tickData, sizeof(TickData));
+                                                        bs->CopyMem(&tickData[broadcastedFutureTickData.broadcastFutureTickData.tickData.tick - INITIAL_TICK], &broadcastedFutureTickData.broadcastFutureTickData.tickData, sizeof(TickData));
                                                     }
 
                                                     break;
@@ -8792,7 +8787,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 else
                                                 {
                                                     if (uniqueTickEssenceDigestCounters[mostPopularUniqueTickEssenceDigestIndex] > NUMBER_OF_COMPUTORS - QUORUM
-                                                        && (__rdtsc() - latestTickTick > TARGET_TICK_DURATION * 3ULL * frequency))
+                                                        && (__rdtsc() - latestTickTick > CRITICAL_TICK_DURATION * frequency))
                                                     {
                                                         tickMustBeCreated = true;
 
@@ -9365,9 +9360,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 #if NUMBER_OF_COMPUTING_PROCESSORS
                                                                     else
                                                                     {
-                                                                        if (request->quorumTick.tick >= TICK && request->quorumTick.tick < system.tick)
+                                                                        if (request->quorumTick.tick >= INITIAL_TICK && request->quorumTick.tick < system.tick)
                                                                         {
-                                                                            bs->CopyMem(&respondedQuorumTick.respondQuorumTick.quorumTick, &quorumTicks[request->quorumTick.tick - TICK], sizeof(QuorumTick));
+                                                                            bs->CopyMem(&respondedQuorumTick.respondQuorumTick.quorumTick, &quorumTicks[request->quorumTick.tick - INITIAL_TICK], sizeof(QuorumTick));
                                                                             push(&peers[i], &respondedQuorumTick.header, true);
                                                                         }
                                                                     }
@@ -9381,10 +9376,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                 {
 #if NUMBER_OF_COMPUTING_PROCESSORS
                                                                     RequestTickData* request = (RequestTickData*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader));
-                                                                    if (request->requestedTickData.tick >= TICK && request->requestedTickData.tick < TICK + MAX_NUMBER_OF_TICKS_PER_EPOCH
-                                                                        && tickData[request->requestedTickData.tick - TICK].epoch)
+                                                                    if (request->requestedTickData.tick >= INITIAL_TICK && request->requestedTickData.tick < INITIAL_TICK + MAX_NUMBER_OF_TICKS_PER_EPOCH
+                                                                        && tickData[request->requestedTickData.tick - INITIAL_TICK].epoch)
                                                                     {
-                                                                        bs->CopyMem(&respondedTickData.respondTickData.tickData, &tickData[request->requestedTickData.tick - TICK], sizeof(TickData));
+                                                                        bs->CopyMem(&respondedTickData.respondTickData.tickData, &tickData[request->requestedTickData.tick - INITIAL_TICK], sizeof(TickData));
                                                                         push(&peers[i], &respondedTickData.header, true);
                                                                     }
 #endif
@@ -9414,7 +9409,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                         request->tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
                                                                         if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->tickData.computorIndex], digest, request->tickData.signature))
                                                                         {
-                                                                            TickData* futureTickData = &tickData[request->tickData.tick - TICK];
+                                                                            TickData* futureTickData = &tickData[request->tickData.tick - INITIAL_TICK];
                                                                             if (futureTickData->epoch)
                                                                             {
                                                                                 if (request->tickData.millisecond != futureTickData->millisecond
