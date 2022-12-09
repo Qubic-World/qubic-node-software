@@ -43,8 +43,8 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 64
-#define VERSION_C 1
+#define VERSION_B 65
+#define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -5289,7 +5289,6 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define DEJAVU_SWAP_LIMIT 28000000
 #define DISSEMINATION_MULTIPLIER 4
 #define ISSUANCE_RATE 1000000000000
-#define MAX_ANSWER_SIZE 1024
 #define MAX_INVOCATION_SIZE 1024
 #define MAX_MESSAGE_SIZE 1024
 #define MAX_NUMBER_OF_PROCESSORS 1024
@@ -5298,7 +5297,6 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define MAX_TRANSFER_AMOUNT (ISSUANCE_RATE * 1000ULL)
 #define NUMBER_OF_COMPUTORS 676
 #define MAX_NUMBER_OF_TICKS_PER_EPOCH (((((60 * 60 * 24 * 7) / TARGET_TICK_DURATION) + NUMBER_OF_COMPUTORS - 1) / NUMBER_OF_COMPUTORS) * NUMBER_OF_COMPUTORS)
-#define MAX_QUESTION_SIZE 1024
 #define MAX_SMART_CONTRACT_STATE_SIZE 1073741824
 #define MAX_UNIVERSE_SIZE 1073741824
 #define NUMBER_OF_EXCHANGED_PEERS 4
@@ -5314,7 +5312,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define REVENUE_PUBLICATION_PERIOD 300
 #define SIGNATURE_SIZE 64
 #define SOLUTION_THRESHOLD 28
-#define SPECTRUM_CAPACITY 0x1000000 // Must be 2^N
+#define SPECTRUM_CAPACITY 0x1000000ULL // Must be 2^N
 #define SPECTRUM_DEPTH 24 // Is derived from SPECTRUM_CAPACITY (=N)
 #define SYSTEM_DATA_SAVING_PERIOD 300
 #define TIME_ACCURACY (5 * 60)
@@ -5551,38 +5549,6 @@ typedef struct
 {
     TickData tickData;
 } BroadcastFutureTickData;
-
-#define BROADCAST_QUESTION 9
-
-typedef struct
-{
-    unsigned char sourcePublicKey[32];
-    long long donatedAmount;
-    unsigned long long oracle;
-    unsigned int tick;
-    unsigned int questionSize;
-} Question;
-
-typedef struct
-{
-    Question question;
-} BroadcastQuestion;
-
-#define BROADCAST_ANSWER 10
-
-typedef struct
-{
-    unsigned short computorIndex;
-    unsigned short epoch;
-    unsigned char destinationPublicKey[32];
-    unsigned char questionDigest[32];
-    unsigned int answerSize;
-} Answer;
-
-typedef struct
-{
-    Answer answer;
-} BroadcastAnswer;
 
 #define REQUEST_COMPUTORS 11
 
@@ -6586,44 +6552,6 @@ static void requestProcessor(void* ProcedureArgument)
             }
             break;
 
-            case BROADCAST_QUESTION:
-            {
-                BroadcastQuestion* request = (BroadcastQuestion*)((char*)processor->cache + sizeof(RequestResponseHeader));
-                if (request->question.questionSize <= MAX_QUESTION_SIZE && requestHeader->size == sizeof(RequestResponseHeader) + sizeof(BroadcastQuestion) + request->question.questionSize + SIGNATURE_SIZE)
-                {
-                    unsigned char digest[32];
-                    request->question.sourcePublicKey[0] ^= BROADCAST_QUESTION;
-                    KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
-                    request->question.sourcePublicKey[0] ^= BROADCAST_QUESTION;
-                    if (verify(request->question.sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastQuestion) + request->question.questionSize)))
-                    {
-                        responseSize = requestHeader->size;
-                    }
-                }
-            }
-            break;
-
-            case BROADCAST_ANSWER:
-            {
-                BroadcastAnswer* request = (BroadcastAnswer*)((char*)processor->cache + sizeof(RequestResponseHeader));
-                if (request->answer.computorIndex < NUMBER_OF_COMPUTORS
-                    && request->answer.answerSize <= MAX_ANSWER_SIZE && requestHeader->size == sizeof(RequestResponseHeader) + sizeof(BroadcastAnswer) + request->answer.answerSize + SIGNATURE_SIZE)
-                {
-                    if (request->answer.epoch == broadcastedComputors.broadcastComputors.computors.epoch)
-                    {
-                        unsigned char digest[32];
-                        request->answer.computorIndex ^= BROADCAST_ANSWER;
-                        KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
-                        request->answer.computorIndex ^= BROADCAST_ANSWER;
-                        if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->answer.computorIndex], digest, ((const unsigned char*)request + sizeof(BroadcastAnswer) + request->answer.answerSize)))
-                        {
-                            responseSize = requestHeader->size;
-                        }
-                    }
-                }
-            }
-            break;
-
             case BROADCAST_TERMINATOR:
             {
                 BroadcastTerminator* request = (BroadcastTerminator*)((char*)processor->cache + sizeof(RequestResponseHeader));
@@ -7282,27 +7210,6 @@ static void saveTick(QuorumTick* quorumTick, TickData* tickData)
     }
 }
 
-static void getInitSpectrumDigest()
-{
-    unsigned int digestIndex;
-    for (digestIndex = 0; digestIndex < SPECTRUM_CAPACITY; digestIndex++)
-    {
-        KangarooTwelve64To32((unsigned char*)&initSpectrum[digestIndex], (unsigned char*)&initSpectrumDigests[digestIndex]);
-    }
-    unsigned int previousLevelBeginning = 0;
-    unsigned int numberOfLeafs = SPECTRUM_CAPACITY;
-    while (numberOfLeafs != 1)
-    {
-        for (unsigned int i = 0; i < numberOfLeafs; i += 2)
-        {
-            KangarooTwelve64To32((unsigned char*)&initSpectrumDigests[previousLevelBeginning + i], (unsigned char*)&initSpectrumDigests[digestIndex++]);
-        }
-
-        previousLevelBeginning += numberOfLeafs;
-        numberOfLeafs >>= 1;
-    }
-}
-
 static bool processTick(QuorumTick* quorumTick, TickData* tickData)
 {
     system.tick = quorumTick->tick;
@@ -7648,8 +7555,6 @@ static BOOLEAN initialize()
         }
         else
         {
-            bs->SetMem(initSpectrum, SPECTRUM_CAPACITY * sizeof(Entity), 0);
-
             unsigned long long size = SPECTRUM_CAPACITY * sizeof(Entity);
             status = dataFile->Read(dataFile, &size, initSpectrum);
             dataFile->Close(dataFile);
@@ -7659,19 +7564,44 @@ static BOOLEAN initialize()
 
                 return FALSE;
             }
+            if (size != SPECTRUM_CAPACITY * sizeof(Entity))
+            {
+                logStatus(L"EFI_FILE_PROTOCOL.Read() reads invalid number of bytes", size, __LINE__);
+
+                return FALSE;
+            }
 
             bs->CopyMem(spectrum, initSpectrum, SPECTRUM_CAPACITY * sizeof(Entity));
 
-            CHAR16 hash[64 + 1];
-            unsigned long long totalAmount = 0;
-
             const unsigned long long beginningTick = __rdtsc();
-            getInitSpectrumDigest();
+
+            unsigned int digestIndex;
+            for (digestIndex = 0; digestIndex < SPECTRUM_CAPACITY; digestIndex++)
+            {
+                KangarooTwelve64To32((unsigned char*)&initSpectrum[digestIndex], (unsigned char*)&initSpectrumDigests[digestIndex]);
+            }
+            unsigned int previousLevelBeginning = 0;
+            unsigned int numberOfLeafs = SPECTRUM_CAPACITY;
+            while (numberOfLeafs != 1)
+            {
+                for (unsigned int i = 0; i < numberOfLeafs; i += 2)
+                {
+                    KangarooTwelve64To32((unsigned char*)&initSpectrumDigests[previousLevelBeginning + i], (unsigned char*)&initSpectrumDigests[digestIndex++]);
+                }
+
+                previousLevelBeginning += numberOfLeafs;
+                numberOfLeafs >>= 1;
+            }
+
             setNumber(message, SPECTRUM_CAPACITY * sizeof(Entity), TRUE);
             appendText(message, L" bytes of the spectrum data are hashed (");
             appendNumber(message, (__rdtsc() - beginningTick) * 1000000 / frequency, TRUE);
             appendText(message, L" microseconds).");
             log(message);
+
+            CHAR16 hash[64 + 1];
+            unsigned long long totalAmount = 0;
+
             getHash((unsigned char*)&initSpectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1], hash);
 
             for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
@@ -8323,9 +8253,12 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     broadcastedTick.broadcastTick.tick.epoch = system.epoch;
                                     broadcastedTick.broadcastTick.tick.tick = system.tick;
 
-                                    *((__m256i*)broadcastedTick.broadcastTick.tick.prevSpectrumDigest) = *((__m256i*)broadcastedTick.broadcastTick.tick.initSpectrumDigest) = initSpectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1];
-                                    *((__m256i*)broadcastedTick.broadcastTick.tick.prevUniverseDigest) = *((__m256i*)broadcastedTick.broadcastTick.tick.initUniverseDigest) = ZERO;
-                                    *((__m256i*)broadcastedTick.broadcastTick.tick.prevComputerDigest) = *((__m256i*)broadcastedTick.broadcastTick.tick.initComputerDigest) = ZERO;
+                                    *((__m256i*)broadcastedTick.broadcastTick.tick.initSpectrumDigest) = initSpectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1];
+                                    *((__m256i*)broadcastedTick.broadcastTick.tick.initUniverseDigest) = ZERO;
+                                    *((__m256i*)broadcastedTick.broadcastTick.tick.initComputerDigest) = ZERO;
+                                    *((__m256i*)broadcastedTick.broadcastTick.tick.prevSpectrumDigest) = (system.tick == INITIAL_TICK ? *((__m256i*)broadcastedTick.broadcastTick.tick.initSpectrumDigest) : *((__m256i*)quorumTicks[system.tick - INITIAL_TICK - 1].spectrumDigest));
+                                    *((__m256i*)broadcastedTick.broadcastTick.tick.prevUniverseDigest) = ZERO;
+                                    *((__m256i*)broadcastedTick.broadcastTick.tick.prevComputerDigest) = ZERO;
 
                                     unsigned short prevTickMillisecond;
                                     unsigned char prevTickSecond, prevTickMinute, prevTickHour, prevTickDay, prevTickMonth, prevTickYear;
@@ -8868,13 +8801,13 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 {
                                     loggingTick = curTimeTick;
 
-#if NUMBER_OF_COMPUTING_PROCESSORS
+/*#if NUMBER_OF_COMPUTING_PROCESSORS
                                     if (system.epoch
-                                        && time.Hour >= 11 && dayIndex(time.Year - 2000, time.Month, time.Day) >= 738570 + system.epoch * 7) // TODO
+                                        && time.Hour >= 11 && dayIndex(time.Year - 2000, time.Month, time.Day) >= 738570 + system.epoch * 7)
                                     {
                                         state = 1;
                                     }
-#endif
+#endif*/
 
                                     unsigned long long numberOfWaitingBytes = 0;
 
@@ -9126,7 +9059,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     
                                                     peers[i].dataToTransmitSize = requestHeader->size;
 
-                                                    if (!broadcastedComputors.broadcastComputors.computors.epoch || !(dayIndex(time.Year - 2000, time.Month, time.Day) % 7))
+                                                    if (!broadcastedComputors.broadcastComputors.computors.epoch
+#if NUMBER_OF_COMPUTING_PROCESSORS
+                                                        || broadcastedComputors.broadcastComputors.computors.epoch != system.epoch
+#endif
+                                                        || !(dayIndex(time.Year - 2000, time.Month, time.Day) % 7))
                                                     {
                                                         bs->CopyMem(ptr, &requestedComputors, requestedComputors.header.size);
                                                         ptr += requestedComputors.header.size;
@@ -9212,7 +9149,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     if (receivedDataSize >= sizeof(RequestResponseHeader))
                                                     {
                                                         RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                        if (requestResponseHeader->protocol < VERSION_B - 1 || requestResponseHeader->protocol > VERSION_B + 1)
+                                                        if (requestResponseHeader->protocol < VERSION_B || requestResponseHeader->protocol > VERSION_B + 1)
                                                         {
                                                             closePeer(i);
                                                         }
@@ -9277,7 +9214,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                                             peers[i].dataToTransmitSize += responseHeader->size;
 
-                                                                            if (!broadcastedComputors.broadcastComputors.computors.epoch || !(dayIndex(time.Year - 2000, time.Month, time.Day) % 7))
+                                                                            if (!broadcastedComputors.broadcastComputors.computors.epoch
+#if NUMBER_OF_COMPUTING_PROCESSORS
+                                                                                || broadcastedComputors.broadcastComputors.computors.epoch != system.epoch
+#endif
+                                                                                || !(dayIndex(time.Year - 2000, time.Month, time.Day) % 7))
                                                                             {
                                                                                 bs->CopyMem(ptr, &requestedComputors, requestedComputors.header.size);
                                                                                 ptr += requestedComputors.header.size;
