@@ -7,7 +7,7 @@
 // Do NOT share the data of "Private Settings" section with anybody!!!
 #if NUMBER_OF_COMPUTING_PROCESSORS
 static unsigned char computingSeeds[][55 + 1] = {
-    "<seed1>"
+    "<seed1>",
 };
 #endif
 #if NUMBER_OF_MINING_PROCESSORS
@@ -43,12 +43,12 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 65
-#define VERSION_C 2
+#define VERSION_B 66
+#define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
-#define INITIAL_TICK 3570000
+#define INITIAL_TICK 3590000
 
 #include <intrin.h>
 
@@ -5315,6 +5315,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define SPECTRUM_CAPACITY 0x1000000ULL // Must be 2^N
 #define SPECTRUM_DEPTH 24 // Is derived from SPECTRUM_CAPACITY (=N)
 #define SPECTRUM_FRAGMENT_LENGTH 256
+#define SPECTRUM_FRAGMENT_DEPTH (SPECTRUM_DEPTH - 8)
 #define SYSTEM_DATA_SAVING_PERIOD 300
 #define TIME_ACCURACY (5 * 60)
 #define VOLUME_LABEL L"Qubic"
@@ -5651,6 +5652,23 @@ typedef struct
 {
     ResourceTestingSolutionReceipt resourceTestingSolutionReceipt;
 } BroadcastResourceTestingSolutionReceipt;
+
+#define REQUEST_INITIAL_SPECTRUM_FRAGMENT 19
+
+typedef struct
+{
+    unsigned int fragmentIndex;
+} RequestInitialSpectrumFragment;
+
+#define RESPOND_INITIAL_SPECTRUM_FRAGMENT 20
+
+typedef struct
+{
+    unsigned int fragmentIndex;
+    unsigned char siblings[SPECTRUM_FRAGMENT_DEPTH][32];
+    unsigned char entityFlags[SPECTRUM_FRAGMENT_LENGTH / 8];
+    Entity* initialSpectrumFragments;
+} RespondInitialSpectrumFragment;
 
 static volatile int state = 0;
 
@@ -7554,6 +7572,7 @@ static BOOLEAN initialize()
                 else
                 {
                     system.version = VERSION_B;
+                    bs->SetMem(&system.faults, sizeof(system.faults), 0);
                 }
             }
         }
@@ -8647,48 +8666,51 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                         }
                                                     }
 
-                                                    for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
+                                                    if (futureTickNumberOfComputors <= NUMBER_OF_COMPUTORS - QUORUM)
                                                     {
-                                                        if ((system.tick + 2) % NUMBER_OF_COMPUTORS == ownComputorIndices[i])
+                                                        for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
                                                         {
-                                                            EFI_TIME newTime;
-                                                            if (status = rs->GetTime(&newTime, NULL))
+                                                            if ((system.tick + 2) % NUMBER_OF_COMPUTORS == ownComputorIndices[i])
                                                             {
-                                                                logStatus(L"EFI_RUNTIME_SERVICES.GetTime() fails", status, __LINE__);
-                                                            }
-                                                            else
-                                                            {
-                                                                broadcastedFutureTickData.broadcastFutureTickData.tickData.computorIndex = ownComputorIndices[i] ^ BROADCAST_FUTURE_TICK_DATA;
-                                                                broadcastedFutureTickData.broadcastFutureTickData.tickData.epoch = system.epoch;
-                                                                broadcastedFutureTickData.broadcastFutureTickData.tickData.tick = system.tick + 2;
-
-                                                                broadcastedFutureTickData.broadcastFutureTickData.tickData.millisecond = newTime.Nanosecond / 1000000;
-                                                                broadcastedFutureTickData.broadcastFutureTickData.tickData.second = newTime.Second;
-                                                                broadcastedFutureTickData.broadcastFutureTickData.tickData.minute = newTime.Minute;
-                                                                broadcastedFutureTickData.broadcastFutureTickData.tickData.hour = newTime.Hour;
-                                                                broadcastedFutureTickData.broadcastFutureTickData.tickData.day = newTime.Day;
-                                                                broadcastedFutureTickData.broadcastFutureTickData.tickData.month = newTime.Month;
-                                                                broadcastedFutureTickData.broadcastFutureTickData.tickData.year = newTime.Year - 2000;
-
-                                                                for (unsigned int j = 0; j < NUMBER_OF_TRANSACTIONS_PER_TICK; j++)
+                                                                EFI_TIME newTime;
+                                                                if (status = rs->GetTime(&newTime, NULL))
                                                                 {
-                                                                    *((__m256i*)broadcastedFutureTickData.broadcastFutureTickData.tickData.transactionDigests[j]) = ZERO;
+                                                                    logStatus(L"EFI_RUNTIME_SERVICES.GetTime() fails", status, __LINE__);
+                                                                }
+                                                                else
+                                                                {
+                                                                    broadcastedFutureTickData.broadcastFutureTickData.tickData.computorIndex = ownComputorIndices[i] ^ BROADCAST_FUTURE_TICK_DATA;
+                                                                    broadcastedFutureTickData.broadcastFutureTickData.tickData.epoch = system.epoch;
+                                                                    broadcastedFutureTickData.broadcastFutureTickData.tickData.tick = system.tick + 2;
+
+                                                                    broadcastedFutureTickData.broadcastFutureTickData.tickData.millisecond = newTime.Nanosecond / 1000000;
+                                                                    broadcastedFutureTickData.broadcastFutureTickData.tickData.second = newTime.Second;
+                                                                    broadcastedFutureTickData.broadcastFutureTickData.tickData.minute = newTime.Minute;
+                                                                    broadcastedFutureTickData.broadcastFutureTickData.tickData.hour = newTime.Hour;
+                                                                    broadcastedFutureTickData.broadcastFutureTickData.tickData.day = newTime.Day;
+                                                                    broadcastedFutureTickData.broadcastFutureTickData.tickData.month = newTime.Month;
+                                                                    broadcastedFutureTickData.broadcastFutureTickData.tickData.year = newTime.Year - 2000;
+
+                                                                    for (unsigned int j = 0; j < NUMBER_OF_TRANSACTIONS_PER_TICK; j++)
+                                                                    {
+                                                                        *((__m256i*)broadcastedFutureTickData.broadcastFutureTickData.tickData.transactionDigests[j]) = ZERO;
+                                                                    }
+
+                                                                    unsigned char digest[32];
+                                                                    KangarooTwelve((unsigned char*)&broadcastedFutureTickData.broadcastFutureTickData.tickData, sizeof(TickData) - SIGNATURE_SIZE, digest, sizeof(digest));
+                                                                    broadcastedFutureTickData.broadcastFutureTickData.tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
+                                                                    sign(computingSubseeds[ownComputorIndicesMapping[i]], computingPublicKeys[ownComputorIndicesMapping[i]], digest, broadcastedFutureTickData.broadcastFutureTickData.tickData.signature);
+
+                                                                    for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
+                                                                    {
+                                                                        push(&peers[j], &broadcastedFutureTickData.header, true);
+                                                                    }
+
+                                                                    bs->CopyMem(&tickData[broadcastedFutureTickData.broadcastFutureTickData.tickData.tick - INITIAL_TICK], &broadcastedFutureTickData.broadcastFutureTickData.tickData, sizeof(TickData));
                                                                 }
 
-                                                                unsigned char digest[32];
-                                                                KangarooTwelve((unsigned char*)&broadcastedFutureTickData.broadcastFutureTickData.tickData, sizeof(TickData) - SIGNATURE_SIZE, digest, sizeof(digest));
-                                                                broadcastedFutureTickData.broadcastFutureTickData.tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
-                                                                sign(computingSubseeds[ownComputorIndicesMapping[i]], computingPublicKeys[ownComputorIndicesMapping[i]], digest, broadcastedFutureTickData.broadcastFutureTickData.tickData.signature);
-
-                                                                for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
-                                                                {
-                                                                    push(&peers[j], &broadcastedFutureTickData.header, true);
-                                                                }
-
-                                                                bs->CopyMem(&tickData[broadcastedFutureTickData.broadcastFutureTickData.tickData.tick - INITIAL_TICK], &broadcastedFutureTickData.broadcastFutureTickData.tickData, sizeof(TickData));
+                                                                break;
                                                             }
-
-                                                            break;
                                                         }
                                                     }
                                                 }
@@ -9181,7 +9203,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     if (receivedDataSize >= sizeof(RequestResponseHeader))
                                                     {
                                                         RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                        if (requestResponseHeader->protocol < VERSION_B || requestResponseHeader->protocol > VERSION_B + 1)
+                                                        if (requestResponseHeader->protocol < VERSION_B - 1 || requestResponseHeader->protocol > VERSION_B + 1)
                                                         {
                                                             closePeer(i);
                                                         }
