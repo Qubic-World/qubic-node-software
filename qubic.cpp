@@ -44,7 +44,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 66
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -6444,11 +6444,6 @@ static void requestProcessor(void* ProcedureArgument)
                     request->message.sourcePublicKey[0] ^= BROADCAST_MESSAGE;
                     if (verify(request->message.sourcePublicKey, digest, ((const unsigned char*)request + sizeof(BroadcastMessage) + request->message.messageSize)))
                     {
-                        /*if (EQUAL(*((__m256i*)request->message.destinationPublicKey), *((__m256i*)ownPublicKey)))
-                        {
-                            //log(L"Receives a message for self.");
-                        }*/
-
                         responseSize = requestHeader->size;
                     }
                 }
@@ -7198,53 +7193,39 @@ static void saveTick(QuorumTick* quorumTick, TickData* tickData)
 {
     unsigned long long beginningTick = __rdtsc();
     EFI_STATUS status;
-    if (status = ticksFile->SetPosition(ticksFile, (quorumTick->tick - INITIAL_TICK) * sizeof(QuorumTick)))
+    unsigned long long size = sizeof(QuorumTick);
+    if (status = ticksFile->Write(ticksFile, &size, quorumTick))
     {
-        logStatus(L"EFI_FILE_PROTOCOL.SetPosition() fails", status, __LINE__);
+        logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status, __LINE__);
     }
     else
     {
-        unsigned long long size = sizeof(QuorumTick);
-        if (status = ticksFile->Write(ticksFile, &size, quorumTick))
+        setNumber(message, size, TRUE);
+        appendText(message, L" bytes of the tick data are saved (");
+        appendNumber(message, (__rdtsc() - beginningTick) * 1000000 / frequency, TRUE);
+        appendText(message, L" microseconds).");
+        log(message);
+
+        beginningTick = __rdtsc();
+        size = sizeof(TickData);
+        if (status = tickTransactionDigestsFile->Write(tickTransactionDigestsFile, &size, tickData))
         {
             logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status, __LINE__);
         }
         else
         {
             setNumber(message, size, TRUE);
-            appendText(message, L" bytes of the tick data are saved (");
+            appendText(message, L" bytes of the tick transaction digests data are saved (");
             appendNumber(message, (__rdtsc() - beginningTick) * 1000000 / frequency, TRUE);
             appendText(message, L" microseconds).");
             log(message);
-
-            beginningTick = __rdtsc();
-            if (status = tickTransactionDigestsFile->SetPosition(tickTransactionDigestsFile, (tickData->tick - INITIAL_TICK) * sizeof(TickData)))
-            {
-                logStatus(L"EFI_FILE_PROTOCOL.SetPosition() fails", status, __LINE__);
-            }
-            else
-            {
-                size = sizeof(TickData);
-                if (status = tickTransactionDigestsFile->Write(tickTransactionDigestsFile, &size, tickData))
-                {
-                    logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status, __LINE__);
-                }
-                else
-                {
-                    setNumber(message, size, TRUE);
-                    appendText(message, L" bytes of the tick transaction digests data are saved (");
-                    appendNumber(message, (__rdtsc() - beginningTick) * 1000000 / frequency, TRUE);
-                    appendText(message, L" microseconds).");
-                    log(message);
-                }
-            }
         }
     }
 }
 
 static bool processTick(QuorumTick* quorumTick, TickData* tickData)
 {
-    system.tick = quorumTick->tick;
+    system.tick = quorumTick->tick + 1;
 
     return true;
 }
@@ -8396,6 +8377,14 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     }
                                                 }
                                             }
+
+                                            const int dayIndex = ::dayIndex(broadcastedTick.broadcastTick.tick.year, broadcastedTick.broadcastTick.tick.month, broadcastedTick.broadcastTick.tick.day);
+                                            if ((dayIndex == 738570 + system.epoch * 7 && broadcastedTick.broadcastTick.tick.hour >= 12)
+                                                || dayIndex > 738570 + system.epoch * 7)
+                                            {
+                                                state = 1;
+                                            }
+
                                             setText(message, L"Tick time is set to ");
                                             appendNumber(message, broadcastedTick.broadcastTick.tick.year / 10, FALSE);
                                             appendNumber(message, broadcastedTick.broadcastTick.tick.year % 10, FALSE);
@@ -8854,14 +8843,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 if (curTimeTick - loggingTick >= frequency)
                                 {
                                     loggingTick = curTimeTick;
-
-/*#if NUMBER_OF_COMPUTING_PROCESSORS
-                                    if (system.epoch
-                                        && time.Hour >= 11 && dayIndex(time.Year - 2000, time.Month, time.Day) >= 738570 + system.epoch * 7)
-                                    {
-                                        state = 1;
-                                    }
-#endif*/
 
                                     unsigned long long numberOfWaitingBytes = 0;
 
