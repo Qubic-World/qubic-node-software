@@ -43,12 +43,12 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 66
-#define VERSION_C 1
+#define VERSION_B 67
+#define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
-#define INITIAL_TICK 3590000
+#define INITIAL_TICK 3600000
 
 #include <intrin.h>
 
@@ -6530,27 +6530,51 @@ static void requestProcessor(void* ProcedureArgument)
                         if (request->tickData.tick >= INITIAL_TICK && request->tickData.tick < INITIAL_TICK + MAX_NUMBER_OF_TICKS_PER_EPOCH)
                         {
                             TickData* futureTickData = &tickData[request->tickData.tick - INITIAL_TICK];
-                            if (futureTickData->epoch)
-                            {
-                                if (request->tickData.millisecond != futureTickData->millisecond
-                                    || request->tickData.second != futureTickData->second
-                                    || request->tickData.minute != futureTickData->minute
-                                    || request->tickData.hour != futureTickData->hour
-                                    || request->tickData.day != futureTickData->day
-                                    || request->tickData.month != futureTickData->month
-                                    || request->tickData.year != futureTickData->year)
-                                {
-                                    system.faults[request->tickData.computorIndex] |= MULTIPLE_FUTURE_TICK_DATA_VERSIONS_FAULT;
-                                }
-                                else
-                                {
-                                    for (unsigned int i = 0; i < NUMBER_OF_TRANSACTIONS_PER_TICK; i++)
-                                    {
-                                        if (!EQUAL(*((__m256i*)request->tickData.transactionDigests[i]), *((__m256i*)futureTickData->transactionDigests[i])))
-                                        {
-                                            system.faults[request->tickData.computorIndex] |= MULTIPLE_FUTURE_TICK_DATA_VERSIONS_FAULT;
 
-                                            break;
+                            if (request->tickData.tick >= system.tick)
+                            {
+                                if (futureTickData->epoch)
+                                {
+                                    if (request->tickData.millisecond != futureTickData->millisecond
+                                        || request->tickData.second != futureTickData->second
+                                        || request->tickData.minute != futureTickData->minute
+                                        || request->tickData.hour != futureTickData->hour
+                                        || request->tickData.day != futureTickData->day
+                                        || request->tickData.month != futureTickData->month
+                                        || request->tickData.year != futureTickData->year)
+                                    {
+                                        system.faults[request->tickData.computorIndex] |= MULTIPLE_FUTURE_TICK_DATA_VERSIONS_FAULT;
+                                    }
+                                    else
+                                    {
+                                        for (unsigned int i = 0; i < NUMBER_OF_TRANSACTIONS_PER_TICK; i++)
+                                        {
+                                            if (!EQUAL(*((__m256i*)request->tickData.transactionDigests[i]), *((__m256i*)futureTickData->transactionDigests[i])))
+                                            {
+                                                system.faults[request->tickData.computorIndex] |= MULTIPLE_FUTURE_TICK_DATA_VERSIONS_FAULT;
+
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (request->tickData.tick == system.tick + 1)
+                            {
+                                if (!nextTickDataDigestMustBeNull)
+                                {
+                                    if (EQUAL(targetNextTickDataDigest, ZERO))
+                                    {
+                                        bs->CopyMem(futureTickData, &request->tickData, sizeof(TickData));
+                                    }
+                                    else
+                                    {
+                                        unsigned char digest[32];
+                                        KangarooTwelve((unsigned char*)&request->tickData, sizeof(TickData), digest, 32);
+                                        if (EQUAL(*((__m256i*)digest), targetNextTickDataDigest))
+                                        {
+                                            bs->CopyMem(futureTickData, &request->tickData, sizeof(TickData));
                                         }
                                     }
                                 }
@@ -7189,7 +7213,7 @@ static void saveSystem()
     }
 }
 
-static void saveTick(QuorumTick* quorumTick, TickData* tickData)
+static void save(QuorumTick* quorumTick)
 {
     unsigned long long beginningTick = __rdtsc();
     EFI_STATUS status;
@@ -7205,21 +7229,25 @@ static void saveTick(QuorumTick* quorumTick, TickData* tickData)
         appendNumber(message, (__rdtsc() - beginningTick) * 1000000 / frequency, TRUE);
         appendText(message, L" microseconds).");
         log(message);
+    }
+}
 
-        beginningTick = __rdtsc();
-        size = sizeof(TickData);
-        if (status = tickTransactionDigestsFile->Write(tickTransactionDigestsFile, &size, tickData))
-        {
-            logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status, __LINE__);
-        }
-        else
-        {
-            setNumber(message, size, TRUE);
-            appendText(message, L" bytes of the tick transaction digests data are saved (");
-            appendNumber(message, (__rdtsc() - beginningTick) * 1000000 / frequency, TRUE);
-            appendText(message, L" microseconds).");
-            log(message);
-        }
+static void save(TickData* tickData)
+{
+    unsigned long long beginningTick = __rdtsc();
+    EFI_STATUS status;
+    unsigned long long size = sizeof(TickData);
+    if (status = tickTransactionDigestsFile->Write(tickTransactionDigestsFile, &size, tickData))
+    {
+        logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status, __LINE__);
+    }
+    else
+    {
+        setNumber(message, size, TRUE);
+        appendText(message, L" bytes of the tick transaction digests data are saved (");
+        appendNumber(message, (__rdtsc() - beginningTick) * 1000000 / frequency, TRUE);
+        appendText(message, L" microseconds).");
+        log(message);
     }
 }
 
@@ -7683,21 +7711,28 @@ static BOOLEAN initialize()
         }
         else
         {
-            unsigned long long size = numberOfTicksToProcess * ((unsigned long long)sizeof(TickData));
-            if (status = tickTransactionDigestsFile->Read(tickTransactionDigestsFile, &size, tickData))
+            if (numberOfTicksToProcess)
             {
-                logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status, __LINE__);
-
-                return FALSE;
-            }
-            else
-            {
-                if (size != numberOfTicksToProcess * ((unsigned long long)sizeof(TickData)))
+                unsigned long long size = (numberOfTicksToProcess + 1) * ((unsigned long long)sizeof(TickData));
+                if (status = tickTransactionDigestsFile->Read(tickTransactionDigestsFile, &size, tickData))
                 {
-                    logStatus(L"EFI_FILE_PROTOCOL.Read() reads invalid number of bytes", size, __LINE__);
+                    logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status, __LINE__);
 
                     return FALSE;
                 }
+                else
+                {
+                    if (size != (numberOfTicksToProcess + 1) * ((unsigned long long)sizeof(TickData)))
+                    {
+                        logStatus(L"EFI_FILE_PROTOCOL.Read() reads invalid number of bytes", size, __LINE__);
+
+                        return FALSE;
+                    }
+                }
+            }
+            else
+            {
+                save(&tickData[0]);
             }
         }
 
@@ -8318,7 +8353,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             TickData* curTickData = &tickData[system.tick - INITIAL_TICK];
                                             unsigned char curTickDataDigest[32];
                                             KangarooTwelve((unsigned char*)curTickData, sizeof(TickData), curTickDataDigest, sizeof(curTickDataDigest));
-                                            if (curTickData->epoch == system.epoch && system.tick > INITIAL_TICK && EQUAL(*((__m256i*)quorumTicks[system.tick - INITIAL_TICK - 1].nextTickDataDigest), *((__m256i*)curTickDataDigest))
+                                            if (curTickData->epoch == system.epoch && system.tick > INITIAL_TICK && EQUAL(*((__m256i*)quorumTicks[system.tick - INITIAL_TICK - 1].nextTickDataDigest), *((__m256i*)curTickDataDigest)) // TODO: Ensure next tick data consistency
                                                 && (curTickData->year > prevTickYear
                                                     || (curTickData->year == prevTickYear && (curTickData->month > prevTickMonth
                                                         || (curTickData->month == prevTickMonth && (curTickData->day > prevTickDay
@@ -8605,7 +8640,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     *((__m256i*)quorumTicks[quorumTickIndex].universeDigest) = *((__m256i*)etalonTick.prevUniverseDigest);
                                                     *((__m256i*)quorumTicks[quorumTickIndex].computerDigest) = *((__m256i*)etalonTick.prevComputerDigest);
                                                     *((__m256i*)quorumTicks[quorumTickIndex].nextTickDataDigest) = *((__m256i*)etalonTick.nextTickDataDigest);
-                                                    saveTick(&quorumTicks[quorumTickIndex], &tickData[quorumTickIndex]);
+                                                    save(&quorumTicks[quorumTickIndex]);
+                                                    save(&tickData[quorumTickIndex + 1]);
 
                                                     tickNumberOfComputors = 0;
                                                     tickNumberOfComputors2 = 0;
