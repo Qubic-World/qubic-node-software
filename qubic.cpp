@@ -27,9 +27,6 @@ static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 static unsigned short SYSTEM_FILE_NAME[] = L"system";
 static unsigned short SOLUTION_FILE_NAME[] = L"solution.034";
 static unsigned short SPECTRUM_FILE_NAME[] = L"spectrum.???";
-static unsigned short TICKS_FILE_NAME[] = L"ticks.???";
-static unsigned short TICK_TRANSACTION_DIGESTS_FILE_NAME[] = L"tick_transaction_digests.???";
-static unsigned short TICK_TRANSACTIONS_FILE_NAME[] = L"tick_transactions_??.???";
 
 static unsigned char computorsToSetMaxRevenueTo[][70 + 1] = {
     "EEHHKLAELFGOMOEILMMPEAMGBHPNHJBKEAIINBIJDKGFPCABKGJEKLMGANFADFMJFCDFAL"
@@ -44,7 +41,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 67
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -5693,10 +5690,6 @@ static CHAR16 message[16384], timestampedMessage[16384];
 static EFI_FILE_PROTOCOL* root = NULL;
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
-static EFI_FILE_PROTOCOL* ticksFile = NULL;
-static EFI_FILE_PROTOCOL* tickTransactionDigestsFile = NULL;
-static EFI_FILE_PROTOCOL* tickTransactionsFiles[NUMBER_OF_COMPUTORS];
-
 static struct System
 {
     short version;
@@ -7212,51 +7205,6 @@ static void saveSystem()
         }
     }
 }
-
-static void save(QuorumTick* quorumTick)
-{
-    unsigned long long beginningTick = __rdtsc();
-    EFI_STATUS status;
-    unsigned long long size = sizeof(QuorumTick);
-    if (status = ticksFile->Write(ticksFile, &size, quorumTick))
-    {
-        logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status, __LINE__);
-    }
-    else
-    {
-        setNumber(message, size, TRUE);
-        appendText(message, L" bytes of the tick data are saved (");
-        appendNumber(message, (__rdtsc() - beginningTick) * 1000000 / frequency, TRUE);
-        appendText(message, L" microseconds).");
-        log(message);
-    }
-}
-
-static void save(TickData* tickData)
-{
-    unsigned long long beginningTick = __rdtsc();
-    EFI_STATUS status;
-    unsigned long long size = sizeof(TickData);
-    if (status = tickTransactionDigestsFile->Write(tickTransactionDigestsFile, &size, tickData))
-    {
-        logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status, __LINE__);
-    }
-    else
-    {
-        setNumber(message, size, TRUE);
-        appendText(message, L" bytes of the tick transaction digests data are saved (");
-        appendNumber(message, (__rdtsc() - beginningTick) * 1000000 / frequency, TRUE);
-        appendText(message, L" microseconds).");
-        log(message);
-    }
-}
-
-static bool processTick(QuorumTick* quorumTick, TickData* tickData)
-{
-    system.tick = quorumTick->tick + 1;
-
-    return true;
-}
 #endif
 
 static BOOLEAN initialize()
@@ -7308,11 +7256,6 @@ static BOOLEAN initialize()
 
 #if NUMBER_OF_COMPUTING_PROCESSORS
     targetNextTickDataDigest = ZERO;
-
-    for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
-    {
-        tickTransactionsFiles[i] = NULL;
-    }
 
     for (unsigned int i = 0; i < sizeof(computingSeeds) / sizeof(computingSeeds[0]); i++)
     {
@@ -7667,110 +7610,7 @@ static BOOLEAN initialize()
             numberOfFilledInitialSpectrumFragments = numberOfEntities ? SPECTRUM_CAPACITY / SPECTRUM_FRAGMENT_LENGTH : 0;
         }
 
-        unsigned int numberOfTicksToProcess = 0;
-
-        TICKS_FILE_NAME[sizeof(TICKS_FILE_NAME) / sizeof(TICKS_FILE_NAME[0]) - 4] = system.epoch / 100 + L'0';
-        TICKS_FILE_NAME[sizeof(TICKS_FILE_NAME) / sizeof(TICKS_FILE_NAME[0]) - 3] = (system.epoch % 100) / 10 + L'0';
-        TICKS_FILE_NAME[sizeof(TICKS_FILE_NAME) / sizeof(TICKS_FILE_NAME[0]) - 2] = system.epoch % 10 + L'0';
-        if (status = root->Open(root, (void**)&ticksFile, (CHAR16*)TICKS_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, EFI_FILE_ARCHIVE))
-        {
-            logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status, __LINE__);
-
-            return FALSE;
-        }
-        else
-        {
-            unsigned long long size = ((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * sizeof(QuorumTick);
-            if (status = ticksFile->Read(ticksFile, &size, quorumTicks))
-            {
-                logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status, __LINE__);
-
-                return FALSE;
-            }
-            else
-            {
-                if (size % sizeof(QuorumTick))
-                {
-                    logStatus(L"EFI_FILE_PROTOCOL.Read() reads invalid number of bytes", size, __LINE__);
-
-                    return FALSE;
-                }
-
-                numberOfTicksToProcess = (unsigned int)(size / sizeof(QuorumTick));
-            }
-        }
-
-        TICK_TRANSACTION_DIGESTS_FILE_NAME[sizeof(TICK_TRANSACTION_DIGESTS_FILE_NAME) / sizeof(TICK_TRANSACTION_DIGESTS_FILE_NAME[0]) - 4] = system.epoch / 100 + L'0';
-        TICK_TRANSACTION_DIGESTS_FILE_NAME[sizeof(TICK_TRANSACTION_DIGESTS_FILE_NAME) / sizeof(TICK_TRANSACTION_DIGESTS_FILE_NAME[0]) - 3] = (system.epoch % 100) / 10 + L'0';
-        TICK_TRANSACTION_DIGESTS_FILE_NAME[sizeof(TICK_TRANSACTION_DIGESTS_FILE_NAME) / sizeof(TICK_TRANSACTION_DIGESTS_FILE_NAME[0]) - 2] = system.epoch % 10 + L'0';
-        if (status = root->Open(root, (void**)&tickTransactionDigestsFile, (CHAR16*)TICK_TRANSACTION_DIGESTS_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, EFI_FILE_ARCHIVE))
-        {
-            logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status, __LINE__);
-
-            return FALSE;
-        }
-        else
-        {
-            if (numberOfTicksToProcess)
-            {
-                unsigned long long size = (numberOfTicksToProcess + 1) * ((unsigned long long)sizeof(TickData));
-                if (status = tickTransactionDigestsFile->Read(tickTransactionDigestsFile, &size, tickData))
-                {
-                    logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status, __LINE__);
-
-                    return FALSE;
-                }
-                else
-                {
-                    if (size != (numberOfTicksToProcess + 1) * ((unsigned long long)sizeof(TickData)))
-                    {
-                        logStatus(L"EFI_FILE_PROTOCOL.Read() reads invalid number of bytes", size, __LINE__);
-
-                        return FALSE;
-                    }
-                }
-            }
-            else
-            {
-                save(&tickData[0]);
-            }
-        }
-
-        for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
-        {
-            TICK_TRANSACTIONS_FILE_NAME[sizeof(TICK_TRANSACTIONS_FILE_NAME) / sizeof(TICK_TRANSACTIONS_FILE_NAME[0]) - 7] = i / 26 + L'a';
-            TICK_TRANSACTIONS_FILE_NAME[sizeof(TICK_TRANSACTIONS_FILE_NAME) / sizeof(TICK_TRANSACTIONS_FILE_NAME[0]) - 6] = i % 26 + L'a';
-            TICK_TRANSACTIONS_FILE_NAME[sizeof(TICK_TRANSACTIONS_FILE_NAME) / sizeof(TICK_TRANSACTIONS_FILE_NAME[0]) - 4] = system.epoch / 100 + L'0';
-            TICK_TRANSACTIONS_FILE_NAME[sizeof(TICK_TRANSACTIONS_FILE_NAME) / sizeof(TICK_TRANSACTIONS_FILE_NAME[0]) - 3] = (system.epoch % 100) / 10 + L'0';
-            TICK_TRANSACTIONS_FILE_NAME[sizeof(TICK_TRANSACTIONS_FILE_NAME) / sizeof(TICK_TRANSACTIONS_FILE_NAME[0]) - 2] = system.epoch % 10 + L'0';
-            if (status = root->Open(root, (void**)&tickTransactionsFiles[i], (CHAR16*)TICK_TRANSACTIONS_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, EFI_FILE_ARCHIVE))
-            {
-                logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status, __LINE__);
-
-                return FALSE;
-            }
-            else
-            {
-                /////
-            }
-        }
-
-        if (!numberOfTicksToProcess)
-        {
-            system.tick = INITIAL_TICK;
-        }
-        else
-        {
-            for (unsigned int i = 0; i < numberOfTicksToProcess; i++)
-            {
-                if (!processTick(&quorumTicks[i], &tickData[i]))
-                {
-                    log(L"Tick processing fails!");
-
-                    return FALSE;
-                }
-            }
-        }
+        system.tick = INITIAL_TICK;
 
         for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
         {
@@ -7895,23 +7735,6 @@ static void deinitialize()
     bs->SetMem(miningPublicKeys, sizeof(miningPublicKeys), 0);
 #endif
 
-#if NUMBER_OF_COMPUTING_PROCESSORS
-    for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
-    {
-        if (tickTransactionsFiles[i])
-        {
-            tickTransactionsFiles[i]->Close(tickTransactionsFiles[i]);
-        }
-    }
-    if (tickTransactionDigestsFile)
-    {
-        tickTransactionDigestsFile->Close(tickTransactionDigestsFile);
-    }
-    if (ticksFile)
-    {
-        ticksFile->Close(ticksFile);
-    }
-#endif
 #if NUMBER_OF_COMPUTING_PROCESSORS || NUMBER_OF_MINING_PROCESSORS
     if (root)
     {
@@ -8351,6 +8174,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             }
 
                                             TickData* curTickData = &tickData[system.tick - INITIAL_TICK];
+
                                             unsigned char curTickDataDigest[32];
                                             KangarooTwelve((unsigned char*)curTickData, sizeof(TickData), curTickDataDigest, sizeof(curTickDataDigest));
                                             if (curTickData->epoch == system.epoch && system.tick > INITIAL_TICK && EQUAL(*((__m256i*)quorumTicks[system.tick - INITIAL_TICK - 1].nextTickDataDigest), *((__m256i*)curTickDataDigest)) // TODO: Ensure next tick data consistency
@@ -8530,7 +8354,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 {
                                                     if (system.faults[i])
                                                     {
-                                                        continue;
+                                                        //continue;
                                                     }
 
                                                     while (_InterlockedCompareExchange8(&tickLocks[i], 1, 0))
@@ -8640,8 +8464,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     *((__m256i*)quorumTicks[quorumTickIndex].universeDigest) = *((__m256i*)etalonTick.prevUniverseDigest);
                                                     *((__m256i*)quorumTicks[quorumTickIndex].computerDigest) = *((__m256i*)etalonTick.prevComputerDigest);
                                                     *((__m256i*)quorumTicks[quorumTickIndex].nextTickDataDigest) = *((__m256i*)etalonTick.nextTickDataDigest);
-                                                    save(&quorumTicks[quorumTickIndex]);
-                                                    save(&tickData[quorumTickIndex + 1]);
 
                                                     tickNumberOfComputors = 0;
                                                     tickNumberOfComputors2 = 0;
