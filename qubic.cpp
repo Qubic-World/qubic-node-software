@@ -25,7 +25,7 @@ static const unsigned char defaultRouteGateway[4] = { 0, 0, 0, 0 };
 static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 static unsigned short SYSTEM_FILE_NAME[] = L"system";
-static unsigned short SOLUTION_FILE_NAME[] = L"solution.034";
+static unsigned short SOLUTION_FILE_NAME[] = L"solution.035";
 static unsigned short SPECTRUM_FILE_NAME[] = L"spectrum.???";
 
 static unsigned char computorsToSetMaxRevenueTo[][70 + 1] = {
@@ -40,8 +40,8 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 67
-#define VERSION_C 1
+#define VERSION_B 68
+#define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -5786,10 +5786,10 @@ static unsigned long long prevMiningPerformanceTick = 0;
 #if NUMBER_OF_MINING_PROCESSORS
 static unsigned long long miningData[65536];
 static EFI_EVENT minerEvents[NUMBER_OF_MINING_PROCESSORS];
-static unsigned int neuronLinks[NUMBER_OF_MINING_PROCESSORS][NUMBER_OF_NEURONS][2];
+static unsigned short neuronLinks[NUMBER_OF_MINING_PROCESSORS][NUMBER_OF_NEURONS][2];
 static unsigned char neuronValues[NUMBER_OF_MINING_PROCESSORS][NUMBER_OF_NEURONS];
 static volatile long long numberOfMiningIterations = 0;
-static unsigned int validationNeuronLinks[NUMBER_OF_NEURONS][2];
+static unsigned short validationNeuronLinks[NUMBER_OF_NEURONS][2];
 static unsigned char validationNeuronValues[NUMBER_OF_NEURONS];
 
 static struct
@@ -7624,7 +7624,7 @@ static BOOLEAN initialize()
         randomSeed[0] = 22;
         randomSeed[1] = 80;
         randomSeed[2] = 115;
-        randomSeed[3] = 2;
+        randomSeed[3] = 3;
         randomSeed[4] = 212;
         randomSeed[5] = 249;
         randomSeed[6] = 70;
