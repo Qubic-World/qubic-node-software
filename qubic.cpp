@@ -35,7 +35,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 70
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -7778,6 +7778,15 @@ static unsigned int revenue(unsigned int computorIndex)
     return revenueAmounts[i];
 }
 
+static void rollTickBack()
+{
+    system.tick--;
+    system.latestCreatedTick--;
+
+    bs->CopyMem(latestTicks, actualTicks, sizeof(actualTicks));
+    bs->SetMem(actualTicks, sizeof(actualTicks), 0);
+}
+
 EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 {
     ih = imageHandle;
@@ -7987,7 +7996,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             unsigned long long tickTimeTick = 0;
                             unsigned int latestOwnTick = 0;
                             unsigned long long latestTickTick = __rdtsc();
-                            bool tickMustBeCreated = false, tickMustBeEnded = false;
+                            bool tickMustBeCreated = false, tickMustBeEnded = false, tickCanBeRolledBack = true;
                             unsigned long long clockTick = 0, systemDataSavingTick = 0, loggingTick = 0, peerRefreshingTick = 0, resourceTestingSolutionPublicationTick = 0;
                             while (!state)
                             {
@@ -8223,8 +8232,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                 if (system.tick > system.latestCreatedTick)
                                                 {
-                                                    system.latestCreatedTick = system.tick;
-
                                                     for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
                                                     {
                                                         broadcastedTick.broadcastTick.tick.computorIndex = ownComputorIndices[i] ^ BROADCAST_TICK;
@@ -8406,9 +8413,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     tickNumberOfComputors2 = 0;
                                                     futureTickNumberOfComputors = 0;
 
+                                                    system.latestCreatedTick = system.tick;
                                                     system.tick++;
                                                     latestTickTick = __rdtsc();
                                                     tickMustBeEnded = false;
+                                                    tickCanBeRolledBack = true;
 
                                                     nextTickDataDigestMustBeNull = false;
                                                     targetNextTickDataDigest = ZERO;
@@ -8557,6 +8566,19 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     tickMustBeEnded = false;
 
                                                                     nextTickDataDigestMustBeNull = true;
+                                                                }
+                                                                else
+                                                                {
+                                                                    if (tickCanBeRolledBack)
+                                                                    {
+                                                                        tickCanBeRolledBack = false;
+                                                                        rollTickBack();
+
+                                                                        tickMustBeCreated = true;
+                                                                        tickMustBeEnded = false;
+
+                                                                        nextTickDataDigestMustBeNull = true;
+                                                                    }
                                                                 }
                                                             }
                                                             else
