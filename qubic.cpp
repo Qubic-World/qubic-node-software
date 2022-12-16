@@ -34,7 +34,7 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 69
+#define VERSION_B 70
 #define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
@@ -7449,7 +7449,7 @@ static BOOLEAN initialize()
                     bs->SetMem(&system, sizeof(system), 0);
 
                     system.epoch = 35;
-                    system.initialTick = system.tick = 3800000;
+                    system.initialTick = system.tick = 3900000;
                     system.epochBeginningHour = 12;
                     system.epochBeginningDay = 13;
                     system.epochBeginningMonth = 4;
@@ -8006,11 +8006,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                 if (broadcastedComputors.broadcastComputors.computors.epoch == system.epoch)
                                 {
-                                    if (numberOfFilledInitialSpectrumFragments < SPECTRUM_CAPACITY / SPECTRUM_FRAGMENT_LENGTH)
+                                    /*if (numberOfFilledInitialSpectrumFragments < SPECTRUM_CAPACITY / SPECTRUM_FRAGMENT_LENGTH)
                                     {
                                         /////
                                     }
-                                    else
+                                    else*/
                                     {
                                         if (latestOwnTick != system.tick)
                                         {
@@ -8276,9 +8276,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             }
                                         }
 
-                                        tickNumberOfComputors = 0;
-                                        tickNumberOfComputors2 = 0;
-                                        futureTickNumberOfComputors = 0;
                                         if (!spectrumDigestLevel && tickMustBeEnded)
                                         {
                                             unsigned int counters[NUMBER_OF_COMPUTORS];
@@ -8455,7 +8452,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     }*/
 
                                                     if (futureTickNumberOfComputors <= NUMBER_OF_COMPUTORS - QUORUM
-                                                        && system.tick >= system.latestCreatedTick)
+                                                        && system.tick > system.latestCreatedTick)
                                                     {
                                                         for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
                                                         {
@@ -8505,70 +8502,73 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 }
                                                 else
                                                 {
-                                                    if (futureTickNumberOfComputors > (NUMBER_OF_COMPUTORS - QUORUM) && requestedQuorumTick.requestQuorumTick.quorumTick.tick != system.tick)
+                                                    if (numberOfUniqueTickEssenceDigests)
                                                     {
-                                                        requestedQuorumTick.requestQuorumTick.quorumTick.tick = system.tick;
-                                                        for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
+                                                        if (futureTickNumberOfComputors > (NUMBER_OF_COMPUTORS - QUORUM) && requestedQuorumTick.requestQuorumTick.quorumTick.tick != system.tick)
                                                         {
-                                                            push(&peers[j], &requestedQuorumTick.header, true);
-                                                        }
-                                                    }
-
-                                                    unsigned int mostPopularUniqueTickEssenceDigestIndex = 0, totalUniqueTickEssenceDigestCounter = uniqueTickEssenceDigestCounters[0];
-                                                    for (unsigned int i = 1; i < numberOfUniqueTickEssenceDigests; i++)
-                                                    {
-                                                        if (uniqueTickEssenceDigestCounters[i] > uniqueTickEssenceDigestCounters[mostPopularUniqueTickEssenceDigestIndex])
-                                                        {
-                                                            mostPopularUniqueTickEssenceDigestIndex = i;
-                                                        }
-                                                        totalUniqueTickEssenceDigestCounter += uniqueTickEssenceDigestCounters[i];
-                                                    }
-                                                    if (uniqueTickEssenceDigestCounters[mostPopularUniqueTickEssenceDigestIndex] >= QUORUM)
-                                                    {
-                                                        tickMustBeCreated = true;
-                                                        tickMustBeEnded = false;
-
-                                                        for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
-                                                        {
-                                                            if (actualTicks[i].epoch == system.epoch
-                                                                && actualTicks[i].tick == system.tick
-                                                                && EQUAL(tickEssenceDigests[i], uniqueTickEssenceDigests[mostPopularUniqueTickEssenceDigestIndex]))
+                                                            requestedQuorumTick.requestQuorumTick.quorumTick.tick = system.tick;
+                                                            for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
                                                             {
-                                                                if (EQUAL(*((__m256i*)actualTicks[i].nextTickDataDigest), ZERO))
-                                                                {
-                                                                    nextTickDataDigestMustBeNull = true;
-                                                                }
-                                                                else
-                                                                {
-                                                                    nextTickDataDigestMustBeNull = false;
-                                                                    targetNextTickDataDigest = *((__m256i*)actualTicks[i].nextTickDataDigest);
-                                                                }
-
-                                                                break;
+                                                                push(&peers[j], &requestedQuorumTick.header, true);
                                                             }
                                                         }
-                                                    }
-                                                    else
-                                                    {
-                                                        if (uniqueTickEssenceDigestCounters[mostPopularUniqueTickEssenceDigestIndex] + (NUMBER_OF_COMPUTORS - totalUniqueTickEssenceDigestCounter) < QUORUM)
-                                                        {
-                                                            if (!EQUAL(*((__m256i*)etalonTick.nextTickDataDigest), ZERO))
-                                                            {
-                                                                tickMustBeCreated = true;
-                                                                tickMustBeEnded = false;
 
-                                                                nextTickDataDigestMustBeNull = true;
+                                                        unsigned int mostPopularUniqueTickEssenceDigestIndex = 0, totalUniqueTickEssenceDigestCounter = uniqueTickEssenceDigestCounters[0];
+                                                        for (unsigned int i = 1; i < numberOfUniqueTickEssenceDigests; i++)
+                                                        {
+                                                            if (uniqueTickEssenceDigestCounters[i] > uniqueTickEssenceDigestCounters[mostPopularUniqueTickEssenceDigestIndex])
+                                                            {
+                                                                mostPopularUniqueTickEssenceDigestIndex = i;
+                                                            }
+                                                            totalUniqueTickEssenceDigestCounter += uniqueTickEssenceDigestCounters[i];
+                                                        }
+                                                        if (uniqueTickEssenceDigestCounters[mostPopularUniqueTickEssenceDigestIndex] >= QUORUM)
+                                                        {
+                                                            tickMustBeCreated = true;
+                                                            tickMustBeEnded = false;
+
+                                                            for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                                                            {
+                                                                if (actualTicks[i].epoch == system.epoch
+                                                                    && actualTicks[i].tick == system.tick
+                                                                    && EQUAL(tickEssenceDigests[i], uniqueTickEssenceDigests[mostPopularUniqueTickEssenceDigestIndex]))
+                                                                {
+                                                                    if (EQUAL(*((__m256i*)actualTicks[i].nextTickDataDigest), ZERO))
+                                                                    {
+                                                                        nextTickDataDigestMustBeNull = true;
+                                                                    }
+                                                                    else
+                                                                    {
+                                                                        nextTickDataDigestMustBeNull = false;
+                                                                        targetNextTickDataDigest = *((__m256i*)actualTicks[i].nextTickDataDigest);
+                                                                    }
+
+                                                                    break;
+                                                                }
                                                             }
                                                         }
                                                         else
                                                         {
-                                                            if (uniqueTickEssenceDigestCounters[mostPopularUniqueTickEssenceDigestIndex] > NUMBER_OF_COMPUTORS - QUORUM
-                                                                && (__rdtsc() - latestTickTick > CRITICAL_TICK_DURATION * frequency))
+                                                            if (uniqueTickEssenceDigestCounters[mostPopularUniqueTickEssenceDigestIndex] + (NUMBER_OF_COMPUTORS - totalUniqueTickEssenceDigestCounter) < QUORUM)
                                                             {
-                                                                tickMustBeCreated = true;
-                                                                tickMustBeEnded = false;
+                                                                if (!EQUAL(*((__m256i*)etalonTick.nextTickDataDigest), ZERO))
+                                                                {
+                                                                    tickMustBeCreated = true;
+                                                                    tickMustBeEnded = false;
 
-                                                                nextTickDataDigestMustBeNull = true;
+                                                                    nextTickDataDigestMustBeNull = true;
+                                                                }
+                                                            }
+                                                            else
+                                                            {
+                                                                if (uniqueTickEssenceDigestCounters[mostPopularUniqueTickEssenceDigestIndex] > NUMBER_OF_COMPUTORS - QUORUM
+                                                                    && (__rdtsc() - latestTickTick > CRITICAL_TICK_DURATION * frequency))
+                                                                {
+                                                                    tickMustBeCreated = true;
+                                                                    tickMustBeEnded = false;
+
+                                                                    nextTickDataDigestMustBeNull = true;
+                                                                }
                                                             }
                                                         }
                                                     }
