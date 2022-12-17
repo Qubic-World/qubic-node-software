@@ -2,7 +2,7 @@
 
 #define NUMBER_OF_COMPUTING_PROCESSORS 1
 #define NUMBER_OF_MINING_PROCESSORS 0
-#define AVX512 0
+#define AVX512 1
 
 // Do NOT share the data of "Private Settings" section with anybody!!!
 static unsigned char computingSeeds[][55 + 1] = {
@@ -35,7 +35,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 70
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -7783,7 +7783,7 @@ static void rollTickBack()
     system.tick--;
     system.latestCreatedTick--;
 
-    bs->CopyMem(latestTicks, actualTicks, sizeof(actualTicks));
+    bs->SetMem(latestTicks, sizeof(latestTicks), 0);
     bs->SetMem(actualTicks, sizeof(actualTicks), 0);
 }
 
@@ -8513,7 +8513,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 {
                                                     if (numberOfUniqueTickEssenceDigests)
                                                     {
-                                                        if (futureTickNumberOfComputors > (NUMBER_OF_COMPUTORS - QUORUM) && requestedQuorumTick.requestQuorumTick.quorumTick.tick != system.tick)
+                                                        if (futureTickNumberOfComputors > (NUMBER_OF_COMPUTORS - QUORUM) && requestedQuorumTick.requestQuorumTick.quorumTick.tick != system.tick && tickCanBeRolledBack)
                                                         {
                                                             requestedQuorumTick.requestQuorumTick.quorumTick.tick = system.tick;
                                                             for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
@@ -8548,8 +8548,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     }
                                                                     else
                                                                     {
-                                                                        nextTickDataDigestMustBeNull = false;
-                                                                        targetNextTickDataDigest = *((__m256i*)actualTicks[i].nextTickDataDigest);
+                                                                        if (tickCanBeRolledBack)
+                                                                        {
+                                                                            nextTickDataDigestMustBeNull = false;
+                                                                            targetNextTickDataDigest = *((__m256i*)actualTicks[i].nextTickDataDigest);
+                                                                        }
                                                                     }
 
                                                                     break;
@@ -8574,7 +8577,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                         tickCanBeRolledBack = false;
                                                                         rollTickBack();
 
-                                                                        tickMustBeCreated = true;
                                                                         tickMustBeEnded = false;
 
                                                                         nextTickDataDigestMustBeNull = true;
