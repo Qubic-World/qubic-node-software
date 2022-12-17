@@ -1,8 +1,8 @@
 ////////// Private Settings \\\\\\\\\\
 
-#define NUMBER_OF_COMPUTING_PROCESSORS 1
+#define NUMBER_OF_COMPUTING_PROCESSORS 0
 #define NUMBER_OF_MINING_PROCESSORS 0
-#define AVX512 1
+#define AVX512 0
 
 // Do NOT share the data of "Private Settings" section with anybody!!!
 static unsigned char computingSeeds[][55 + 1] = {
@@ -34,8 +34,8 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 70
-#define VERSION_C 2
+#define VERSION_B 71
+#define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -7449,7 +7449,7 @@ static BOOLEAN initialize()
                     bs->SetMem(&system, sizeof(system), 0);
 
                     system.epoch = 35;
-                    system.initialTick = system.tick = 3900000;
+                    system.initialTick = system.tick = 3910000;
                     system.epochBeginningHour = 12;
                     system.epochBeginningDay = 13;
                     system.epochBeginningMonth = 4;
@@ -8213,7 +8213,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 appendNumber(message, broadcastedTick.broadcastTick.tick.millisecond % 100 / 10, FALSE);
                                                 appendNumber(message, broadcastedTick.broadcastTick.tick.millisecond % 10, FALSE);
                                                 appendText(message, L".");
-                                                if (curTimeTick - tickTimeTick >= frequency)
+                                                //if (curTimeTick - tickTimeTick >= frequency)
                                                 {
                                                     tickTimeTick = curTimeTick;
 
@@ -8993,7 +8993,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     if (receivedDataSize >= sizeof(RequestResponseHeader))
                                                     {
                                                         RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                        if (requestResponseHeader->protocol < VERSION_B || requestResponseHeader->protocol > VERSION_B + 1)
+                                                        if (requestResponseHeader->protocol < VERSION_B - 1 || requestResponseHeader->protocol > VERSION_B + 1)
                                                         {
                                                             closePeer(i);
                                                         }
