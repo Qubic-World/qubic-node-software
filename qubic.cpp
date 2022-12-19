@@ -35,7 +35,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 72
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -8169,9 +8169,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             }
                                         }
 
-                                        tickNumberOfComputors[1] = tickNumberOfComputors[0] = 0;
                                         if (etalonTick.tick == system.tick)
                                         {
+                                            tickNumberOfComputors[1] = tickNumberOfComputors[0] = 0;
+
                                             if (system.tick - system.initialTick >= MAX_NUMBER_OF_TICKS_PER_EPOCH)
                                             {
                                                 log(L"There are too many ticks this epoch!");
@@ -8184,7 +8185,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 unsigned int numberOfUniqueTickEssenceDigests[2] = { 0, 0 };
 
                                                 TickEssence tickEssence;
-                                                *((__m256i*)tickEssence.spectrumDigest) = *((__m256i*)etalonTick.saltedUniverseDigest);
+                                                *((__m256i*)tickEssence.spectrumDigest) = *((__m256i*)etalonTick.saltedSpectrumDigest);
                                                 *((__m256i*)tickEssence.universeDigest) = *((__m256i*)etalonTick.saltedUniverseDigest);
                                                 *((__m256i*)tickEssence.computerDigest) = *((__m256i*)etalonTick.saltedComputerDigest);
                                                 for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
