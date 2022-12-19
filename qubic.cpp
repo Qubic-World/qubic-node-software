@@ -35,7 +35,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 72
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -8433,14 +8433,21 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                             }
                                                             totalUniqueTickEssenceDigestCounter += uniqueTickEssenceDigestCounters[i][0];
                                                         }
-                                                        if (uniqueTickEssenceDigestCounters[mostPopularUniqueTickEssenceDigestIndex][0] >= QUORUM && !EQUAL(*((__m256i*)etalonTick.nextTickDataDigest), ZERO))
+                                                        if (uniqueTickEssenceDigestCounters[mostPopularUniqueTickEssenceDigestIndex][0] >= QUORUM)
                                                         {
-                                                            etalonTickMustBeCreated = true;
-                                                            system.latestCreatedTick = system.tick - 1;
-                                                            etalonTick.tick = 0;
+                                                            if (!EQUAL(*((__m256i*)etalonTick.nextTickDataDigest), ZERO))
+                                                            {
+                                                                etalonTickMustBeCreated = true;
+                                                                system.latestCreatedTick = system.tick - 1;
+                                                                etalonTick.tick = 0;
 
-                                                            targetNextTickDataDigest = ZERO;
-                                                            targetNextTickDataDigestIsKnown = true;
+                                                                targetNextTickDataDigest = ZERO;
+                                                                targetNextTickDataDigestIsKnown = true;
+                                                            }
+                                                            else
+                                                            {
+                                                                log(L"Report case B!");
+                                                            }
                                                         }
                                                         else
                                                         {
@@ -8494,11 +8501,16 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     targetNextTickDataDigest = ZERO;
                                                                     targetNextTickDataDigestIsKnown = true;
                                                                 }
+                                                                else
+                                                                {
+                                                                    log(L"Report case C!");
+                                                                }
                                                             }
                                                             else
                                                             {
-                                                                if (totalUniqueTickEssenceDigestCounter >= QUORUM
-                                                                    && (__rdtsc() - latestTickTick > CRITICAL_TICK_DURATION * frequency))
+                                                                if (tickTotalNumberOfComputors >= QUORUM
+                                                                    && (__rdtsc() - latestTickTick > CRITICAL_TICK_DURATION * frequency)
+                                                                    && !EQUAL(*((__m256i*)etalonTick.nextTickDataDigest), ZERO))
                                                                 {
                                                                     etalonTickMustBeCreated = true;
                                                                     system.latestCreatedTick = system.tick - 1;
