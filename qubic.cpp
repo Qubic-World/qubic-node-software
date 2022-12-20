@@ -34,8 +34,8 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 72
-#define VERSION_C 2
+#define VERSION_B 73
+#define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -5376,9 +5376,23 @@ typedef struct
 typedef struct
 {
     unsigned char computorPublicKey[32];
+    unsigned short millisecond;
+    unsigned char second;
+    unsigned char minute;
+    unsigned char hour;
+    unsigned char day;
+    unsigned char month;
+    unsigned char year;
     unsigned char nonces[NUMBER_OF_SOLUTION_NONCES][32];
     unsigned char signature[SIGNATURE_SIZE];
 } ResourceTestingSolution;
+
+typedef struct
+{
+    unsigned char computorPublicKey[32];
+    unsigned char nonces[NUMBER_OF_SOLUTION_NONCES][32];
+    unsigned char signature[SIGNATURE_SIZE];
+} DeprecatedResourceTestingSolution;
 
 typedef struct
 {
@@ -6928,8 +6942,11 @@ static void saveSolutions()
         unsigned long long totalSize = 0;
         for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
         {
-            unsigned long long size = sizeof(broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution);
-            if (status = dataFile->Write(dataFile, &size, &broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution))
+            DeprecatedResourceTestingSolution solution;
+            bs->CopyMem(solution.computorPublicKey, broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey, sizeof(solution.computorPublicKey));
+            bs->CopyMem(solution.nonces, broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces, sizeof(solution.nonces));
+            unsigned long long size = sizeof(DeprecatedResourceTestingSolution);
+            if (status = dataFile->Write(dataFile, &size, &solution))
             {
                 break;
             }
@@ -7313,6 +7330,10 @@ static BOOLEAN initialize()
 
                         return FALSE;
                     }
+                    else
+                    {
+                        system.initialTick = system.tick = 4001000;
+                    }
                 }
                 else
                 {
@@ -7451,12 +7472,15 @@ static BOOLEAN initialize()
         {
             for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
             {
-                unsigned long long size = sizeof(broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution);
-                if (status = dataFile->Read(dataFile, &size, &broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution))
+                DeprecatedResourceTestingSolution solution;
+                unsigned long long size = sizeof(DeprecatedResourceTestingSolution);
+                if (status = dataFile->Read(dataFile, &size, &solution))
                 {
                     break;
                 }
-                if (size < sizeof(broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution))
+                bs->CopyMem(broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey, solution.computorPublicKey, sizeof(solution.computorPublicKey));
+                bs->CopyMem(broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces, solution.nonces, sizeof(solution.nonces));
+                if (size < sizeof(DeprecatedResourceTestingSolution))
                 {
                     if (!size)
                     {
@@ -8279,7 +8303,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     KangarooTwelve64To32(saltedData, saltedDigest);
                                                                     if (EQUAL(*((__m256i*)tick->saltedComputerDigest), *((__m256i*)saltedDigest)))
                                                                     {
-                                                                        TickEssence tickEssence;
                                                                         *((unsigned long long*) & tickEssence.millisecond) = *((unsigned long long*) & tick->millisecond);
                                                                         *((__m256i*)tickEssence.initSpectrumDigest) = *((__m256i*)tick->initSpectrumDigest);
                                                                         *((__m256i*)tickEssence.initUniverseDigest) = *((__m256i*)tick->initUniverseDigest);
@@ -8918,7 +8941,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     if (receivedDataSize >= sizeof(RequestResponseHeader))
                                                     {
                                                         RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                        if (requestResponseHeader->protocol < VERSION_B - 1 || requestResponseHeader->protocol > VERSION_B + 1)
+                                                        if (requestResponseHeader->protocol < VERSION_B/* - 1 */ || requestResponseHeader->protocol > VERSION_B + 1)
                                                         {
                                                             closePeer(i);
                                                         }
@@ -9300,6 +9323,14 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                     for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
                                     {
+                                        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.millisecond = time.Nanosecond / 1000000;
+                                        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.second = time.Second;
+                                        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.minute = time.Minute;
+                                        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.hour = time.Hour;
+                                        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.day = time.Day;
+                                        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.month = time.Month;
+                                        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.year = time.Year - 2000;
+
                                         for (unsigned int j = 0; j < NUMBER_OF_SOLUTION_NONCES; j++)
                                         {
                                             if (!EQUAL(*((__m256i*)broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces[j]), ZERO))
