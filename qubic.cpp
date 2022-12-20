@@ -23,7 +23,7 @@ static const unsigned char defaultRouteGateway[4] = { 0, 0, 0, 0 };
 static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
 
 static unsigned char computorsToSetMaxRevenueTo[][70 + 1] = {
-    "EEHHKLAELFGOMOEILMMPEAMGBHPNHJBKEAIINBIJDKGFPCABKGJEKLMGANFADFMJFCDFAL"
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 };
 
 static const unsigned char knownPublicPeers[][4] = {
@@ -35,7 +35,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 73
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -5296,7 +5296,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define NUMBER_OF_NEURONS 19000
 #define NUMBER_OF_SOLUTION_NONCES 1000
 #define NUMBER_OF_TRANSACTIONS_PER_TICK 1000
-#define PEER_REFRESHING_PERIOD 60
+#define PEER_REFRESHING_PERIOD 30
 #define PORT 21841
 #define QUORUM (NUMBER_OF_COMPUTORS * 2 / 3 + 1)
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 90
@@ -6470,7 +6470,7 @@ static void requestProcessor(void* ProcedureArgument)
                     && request->tickData.hour <= 23
                     && request->tickData.minute <= 59
                     && request->tickData.second <= 59
-                    && request->tickData.millisecond <= 999
+                    && !request->tickData.millisecond
                     && ms(request->tickData.year, request->tickData.month, request->tickData.day, request->tickData.hour, request->tickData.minute, request->tickData.second, request->tickData.millisecond) <= ms(time.Year - 2000, time.Month, time.Day, time.Hour, time.Minute, time.Second, time.Nanosecond / 1000000) + TIME_ACCURACY * 1000)
                 {
                     unsigned char digest[32];
@@ -8376,6 +8376,12 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                     latestTickTick = __rdtsc();
 
+                                                    setNumber(message, tickNumberOfComputors[0], false);
+                                                    appendText(message, L" vs ");
+                                                    appendNumber(message, tickNumberOfComputors[1], false);
+                                                    appendText(message, L"!");
+                                                    log(message);
+
                                                     targetNextTickDataDigestIsKnown = false;
                                                     prevTickSpectrumDigest = *((__m256i*)etalonTick.saltedSpectrumDigest);
                                                     if (tickNumberOfComputors[0] >= QUORUM)
@@ -8429,7 +8435,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     broadcastedFutureTickData.broadcastFutureTickData.tickData.epoch = system.epoch;
                                                                     broadcastedFutureTickData.broadcastFutureTickData.tickData.tick = system.tick + 2;
 
-                                                                    broadcastedFutureTickData.broadcastFutureTickData.tickData.millisecond = newTime.Nanosecond / 1000000;
+                                                                    broadcastedFutureTickData.broadcastFutureTickData.tickData.millisecond = 0;
                                                                     broadcastedFutureTickData.broadcastFutureTickData.tickData.second = newTime.Second;
                                                                     broadcastedFutureTickData.broadcastFutureTickData.tickData.minute = newTime.Minute;
                                                                     broadcastedFutureTickData.broadcastFutureTickData.tickData.hour = newTime.Hour;
@@ -8491,6 +8497,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                 etalonTick.tick = 0;
 
                                                                 targetNextTickDataDigest = ZERO;
+                                                                if (targetNextTickDataDigestIsKnown) log(L"Report case D-1!");
                                                                 targetNextTickDataDigestIsKnown = true;
                                                             }
                                                             else
@@ -8531,6 +8538,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     && EQUAL(tickEssenceDigests[i][1], uniqueTickEssenceDigests[mostPopularUniqueTickEssenceDigestIndex][1]))
                                                                 {
                                                                     targetNextTickDataDigest = *((__m256i*)tick->nextTickDataDigest);
+                                                                    if (targetNextTickDataDigestIsKnown) log(L"Report case D-2!");
                                                                     targetNextTickDataDigestIsKnown = true;
 
                                                                     break;
@@ -8548,6 +8556,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     etalonTick.tick = 0;
 
                                                                     targetNextTickDataDigest = ZERO;
+                                                                    if (targetNextTickDataDigestIsKnown) log(L"Report case D-3!");
                                                                     targetNextTickDataDigestIsKnown = true;
                                                                 }
                                                                 else
@@ -8566,6 +8575,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     etalonTick.tick = 0;
 
                                                                     targetNextTickDataDigest = ZERO;
+                                                                    if (targetNextTickDataDigestIsKnown) log(L"Report case D-4!");
                                                                     targetNextTickDataDigestIsKnown = true;
                                                                 }
                                                             }
