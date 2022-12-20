@@ -6,11 +6,11 @@
 
 // Do NOT share the data of "Private Settings" section with anybody!!!
 static unsigned char computingSeeds[][55 + 1] = {
-    "<seed1>",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 };
 #if NUMBER_OF_MINING_PROCESSORS
 static unsigned char miningSeeds[][55 + 1] = {
-    "<seed1>",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 };
 #define MIN_SCORE 0
 #endif
@@ -35,7 +35,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 73
-#define VERSION_C 2
+#define VERSION_C 3
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -9166,7 +9166,18 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     }
 
                                                                     *((__m256i*)respondedMinerPublicKey.respondMinerPublicKey.minerPublicKey) = *((__m256i*)miningPublicKeys[miningIdIndex]);
-                                                                    push(&peers[i], &respondedMinerPublicKey.header, true);
+                                                                    if (peers[i].tcp4Protocol && peers[i].isConnectedAccepted && !peers[i].isClosing)
+                                                                    {
+                                                                        if (peers[i].dataToTransmitSize + respondedMinerPublicKey.header.size > BUFFER_SIZE)
+                                                                        {
+                                                                            peers[i].dataToTransmitSize = 0;
+                                                                        }
+
+                                                                        bs->CopyMem(&peers[i].dataToTransmit[peers[i].dataToTransmitSize], &respondedMinerPublicKey.header, respondedMinerPublicKey.header.size);
+                                                                        peers[i].dataToTransmitSize += respondedMinerPublicKey.header.size;
+
+                                                                        _InterlockedIncrement64(&numberOfDisseminatedRequests);
+                                                                    }
                                                                 }
                                                                 break;
 
