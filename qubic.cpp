@@ -35,7 +35,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 73
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -5625,6 +5625,23 @@ typedef struct
     Entity* initialSpectrumFragments;
 } RespondInitialSpectrumFragment;
 
+#define REQUEST_MINER_PUBLIC_KEY 21
+
+#define RESPOND_MINER_PUBLIC_KEY 22
+
+typedef struct
+{
+    unsigned char minerPublicKey[32];
+} RespondMinerPublicKey;
+
+#define RESPOND_RESOURCE_TESTING_SOLUTION 23
+
+typedef struct
+{
+    unsigned char minerPublicKey[32];
+    unsigned char nonce[32];
+} RespondResourceTestingSolution;
+
 static volatile int state = 0;
 
 static unsigned char computingSubseeds[sizeof(computingSeeds) / sizeof(computingSeeds[0])][32], computingPrivateKeys[sizeof(computingSeeds) / sizeof(computingSeeds[0])][32], computingPublicKeys[sizeof(computingSeeds) / sizeof(computingSeeds[0])][32];
@@ -5780,6 +5797,12 @@ static struct
     RequestResponseHeader header;
     RequestTickData requestTickData;
 } requestedTickData;
+
+static struct
+{
+    RequestResponseHeader header;
+    RespondMinerPublicKey respondMinerPublicKey;
+} respondedMinerPublicKey;
 
 static bool disableLogging = false;
 
@@ -6855,7 +6878,7 @@ static void minerProcessor(void* ProcedureArgument)
 
         bs->SetMem(neuronValues[miningProcessorIndex], sizeof(neuronValues[0]), 0xFF);
 
-        unsigned int limiter = 10000;
+        unsigned int limiter = sizeof(miningData) / sizeof(miningData[0]);
         unsigned int score = 0;
         while (true)
         {
@@ -7169,6 +7192,9 @@ static BOOLEAN initialize()
     requestedTickData.header.size = sizeof(requestedTickData);
     requestedTickData.header.protocol = VERSION_B;
     requestedTickData.header.type = REQUEST_TICK_DATA;
+    respondedMinerPublicKey.header.size = sizeof(respondedMinerPublicKey);
+    respondedMinerPublicKey.header.protocol = VERSION_B;
+    respondedMinerPublicKey.header.type = RESPOND_MINER_PUBLIC_KEY;
 
     EFI_STATUS status;
 
@@ -9099,6 +9125,131 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                 }
                                                                 break;
 
+                                                                case REQUEST_MINER_PUBLIC_KEY:
+                                                                {
+                                                                    unsigned int miningIdIndex;
+
+                                                                    unsigned int minScore = NUMBER_OF_SOLUTION_NONCES, minScoreIndex = 0;
+                                                                    for (miningIdIndex = 0; miningIdIndex < sizeof(miningSeeds) / sizeof(miningSeeds[0]); miningIdIndex++)
+                                                                    {
+                                                                        unsigned int score = 0;
+                                                                        for (unsigned int i = 0; i < NUMBER_OF_SOLUTION_NONCES; i++)
+                                                                        {
+                                                                            if (!EQUAL(*((__m256i*)broadcastedSolutions[miningIdIndex].broadcastResourceTestingSolution.resourceTestingSolution.nonces[i]), ZERO))
+                                                                            {
+                                                                                score++;
+                                                                            }
+                                                                        }
+                                                                        if (score < MIN_SCORE)
+                                                                        {
+                                                                            break;
+                                                                        }
+                                                                        if (score < minScore)
+                                                                        {
+                                                                            minScore = score;
+                                                                            minScoreIndex = miningIdIndex;
+                                                                        }
+                                                                    }
+                                                                    if (miningIdIndex == sizeof(miningSeeds) / sizeof(miningSeeds[0]))
+                                                                    {
+                                                                        miningIdIndex = minScoreIndex;
+                                                                    }
+
+                                                                    *((__m256i*)respondedMinerPublicKey.respondMinerPublicKey.minerPublicKey) = *((__m256i*)miningPublicKeys[miningIdIndex]);
+                                                                    push(&peers[i], &respondedMinerPublicKey.header, true);
+                                                                }
+                                                                break;
+
+                                                                case RESPOND_RESOURCE_TESTING_SOLUTION:
+                                                                {
+                                                                    RespondResourceTestingSolution* request = (RespondResourceTestingSolution*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader));
+                                                                    for (unsigned int j = 0; j < sizeof(miningSeeds) / sizeof(miningSeeds[0]); j++)
+                                                                    {
+                                                                        if (EQUAL(*((__m256i*)request->minerPublicKey), *((__m256i*)miningPublicKeys[j])))
+                                                                        {
+                                                                            random(request->minerPublicKey, request->nonce, (unsigned char*)validationNeuronLinks, sizeof(validationNeuronLinks));
+                                                                            for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
+                                                                            {
+                                                                                validationNeuronLinks[k][0] %= NUMBER_OF_NEURONS;
+                                                                                validationNeuronLinks[k][1] %= NUMBER_OF_NEURONS;
+                                                                            }
+
+                                                                            bs->SetMem(validationNeuronValues, sizeof(validationNeuronValues), 0xFF);
+
+                                                                            unsigned int limiter = sizeof(miningData) / sizeof(miningData[0]);
+                                                                            int outputLength = 0;
+                                                                            while (outputLength < (sizeof(miningData) << 3))
+                                                                            {
+                                                                                const unsigned int prevValue0 = validationNeuronValues[NUMBER_OF_NEURONS - 1];
+                                                                                const unsigned int prevValue1 = validationNeuronValues[NUMBER_OF_NEURONS - 2];
+
+                                                                                for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
+                                                                                {
+                                                                                    validationNeuronValues[k] = ~(validationNeuronValues[validationNeuronLinks[k][0]] & validationNeuronValues[validationNeuronLinks[k][1]]);
+                                                                                }
+
+                                                                                if (validationNeuronValues[NUMBER_OF_NEURONS - 1] != prevValue0
+                                                                                    && validationNeuronValues[NUMBER_OF_NEURONS - 2] == prevValue1)
+                                                                                {
+                                                                                    if (!((miningData[outputLength >> 6] >> (outputLength & 63)) & 1))
+                                                                                    {
+                                                                                        break;
+                                                                                    }
+
+                                                                                    outputLength++;
+                                                                                }
+                                                                                else
+                                                                                {
+                                                                                    if (validationNeuronValues[NUMBER_OF_NEURONS - 2] != prevValue1
+                                                                                        && validationNeuronValues[NUMBER_OF_NEURONS - 1] == prevValue0)
+                                                                                    {
+                                                                                        if ((miningData[outputLength >> 6] >> (outputLength & 63)) & 1)
+                                                                                        {
+                                                                                            break;
+                                                                                        }
+
+                                                                                        outputLength++;
+                                                                                    }
+                                                                                    else
+                                                                                    {
+                                                                                        if (!(--limiter))
+                                                                                        {
+                                                                                            break;
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                            }
+
+                                                                            if (outputLength >= SOLUTION_THRESHOLD)
+                                                                            {
+                                                                                unsigned int k;
+                                                                                for (k = 0; k < NUMBER_OF_SOLUTION_NONCES; k++)
+                                                                                {
+                                                                                    if (EQUAL(*((__m256i*)broadcastedSolutions[j].broadcastResourceTestingSolution.resourceTestingSolution.nonces[k]), *((__m256i*)request->nonce)))
+                                                                                    {
+                                                                                        break;
+                                                                                    }
+                                                                                }
+                                                                                if (k == NUMBER_OF_SOLUTION_NONCES)
+                                                                                {
+                                                                                    for (k = 0; k < NUMBER_OF_SOLUTION_NONCES; k++)
+                                                                                    {
+                                                                                        if (EQUAL(*((__m256i*)broadcastedSolutions[j].broadcastResourceTestingSolution.resourceTestingSolution.nonces[k]), ZERO))
+                                                                                        {
+                                                                                            *((__m256i*)broadcastedSolutions[j].broadcastResourceTestingSolution.resourceTestingSolution.nonces[k]) = *((__m256i*)request->nonce);
+
+                                                                                            break;
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                            }
+
+                                                                            break;
+                                                                        }
+                                                                    }
+                                                                }
+                                                                break;
+
                                                                 default:
                                                                 {
                                                                     unsigned int saltedId;
@@ -9344,7 +9495,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                 bs->SetMem(validationNeuronValues, sizeof(validationNeuronValues), 0xFF);
 
-                                                unsigned int limiter = 10000;
+                                                unsigned int limiter = sizeof(miningData) / sizeof(miningData[0]);
                                                 int outputLength = 0;
                                                 while (outputLength < (sizeof(miningData) << 3))
                                                 {
