@@ -1,7 +1,7 @@
 ////////// Private Settings \\\\\\\\\\
 
 #define NUMBER_OF_COMPUTING_PROCESSORS 1
-#define NUMBER_OF_MINING_PROCESSORS 0
+#define NUMBER_OF_MINING_PROCESSORS 1
 #define AVX512 0
 
 // Do NOT share the data of "Private Settings" section with anybody!!!
@@ -34,13 +34,13 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 73
-#define VERSION_C 3
+#define VERSION_B 74
+#define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
 static unsigned short SYSTEM_FILE_NAME[] = L"system";
-static unsigned short SOLUTION_FILE_NAME[] = L"solution.035";
+static unsigned short SOLUTION_FILE_NAME[] = L"solution.036";
 static unsigned short SPECTRUM_FILE_NAME[] = L"spectrum.???";
 
 #include <intrin.h>
@@ -7358,15 +7358,15 @@ static BOOLEAN initialize()
                     }
                     else
                     {
-                        system.initialTick = system.tick = 4001000;
+                        system.initialTick = system.tick = 4100000;
                     }
                 }
                 else
                 {
                     bs->SetMem(&system, sizeof(system), 0);
 
-                    system.epoch = 35;
-                    system.initialTick = system.tick = 4000000;
+                    system.epoch = 36;
+                    system.initialTick = system.tick = 4100000;
                     system.epochBeginningHour = 12;
                     system.epochBeginningDay = 13;
                     system.epochBeginningMonth = 4;
@@ -7478,7 +7478,7 @@ static BOOLEAN initialize()
 #if NUMBER_OF_MINING_PROCESSORS
         unsigned char randomSeed[32];
         bs->SetMem(randomSeed, 32, 0);
-        randomSeed[0] = 22;
+        randomSeed[0] = 128;
         randomSeed[1] = 80;
         randomSeed[2] = 115;
         randomSeed[3] = 3;
