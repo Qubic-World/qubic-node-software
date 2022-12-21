@@ -35,7 +35,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 74
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -8619,7 +8619,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             {
                                                 for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
                                                 {
-                                                    broadcastedRevenues.broadcastRevenues.revenues.revenues[j] = (system.tickCounters[j] >= maxCounter) ? (ISSUANCE_RATE / NUMBER_OF_COMPUTORS) : (system.tickCounters[j] * ((unsigned long long)(ISSUANCE_RATE / NUMBER_OF_COMPUTORS)) / maxCounter);
+                                                    broadcastedRevenues.broadcastRevenues.revenues.revenues[j] = (faultyComputorFlags[j >> 6] & (1ULL << (j & 63))) ? 0 : ((system.tickCounters[j] >= maxCounter) ? (ISSUANCE_RATE / NUMBER_OF_COMPUTORS) : (system.tickCounters[j] * ((unsigned long long)(ISSUANCE_RATE / NUMBER_OF_COMPUTORS)) / maxCounter));
                                                     for (unsigned int k = 0; k < sizeof(computorsToSetMaxRevenueTo) / sizeof(computorsToSetMaxRevenueTo[0]); k++)
                                                     {
                                                         if (EQUAL(*((__m256i*)broadcastedComputors.broadcastComputors.computors.publicKeys[j]), *((__m256i*)computorsToSetMaxRevenueTo[k])))
@@ -8905,6 +8905,14 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     peers[i].dataToTransmitSize += requestedQuorumTick.header.size;
                                                     _InterlockedIncrement64(&numberOfDisseminatedRequests);
 
+                                                    if (tickData[system.tick + 1 - system.initialTick].epoch != system.epoch)
+                                                    {
+                                                        requestedTickData.requestTickData.requestedTickData.tick = system.tick + 1;
+                                                        bs->CopyMem(ptr + requestedQuorumTick.header.size, &requestedTickData, requestedTickData.header.size);
+                                                        peers[i].dataToTransmitSize += requestedTickData.header.size;
+                                                        _InterlockedIncrement64(&numberOfDisseminatedRequests);
+                                                    }
+
                                                     _InterlockedIncrement64(&numberOfDisseminatedRequests);
 
                                                     requestedQuorumTick.requestQuorumTick.quorumTick.tick = 0;
@@ -9055,6 +9063,14 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                             bs->CopyMem(ptr, &requestedQuorumTick, requestedQuorumTick.header.size);
                                                                             peers[i].dataToTransmitSize += requestedQuorumTick.header.size;
                                                                             _InterlockedIncrement64(&numberOfDisseminatedRequests);
+
+                                                                            if (tickData[system.tick + 1 - system.initialTick].epoch != system.epoch)
+                                                                            {
+                                                                                requestedTickData.requestTickData.requestedTickData.tick = system.tick + 1;
+                                                                                bs->CopyMem(ptr + requestedQuorumTick.header.size, &requestedTickData, requestedTickData.header.size);
+                                                                                peers[i].dataToTransmitSize += requestedTickData.header.size;
+                                                                                _InterlockedIncrement64(&numberOfDisseminatedRequests);
+                                                                            }
 
                                                                             _InterlockedIncrement64(&numberOfDisseminatedRequests);
 
@@ -9607,6 +9623,22 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     case 0x0B:
                                     {
                                         log(L"[F4] Close all connections | [Pause] Toggle logging | [ESC] Shut down.");
+                                    }
+                                    break;
+
+                                    case 0x0C:
+                                    {
+                                        unsigned int numberOfFaultyComputors = 0;
+                                        for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                                        {
+                                            if (faultyComputorFlags[i >> 6] & (1ULL << (i & 63)))
+                                            {
+                                                numberOfFaultyComputors++;
+                                            }
+                                        }
+                                        setNumber(message, numberOfFaultyComputors, TRUE);
+                                        appendText(message, L" faulty computors.");
+                                        log(message);
                                     }
                                     break;
 
