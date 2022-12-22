@@ -35,7 +35,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 74
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -9638,6 +9638,31 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         }
                                         setNumber(message, numberOfFaultyComputors, TRUE);
                                         appendText(message, L" faulty computors.");
+                                        log(message);
+
+                                        setText(message, L"Tick time was set to ");
+                                        appendNumber(message, etalonTick.year / 10, FALSE);
+                                        appendNumber(message, etalonTick.year % 10, FALSE);
+                                        appendText(message, L".");
+                                        appendNumber(message, etalonTick.month / 10, FALSE);
+                                        appendNumber(message, etalonTick.month % 10, FALSE);
+                                        appendText(message, L".");
+                                        appendNumber(message, etalonTick.day / 10, FALSE);
+                                        appendNumber(message, etalonTick.day % 10, FALSE);
+                                        appendText(message, L" ");
+                                        appendNumber(message, etalonTick.hour / 10, FALSE);
+                                        appendNumber(message, etalonTick.hour % 10, FALSE);
+                                        appendText(message, L":");
+                                        appendNumber(message, etalonTick.minute / 10, FALSE);
+                                        appendNumber(message, etalonTick.minute % 10, FALSE);
+                                        appendText(message, L":");
+                                        appendNumber(message, etalonTick.second / 10, FALSE);
+                                        appendNumber(message, etalonTick.second % 10, FALSE);
+                                        appendText(message, L".");
+                                        appendNumber(message, etalonTick.millisecond / 100, FALSE);
+                                        appendNumber(message, etalonTick.millisecond % 100 / 10, FALSE);
+                                        appendNumber(message, etalonTick.millisecond % 10, FALSE);
+                                        appendText(message, L".");
                                         log(message);
                                     }
                                     break;
