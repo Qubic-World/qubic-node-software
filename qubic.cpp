@@ -34,8 +34,8 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 74
-#define VERSION_C 3
+#define VERSION_B 75
+#define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -6069,7 +6069,7 @@ static void forget(int address)
 
 static void addPublicPeer(unsigned char address[4])
 {
-    if ((*((int*)address)) && *((int*)address) != *((int*)ownPublicAddress))
+    if ((*((int*)address)) && *((int*)address) != *((int*)ownPublicAddress) && address[0] != 10 && address[0] != 127 && address[0] != 172 && address[0] != 192)
     {
         unsigned int i;
         for (i = 0; i < numberOfPublicPeers; i++)
@@ -7358,7 +7358,7 @@ static BOOLEAN initialize()
                     }
                     else
                     {
-                        system.initialTick = system.tick = 4110000;
+                        system.initialTick = system.tick = 4200000;
                     }
                 }
                 else
@@ -7366,7 +7366,7 @@ static BOOLEAN initialize()
                     bs->SetMem(&system, sizeof(system), 0);
 
                     system.epoch = 36;
-                    system.initialTick = system.tick = 4110000;
+                    system.initialTick = system.tick = 4200000;
                     system.epochBeginningHour = 12;
                     system.epochBeginningDay = 13;
                     system.epochBeginningMonth = 4;
