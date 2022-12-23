@@ -35,7 +35,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 74
-#define VERSION_C 2
+#define VERSION_C 3
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -7358,7 +7358,7 @@ static BOOLEAN initialize()
                     }
                     else
                     {
-                        system.initialTick = system.tick = 4100000;
+                        system.initialTick = system.tick = 4110000;
                     }
                 }
                 else
@@ -7366,7 +7366,7 @@ static BOOLEAN initialize()
                     bs->SetMem(&system, sizeof(system), 0);
 
                     system.epoch = 36;
-                    system.initialTick = system.tick = 4100000;
+                    system.initialTick = system.tick = 4110000;
                     system.epochBeginningHour = 12;
                     system.epochBeginningDay = 13;
                     system.epochBeginningMonth = 4;
@@ -8148,35 +8148,38 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 {
                                                     system.latestCreatedTick = system.tick;
 
-                                                    bs->CopyMem(&broadcastedTick.broadcastTick.tick, &etalonTick, sizeof(Tick));
-                                                    for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
+                                                    if (futureTickTotalNumberOfComputors <= NUMBER_OF_COMPUTORS - QUORUM)
                                                     {
-                                                        broadcastedTick.broadcastTick.tick.computorIndex = ownComputorIndices[i] ^ BROADCAST_TICK;
-                                                        unsigned char saltedData[32 + 32];
-                                                        *((__m256i*)&saltedData[0]) = *((__m256i*)computingPublicKeys[ownComputorIndicesMapping[i]]);
-                                                        *((__m256i*)&saltedData[32]) = *((__m256i*)etalonTick.saltedSpectrumDigest);
-                                                        KangarooTwelve64To32(saltedData, broadcastedTick.broadcastTick.tick.saltedSpectrumDigest);
-                                                        *((__m256i*)&saltedData[32]) = *((__m256i*)etalonTick.saltedUniverseDigest);
-                                                        KangarooTwelve64To32(saltedData, broadcastedTick.broadcastTick.tick.saltedUniverseDigest);
-                                                        *((__m256i*)&saltedData[32]) = *((__m256i*)etalonTick.saltedComputerDigest);
-                                                        KangarooTwelve64To32(saltedData, broadcastedTick.broadcastTick.tick.saltedComputerDigest);
-
-                                                        unsigned char digest[32];
-                                                        KangarooTwelve((unsigned char*)&broadcastedTick.broadcastTick.tick, sizeof(Tick) - SIGNATURE_SIZE, digest, sizeof(digest));
-                                                        broadcastedTick.broadcastTick.tick.computorIndex ^= BROADCAST_TICK;
-                                                        sign(computingSubseeds[ownComputorIndicesMapping[i]], computingPublicKeys[ownComputorIndicesMapping[i]], digest, broadcastedTick.broadcastTick.tick.signature);
-
-                                                        for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
+                                                        bs->CopyMem(&broadcastedTick.broadcastTick.tick, &etalonTick, sizeof(Tick));
+                                                        for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
                                                         {
-                                                            push(&peers[j], &broadcastedTick.header, true);
-                                                        }
+                                                            broadcastedTick.broadcastTick.tick.computorIndex = ownComputorIndices[i] ^ BROADCAST_TICK;
+                                                            unsigned char saltedData[32 + 32];
+                                                            *((__m256i*) & saltedData[0]) = *((__m256i*)computingPublicKeys[ownComputorIndicesMapping[i]]);
+                                                            *((__m256i*) & saltedData[32]) = *((__m256i*)etalonTick.saltedSpectrumDigest);
+                                                            KangarooTwelve64To32(saltedData, broadcastedTick.broadcastTick.tick.saltedSpectrumDigest);
+                                                            *((__m256i*) & saltedData[32]) = *((__m256i*)etalonTick.saltedUniverseDigest);
+                                                            KangarooTwelve64To32(saltedData, broadcastedTick.broadcastTick.tick.saltedUniverseDigest);
+                                                            *((__m256i*) & saltedData[32]) = *((__m256i*)etalonTick.saltedComputerDigest);
+                                                            KangarooTwelve64To32(saltedData, broadcastedTick.broadcastTick.tick.saltedComputerDigest);
 
-                                                        while (_InterlockedCompareExchange8(&tickLocks[ownComputorIndices[i]], 1, 0))
-                                                        {
-                                                            _mm_pause();
+                                                            unsigned char digest[32];
+                                                            KangarooTwelve((unsigned char*)&broadcastedTick.broadcastTick.tick, sizeof(Tick) - SIGNATURE_SIZE, digest, sizeof(digest));
+                                                            broadcastedTick.broadcastTick.tick.computorIndex ^= BROADCAST_TICK;
+                                                            sign(computingSubseeds[ownComputorIndicesMapping[i]], computingPublicKeys[ownComputorIndicesMapping[i]], digest, broadcastedTick.broadcastTick.tick.signature);
+
+                                                            for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
+                                                            {
+                                                                push(&peers[j], &broadcastedTick.header, true);
+                                                            }
+
+                                                            while (_InterlockedCompareExchange8(&tickLocks[ownComputorIndices[i]], 1, 0))
+                                                            {
+                                                                _mm_pause();
+                                                            }
+                                                            bs->CopyMem(&ticks[((((broadcastedTick.broadcastTick.tick.tick - system.initialTick) * NUMBER_OF_COMPUTORS) + broadcastedTick.broadcastTick.tick.computorIndex) << 1) + (EQUAL(*((__m256i*)broadcastedTick.broadcastTick.tick.nextTickDataDigest), ZERO) ? 0 : 1)], &broadcastedTick.broadcastTick.tick, sizeof(Tick));
+                                                            _InterlockedCompareExchange8(&tickLocks[ownComputorIndices[i]], 0, 1);
                                                         }
-                                                        bs->CopyMem(&ticks[((((broadcastedTick.broadcastTick.tick.tick - system.initialTick) * NUMBER_OF_COMPUTORS) + broadcastedTick.broadcastTick.tick.computorIndex) << 1) + (EQUAL(*((__m256i*)broadcastedTick.broadcastTick.tick.nextTickDataDigest), ZERO) ? 0 : 1)], &broadcastedTick.broadcastTick.tick, sizeof(Tick));
-                                                        _InterlockedCompareExchange8(&tickLocks[ownComputorIndices[i]], 0, 1);
                                                     }
                                                 }
 
@@ -8417,8 +8420,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                     // TODO: Check if the transaction buffer must be emptied
 
-                                                    if (futureTickTotalNumberOfComputors <= NUMBER_OF_COMPUTORS - QUORUM
-                                                        && system.tick > system.latestCreatedTick)
+                                                    if (system.tick > system.latestCreatedTick
+                                                        && futureTickTotalNumberOfComputors <= NUMBER_OF_COMPUTORS - QUORUM)
                                                     {
                                                         for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
                                                         {
@@ -8493,7 +8496,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                             if (!EQUAL(*((__m256i*)etalonTick.nextTickDataDigest), ZERO))
                                                             {
                                                                 etalonTickMustBeCreated = true;
-                                                                system.latestCreatedTick = system.tick - 1;
+                                                                if (system.latestCreatedTick == system.tick)
+                                                                {
+                                                                    system.latestCreatedTick--;
+                                                                }
                                                                 etalonTick.tick = 0;
 
                                                                 targetNextTickDataDigest = ZERO;
@@ -8528,7 +8534,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                         if (uniqueTickEssenceDigestCounters[mostPopularUniqueTickEssenceDigestIndex][1] >= QUORUM)
                                                         {
                                                             etalonTickMustBeCreated = true;
-                                                            system.latestCreatedTick = system.tick - 1;
+                                                            if (system.latestCreatedTick == system.tick)
+                                                            {
+                                                                system.latestCreatedTick--;
+                                                            }
                                                             etalonTick.tick = 0;
 
                                                             for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
@@ -8552,7 +8561,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                 if (!EQUAL(*((__m256i*)etalonTick.nextTickDataDigest), ZERO))
                                                                 {
                                                                     etalonTickMustBeCreated = true;
-                                                                    system.latestCreatedTick = system.tick - 1;
+                                                                    if (system.latestCreatedTick == system.tick)
+                                                                    {
+                                                                        system.latestCreatedTick--;
+                                                                    }
                                                                     etalonTick.tick = 0;
 
                                                                     targetNextTickDataDigest = ZERO;
@@ -8571,7 +8583,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     && !EQUAL(*((__m256i*)etalonTick.nextTickDataDigest), ZERO))
                                                                 {
                                                                     etalonTickMustBeCreated = true;
-                                                                    system.latestCreatedTick = system.tick - 1;
+                                                                    if (system.latestCreatedTick == system.tick)
+                                                                    {
+                                                                        system.latestCreatedTick--;
+                                                                    }
                                                                     etalonTick.tick = 0;
 
                                                                     targetNextTickDataDigest = ZERO;
@@ -8985,7 +9000,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     if (receivedDataSize >= sizeof(RequestResponseHeader))
                                                     {
                                                         RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                        if (requestResponseHeader->protocol < VERSION_B/* - 1 */ || requestResponseHeader->protocol > VERSION_B + 1)
+                                                        if (requestResponseHeader->protocol < VERSION_B - 1 || requestResponseHeader->protocol > VERSION_B + 1)
                                                         {
                                                             closePeer(i);
                                                         }
