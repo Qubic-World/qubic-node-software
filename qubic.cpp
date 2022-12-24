@@ -35,7 +35,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 75
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -6069,23 +6069,26 @@ static void forget(int address)
 
 static void addPublicPeer(unsigned char address[4])
 {
-    if ((*((int*)address)) && *((int*)address) != *((int*)ownPublicAddress) && address[0] != 10 && address[0] != 127 && address[0] != 172 && address[0] != 192)
+    if (!(*((int*)address))
+        || *((int*)address) == *((int*)ownPublicAddress)
+        || (address[0] == 127)
+        || (address[0] == 10)
+        || (address[0] == 172 && address[1] >= 16 && address[1] <= 31)
+        || (address[0] == 192 && address[1] == 168))
     {
-        unsigned int i;
-        for (i = 0; i < numberOfPublicPeers; i++)
+        return;
+    }
+    for (unsigned int i = 0; i < numberOfPublicPeers; i++)
+    {
+        if (*((int*)address) == *((int*)publicPeers[i].address))
         {
-            if (*((int*)address) == *((int*)publicPeers[i].address))
-            {
-                break;
-            }
-        }
-        if (i == numberOfPublicPeers)
-        {
-            publicPeers[numberOfPublicPeers].isVerified = false;
-            *((int*)publicPeers[numberOfPublicPeers++].address) = *((int*)address);
-            totalRatingOfPublicPeers++;
+            return;
         }
     }
+
+    publicPeers[numberOfPublicPeers].isVerified = false;
+    *((int*)publicPeers[numberOfPublicPeers++].address) = *((int*)address);
+    totalRatingOfPublicPeers++;
 }
 
 static void enableAVX()
@@ -7301,8 +7304,6 @@ static BOOLEAN initialize()
     }
     else
     {
-        EFI_FILE_PROTOCOL* dataFile;
-
         if (status = bs->AllocatePool(EfiRuntimeServicesData, ((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * NUMBER_OF_COMPUTORS * 2 * sizeof(Tick), (void**)&ticks))
         {
             logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status, __LINE__);
@@ -7328,6 +7329,8 @@ static BOOLEAN initialize()
 
             return FALSE;
         }
+
+        EFI_FILE_PROTOCOL* dataFile;
 
         if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SYSTEM_FILE_NAME, EFI_FILE_MODE_READ, 0))
         {
@@ -7356,17 +7359,12 @@ static BOOLEAN initialize()
 
                         return FALSE;
                     }
-                    else
-                    {
-                        system.initialTick = system.tick = 4200000;
-                    }
                 }
                 else
                 {
                     bs->SetMem(&system, sizeof(system), 0);
 
                     system.epoch = 36;
-                    system.initialTick = system.tick = 4200000;
                     system.epochBeginningHour = 12;
                     system.epochBeginningDay = 13;
                     system.epochBeginningMonth = 4;
@@ -7374,6 +7372,7 @@ static BOOLEAN initialize()
                 }
 
                 system.version = VERSION_B;
+                system.initialTick = system.tick = 4201000;
 
                 prevTickMillisecond = system.epochBeginningMillisecond;
                 prevTickSecond = system.epochBeginningSecond;
@@ -7987,226 +7986,228 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             etalonTickMustBeCreated = true;
                                         }
 
-                                        if (etalonTickMustBeCreated
-                                            && (futureTickTotalNumberOfComputors > NUMBER_OF_COMPUTORS - QUORUM || tickData[system.tick + 1 - system.initialTick].epoch == system.epoch || targetNextTickDataDigestIsKnown || __rdtsc() - latestTickTick > TARGET_TICK_DURATION * frequency))
+                                        if (etalonTickMustBeCreated)
                                         {
-                                            etalonTickMustBeCreated = false;
-
-                                            if (targetNextTickDataDigestIsKnown)
+                                            if (futureTickTotalNumberOfComputors > NUMBER_OF_COMPUTORS - QUORUM || tickData[system.tick + 1 - system.initialTick].epoch == system.epoch || targetNextTickDataDigestIsKnown || __rdtsc() - latestTickTick > TARGET_TICK_DURATION * frequency)
                                             {
-                                                if (EQUAL(targetNextTickDataDigest, ZERO))
+                                                etalonTickMustBeCreated = false;
+
+                                                if (targetNextTickDataDigestIsKnown)
                                                 {
-                                                    *((__m256i*)etalonTick.nextTickDataDigest) = ZERO;
-                                                }
-                                                else
-                                                {
-                                                    if (tickData[system.tick + 1 - system.initialTick].epoch != system.epoch)
+                                                    if (EQUAL(targetNextTickDataDigest, ZERO))
                                                     {
-                                                        etalonTickMustBeCreated = true;
+                                                        *((__m256i*)etalonTick.nextTickDataDigest) = ZERO;
                                                     }
                                                     else
                                                     {
-                                                        bs->CopyMem(&nextTickData, &tickData[system.tick + 1 - system.initialTick], sizeof(TickData));
-                                                        KangarooTwelve((unsigned char*)&nextTickData, sizeof(TickData), etalonTick.nextTickDataDigest, 32);
-                                                        if (!EQUAL(*((__m256i*)etalonTick.nextTickDataDigest), targetNextTickDataDigest))
+                                                        if (tickData[system.tick + 1 - system.initialTick].epoch != system.epoch)
                                                         {
                                                             etalonTickMustBeCreated = true;
                                                         }
-                                                    }
-
-                                                    if (etalonTickMustBeCreated && requestedTickData.requestTickData.requestedTickData.tick != system.tick + 1)
-                                                    {
-                                                        requestedTickData.requestTickData.requestedTickData.tick = system.tick + 1;
-                                                        for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
+                                                        else
                                                         {
-                                                            push(&peers[j], &requestedTickData.header, true);
+                                                            bs->CopyMem(&nextTickData, &tickData[system.tick + 1 - system.initialTick], sizeof(TickData));
+                                                            KangarooTwelve((unsigned char*)&nextTickData, sizeof(TickData), etalonTick.nextTickDataDigest, 32);
+                                                            if (!EQUAL(*((__m256i*)etalonTick.nextTickDataDigest), targetNextTickDataDigest))
+                                                            {
+                                                                etalonTickMustBeCreated = true;
+                                                            }
                                                         }
                                                     }
                                                 }
-                                            }
-                                            else
-                                            {
-                                                if (tickData[system.tick + 1 - system.initialTick].epoch == system.epoch)
-                                                {
-                                                    bs->CopyMem(&nextTickData, &tickData[system.tick + 1 - system.initialTick], sizeof(TickData));
-                                                    KangarooTwelve((unsigned char*)&nextTickData, sizeof(TickData), etalonTick.nextTickDataDigest, 32);
-                                                }
                                                 else
                                                 {
-                                                    *((__m256i*)etalonTick.nextTickDataDigest) = ZERO;
-                                                }
-                                            }
-
-                                            if (!etalonTickMustBeCreated)
-                                            {
-                                                etalonTick.epoch = system.epoch;
-                                                etalonTick.tick = system.tick;
-
-                                                if (curTickData.epoch == system.epoch
-                                                    && (curTickData.year > prevTickYear
-                                                        || (curTickData.year == prevTickYear && (curTickData.month > prevTickMonth
-                                                            || (curTickData.month == prevTickMonth && (curTickData.day > prevTickDay
-                                                                || (curTickData.day == prevTickDay && (curTickData.hour > prevTickHour
-                                                                    || (curTickData.hour == prevTickHour && (curTickData.minute > prevTickMinute
-                                                                        || (curTickData.minute == prevTickMinute && (curTickData.second > prevTickSecond
-                                                                            || (curTickData.second == prevTickSecond && curTickData.millisecond > prevTickMillisecond)))))))))))))
-                                                {
-                                                    etalonTick.millisecond = curTickData.millisecond;
-                                                    etalonTick.second = curTickData.second;
-                                                    etalonTick.minute = curTickData.minute;
-                                                    etalonTick.hour = curTickData.hour;
-                                                    etalonTick.day = curTickData.day;
-                                                    etalonTick.month = curTickData.month;
-                                                    etalonTick.year = curTickData.year;
-                                                }
-                                                else
-                                                {
-                                                    etalonTick.millisecond = prevTickMillisecond;
-                                                    etalonTick.second = prevTickSecond;
-                                                    etalonTick.minute = prevTickMinute;
-                                                    etalonTick.hour = prevTickHour;
-                                                    etalonTick.day = prevTickDay;
-                                                    etalonTick.month = prevTickMonth;
-                                                    etalonTick.year = prevTickYear;
-
-                                                    if (++etalonTick.millisecond > 999)
+                                                    if (tickData[system.tick + 1 - system.initialTick].epoch == system.epoch)
                                                     {
-                                                        etalonTick.millisecond = 0;
+                                                        bs->CopyMem(&nextTickData, &tickData[system.tick + 1 - system.initialTick], sizeof(TickData));
+                                                        KangarooTwelve((unsigned char*)&nextTickData, sizeof(TickData), etalonTick.nextTickDataDigest, 32);
+                                                    }
+                                                    else
+                                                    {
+                                                        *((__m256i*)etalonTick.nextTickDataDigest) = ZERO;
+                                                    }
+                                                }
 
-                                                        if (++etalonTick.second > 59)
+                                                if (!etalonTickMustBeCreated)
+                                                {
+                                                    etalonTick.epoch = system.epoch;
+                                                    etalonTick.tick = system.tick;
+
+                                                    if (curTickData.epoch == system.epoch
+                                                        && (curTickData.year > prevTickYear
+                                                            || (curTickData.year == prevTickYear && (curTickData.month > prevTickMonth
+                                                                || (curTickData.month == prevTickMonth && (curTickData.day > prevTickDay
+                                                                    || (curTickData.day == prevTickDay && (curTickData.hour > prevTickHour
+                                                                        || (curTickData.hour == prevTickHour && (curTickData.minute > prevTickMinute
+                                                                            || (curTickData.minute == prevTickMinute && (curTickData.second > prevTickSecond
+                                                                                || (curTickData.second == prevTickSecond && curTickData.millisecond > prevTickMillisecond)))))))))))))
+                                                    {
+                                                        etalonTick.millisecond = curTickData.millisecond;
+                                                        etalonTick.second = curTickData.second;
+                                                        etalonTick.minute = curTickData.minute;
+                                                        etalonTick.hour = curTickData.hour;
+                                                        etalonTick.day = curTickData.day;
+                                                        etalonTick.month = curTickData.month;
+                                                        etalonTick.year = curTickData.year;
+                                                    }
+                                                    else
+                                                    {
+                                                        etalonTick.millisecond = prevTickMillisecond;
+                                                        etalonTick.second = prevTickSecond;
+                                                        etalonTick.minute = prevTickMinute;
+                                                        etalonTick.hour = prevTickHour;
+                                                        etalonTick.day = prevTickDay;
+                                                        etalonTick.month = prevTickMonth;
+                                                        etalonTick.year = prevTickYear;
+
+                                                        if (++etalonTick.millisecond > 999)
                                                         {
-                                                            etalonTick.second = 0;
+                                                            etalonTick.millisecond = 0;
 
-                                                            if (++etalonTick.minute > 59)
+                                                            if (++etalonTick.second > 59)
                                                             {
-                                                                etalonTick.minute = 0;
+                                                                etalonTick.second = 0;
 
-                                                                if (++etalonTick.hour > 23)
+                                                                if (++etalonTick.minute > 59)
                                                                 {
-                                                                    etalonTick.hour = 0;
+                                                                    etalonTick.minute = 0;
 
-                                                                    if (++etalonTick.day > ((etalonTick.month == 1 || etalonTick.month == 3 || etalonTick.month == 5 || etalonTick.month == 7 || etalonTick.month == 8 || etalonTick.month == 10 || etalonTick.month == 12) ? 31 : ((etalonTick.month == 4 || etalonTick.month == 6 || etalonTick.month == 9 || etalonTick.month == 11) ? 30 : ((etalonTick.year & 3) ? 28 : 29))))
+                                                                    if (++etalonTick.hour > 23)
                                                                     {
-                                                                        etalonTick.day = 1;
+                                                                        etalonTick.hour = 0;
 
-                                                                        if (++etalonTick.month > 12)
+                                                                        if (++etalonTick.day > ((etalonTick.month == 1 || etalonTick.month == 3 || etalonTick.month == 5 || etalonTick.month == 7 || etalonTick.month == 8 || etalonTick.month == 10 || etalonTick.month == 12) ? 31 : ((etalonTick.month == 4 || etalonTick.month == 6 || etalonTick.month == 9 || etalonTick.month == 11) ? 30 : ((etalonTick.year & 3) ? 28 : 29))))
                                                                         {
-                                                                            etalonTick.month = 1;
+                                                                            etalonTick.day = 1;
 
-                                                                            ++etalonTick.year;
+                                                                            if (++etalonTick.month > 12)
+                                                                            {
+                                                                                etalonTick.month = 1;
+
+                                                                                ++etalonTick.year;
+                                                                            }
                                                                         }
                                                                     }
                                                                 }
                                                             }
                                                         }
                                                     }
-                                                }
 
-                                                setText(message, L"Tick time is set to ");
-                                                appendNumber(message, etalonTick.year / 10, FALSE);
-                                                appendNumber(message, etalonTick.year % 10, FALSE);
-                                                appendText(message, L".");
-                                                appendNumber(message, etalonTick.month / 10, FALSE);
-                                                appendNumber(message, etalonTick.month % 10, FALSE);
-                                                appendText(message, L".");
-                                                appendNumber(message, etalonTick.day / 10, FALSE);
-                                                appendNumber(message, etalonTick.day % 10, FALSE);
-                                                appendText(message, L" ");
-                                                appendNumber(message, etalonTick.hour / 10, FALSE);
-                                                appendNumber(message, etalonTick.hour % 10, FALSE);
-                                                appendText(message, L":");
-                                                appendNumber(message, etalonTick.minute / 10, FALSE);
-                                                appendNumber(message, etalonTick.minute % 10, FALSE);
-                                                appendText(message, L":");
-                                                appendNumber(message, etalonTick.second / 10, FALSE);
-                                                appendNumber(message, etalonTick.second % 10, FALSE);
-                                                appendText(message, L".");
-                                                appendNumber(message, etalonTick.millisecond / 100, FALSE);
-                                                appendNumber(message, etalonTick.millisecond % 100 / 10, FALSE);
-                                                appendNumber(message, etalonTick.millisecond % 10, FALSE);
-                                                appendText(message, L".");
-                                                log(message);
+                                                    setText(message, L"Tick time is set to ");
+                                                    appendNumber(message, etalonTick.year / 10, FALSE);
+                                                    appendNumber(message, etalonTick.year % 10, FALSE);
+                                                    appendText(message, L".");
+                                                    appendNumber(message, etalonTick.month / 10, FALSE);
+                                                    appendNumber(message, etalonTick.month % 10, FALSE);
+                                                    appendText(message, L".");
+                                                    appendNumber(message, etalonTick.day / 10, FALSE);
+                                                    appendNumber(message, etalonTick.day % 10, FALSE);
+                                                    appendText(message, L" ");
+                                                    appendNumber(message, etalonTick.hour / 10, FALSE);
+                                                    appendNumber(message, etalonTick.hour % 10, FALSE);
+                                                    appendText(message, L":");
+                                                    appendNumber(message, etalonTick.minute / 10, FALSE);
+                                                    appendNumber(message, etalonTick.minute % 10, FALSE);
+                                                    appendText(message, L":");
+                                                    appendNumber(message, etalonTick.second / 10, FALSE);
+                                                    appendNumber(message, etalonTick.second % 10, FALSE);
+                                                    appendText(message, L".");
+                                                    appendNumber(message, etalonTick.millisecond / 100, FALSE);
+                                                    appendNumber(message, etalonTick.millisecond % 100 / 10, FALSE);
+                                                    appendNumber(message, etalonTick.millisecond % 10, FALSE);
+                                                    appendText(message, L".");
+                                                    log(message);
 
-                                                const int dayIndex = ::dayIndex(etalonTick.year, etalonTick.month, etalonTick.day);
-                                                if ((dayIndex == 738570 + system.epoch * 7 && etalonTick.hour >= 12)
-                                                    || dayIndex > 738570 + system.epoch * 7)
-                                                {
-                                                    state = 1;
-                                                }
-
-                                                *((__m256i*)etalonTick.initSpectrumDigest) = initSpectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1];
-                                                *((__m256i*)etalonTick.initUniverseDigest) = ZERO;
-                                                *((__m256i*)etalonTick.initComputerDigest) = ZERO;
-                                                *((__m256i*)etalonTick.prevSpectrumDigest) = prevTickSpectrumDigest;
-                                                *((__m256i*)etalonTick.prevUniverseDigest) = ZERO;
-                                                *((__m256i*)etalonTick.prevComputerDigest) = ZERO;
-                                                *((__m256i*)etalonTick.saltedSpectrumDigest) = spectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1];
-                                                *((__m256i*)etalonTick.saltedUniverseDigest) = ZERO;
-                                                *((__m256i*)etalonTick.saltedComputerDigest) = ZERO;
-
-                                                if (system.tick > system.latestCreatedTick)
-                                                {
-                                                    system.latestCreatedTick = system.tick;
-
-                                                    if (futureTickTotalNumberOfComputors <= NUMBER_OF_COMPUTORS - QUORUM)
+                                                    const int dayIndex = ::dayIndex(etalonTick.year, etalonTick.month, etalonTick.day);
+                                                    if ((dayIndex == 738570 + system.epoch * 7 && etalonTick.hour >= 12)
+                                                        || dayIndex > 738570 + system.epoch * 7)
                                                     {
-                                                        bs->CopyMem(&broadcastedTick.broadcastTick.tick, &etalonTick, sizeof(Tick));
-                                                        for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
+                                                        state = 1;
+                                                    }
+
+                                                    *((__m256i*)etalonTick.initSpectrumDigest) = initSpectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1];
+                                                    *((__m256i*)etalonTick.initUniverseDigest) = ZERO;
+                                                    *((__m256i*)etalonTick.initComputerDigest) = ZERO;
+                                                    *((__m256i*)etalonTick.prevSpectrumDigest) = prevTickSpectrumDigest;
+                                                    *((__m256i*)etalonTick.prevUniverseDigest) = ZERO;
+                                                    *((__m256i*)etalonTick.prevComputerDigest) = ZERO;
+                                                    *((__m256i*)etalonTick.saltedSpectrumDigest) = spectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1];
+                                                    *((__m256i*)etalonTick.saltedUniverseDigest) = ZERO;
+                                                    *((__m256i*)etalonTick.saltedComputerDigest) = ZERO;
+
+                                                    if (system.tick > system.latestCreatedTick)
+                                                    {
+                                                        system.latestCreatedTick = system.tick;
+
+                                                        if (futureTickTotalNumberOfComputors <= NUMBER_OF_COMPUTORS - QUORUM)
                                                         {
-                                                            broadcastedTick.broadcastTick.tick.computorIndex = ownComputorIndices[i] ^ BROADCAST_TICK;
-                                                            unsigned char saltedData[32 + 32];
-                                                            *((__m256i*) & saltedData[0]) = *((__m256i*)computingPublicKeys[ownComputorIndicesMapping[i]]);
-                                                            *((__m256i*) & saltedData[32]) = *((__m256i*)etalonTick.saltedSpectrumDigest);
-                                                            KangarooTwelve64To32(saltedData, broadcastedTick.broadcastTick.tick.saltedSpectrumDigest);
-                                                            *((__m256i*) & saltedData[32]) = *((__m256i*)etalonTick.saltedUniverseDigest);
-                                                            KangarooTwelve64To32(saltedData, broadcastedTick.broadcastTick.tick.saltedUniverseDigest);
-                                                            *((__m256i*) & saltedData[32]) = *((__m256i*)etalonTick.saltedComputerDigest);
-                                                            KangarooTwelve64To32(saltedData, broadcastedTick.broadcastTick.tick.saltedComputerDigest);
-
-                                                            unsigned char digest[32];
-                                                            KangarooTwelve((unsigned char*)&broadcastedTick.broadcastTick.tick, sizeof(Tick) - SIGNATURE_SIZE, digest, sizeof(digest));
-                                                            broadcastedTick.broadcastTick.tick.computorIndex ^= BROADCAST_TICK;
-                                                            sign(computingSubseeds[ownComputorIndicesMapping[i]], computingPublicKeys[ownComputorIndicesMapping[i]], digest, broadcastedTick.broadcastTick.tick.signature);
-
-                                                            for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
+                                                            bs->CopyMem(&broadcastedTick.broadcastTick.tick, &etalonTick, sizeof(Tick));
+                                                            for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
                                                             {
-                                                                push(&peers[j], &broadcastedTick.header, true);
-                                                            }
+                                                                broadcastedTick.broadcastTick.tick.computorIndex = ownComputorIndices[i] ^ BROADCAST_TICK;
+                                                                unsigned char saltedData[32 + 32];
+                                                                *((__m256i*) & saltedData[0]) = *((__m256i*)computingPublicKeys[ownComputorIndicesMapping[i]]);
+                                                                *((__m256i*) & saltedData[32]) = *((__m256i*)etalonTick.saltedSpectrumDigest);
+                                                                KangarooTwelve64To32(saltedData, broadcastedTick.broadcastTick.tick.saltedSpectrumDigest);
+                                                                *((__m256i*) & saltedData[32]) = *((__m256i*)etalonTick.saltedUniverseDigest);
+                                                                KangarooTwelve64To32(saltedData, broadcastedTick.broadcastTick.tick.saltedUniverseDigest);
+                                                                *((__m256i*) & saltedData[32]) = *((__m256i*)etalonTick.saltedComputerDigest);
+                                                                KangarooTwelve64To32(saltedData, broadcastedTick.broadcastTick.tick.saltedComputerDigest);
 
-                                                            while (_InterlockedCompareExchange8(&tickLocks[ownComputorIndices[i]], 1, 0))
-                                                            {
-                                                                _mm_pause();
+                                                                unsigned char digest[32];
+                                                                KangarooTwelve((unsigned char*)&broadcastedTick.broadcastTick.tick, sizeof(Tick) - SIGNATURE_SIZE, digest, sizeof(digest));
+                                                                broadcastedTick.broadcastTick.tick.computorIndex ^= BROADCAST_TICK;
+                                                                sign(computingSubseeds[ownComputorIndicesMapping[i]], computingPublicKeys[ownComputorIndicesMapping[i]], digest, broadcastedTick.broadcastTick.tick.signature);
+
+                                                                for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
+                                                                {
+                                                                    push(&peers[j], &broadcastedTick.header, true);
+                                                                }
+
+                                                                while (_InterlockedCompareExchange8(&tickLocks[ownComputorIndices[i]], 1, 0))
+                                                                {
+                                                                    _mm_pause();
+                                                                }
+                                                                bs->CopyMem(&ticks[((((broadcastedTick.broadcastTick.tick.tick - system.initialTick) * NUMBER_OF_COMPUTORS) + broadcastedTick.broadcastTick.tick.computorIndex) << 1) + (EQUAL(*((__m256i*)broadcastedTick.broadcastTick.tick.nextTickDataDigest), ZERO) ? 0 : 1)], &broadcastedTick.broadcastTick.tick, sizeof(Tick));
+                                                                _InterlockedCompareExchange8(&tickLocks[ownComputorIndices[i]], 0, 1);
                                                             }
-                                                            bs->CopyMem(&ticks[((((broadcastedTick.broadcastTick.tick.tick - system.initialTick) * NUMBER_OF_COMPUTORS) + broadcastedTick.broadcastTick.tick.computorIndex) << 1) + (EQUAL(*((__m256i*)broadcastedTick.broadcastTick.tick.nextTickDataDigest), ZERO) ? 0 : 1)], &broadcastedTick.broadcastTick.tick, sizeof(Tick));
-                                                            _InterlockedCompareExchange8(&tickLocks[ownComputorIndices[i]], 0, 1);
                                                         }
                                                     }
-                                                }
 
-                                                TickEssence tickEssence;
-                                                *((unsigned long long*)&tickEssence.millisecond) = *((unsigned long long*)&etalonTick.millisecond);
-                                                *((__m256i*)tickEssence.initSpectrumDigest) = *((__m256i*)etalonTick.initSpectrumDigest);
-                                                *((__m256i*)tickEssence.initUniverseDigest) = *((__m256i*)etalonTick.initUniverseDigest);
-                                                *((__m256i*)tickEssence.initComputerDigest) = *((__m256i*)etalonTick.initComputerDigest);
-                                                *((__m256i*)tickEssence.prevSpectrumDigest) = *((__m256i*)etalonTick.prevSpectrumDigest);
-                                                *((__m256i*)tickEssence.prevUniverseDigest) = *((__m256i*)etalonTick.prevUniverseDigest);
-                                                *((__m256i*)tickEssence.prevComputerDigest) = *((__m256i*)etalonTick.prevComputerDigest);
-                                                *((__m256i*)tickEssence.spectrumDigest) = *((__m256i*)etalonTick.saltedSpectrumDigest);
-                                                *((__m256i*)tickEssence.universeDigest) = *((__m256i*)etalonTick.saltedUniverseDigest);
-                                                *((__m256i*)tickEssence.computerDigest) = *((__m256i*)etalonTick.saltedComputerDigest);
-                                                *((__m256i*)tickEssence.nextTickDataDigest) = ZERO;
-                                                KangarooTwelve((unsigned char*)&tickEssence, sizeof(TickEssence), (unsigned char*)&etalonTickEssenceDigests[0], 32);
-                                                if (EQUAL(*((__m256i*)etalonTick.nextTickDataDigest), ZERO))
-                                                {
-                                                    _rdrand64_step((unsigned long long*)&etalonTickEssenceDigests[1]);
-                                                    _rdrand64_step(((unsigned long long*)&etalonTickEssenceDigests[1]) + 1);
-                                                    _rdrand64_step(((unsigned long long*)&etalonTickEssenceDigests[1]) + 2);
-                                                    _rdrand64_step(((unsigned long long*)&etalonTickEssenceDigests[1]) + 3);
+                                                    TickEssence tickEssence;
+                                                    *((unsigned long long*) & tickEssence.millisecond) = *((unsigned long long*) & etalonTick.millisecond);
+                                                    *((__m256i*)tickEssence.initSpectrumDigest) = *((__m256i*)etalonTick.initSpectrumDigest);
+                                                    *((__m256i*)tickEssence.initUniverseDigest) = *((__m256i*)etalonTick.initUniverseDigest);
+                                                    *((__m256i*)tickEssence.initComputerDigest) = *((__m256i*)etalonTick.initComputerDigest);
+                                                    *((__m256i*)tickEssence.prevSpectrumDigest) = *((__m256i*)etalonTick.prevSpectrumDigest);
+                                                    *((__m256i*)tickEssence.prevUniverseDigest) = *((__m256i*)etalonTick.prevUniverseDigest);
+                                                    *((__m256i*)tickEssence.prevComputerDigest) = *((__m256i*)etalonTick.prevComputerDigest);
+                                                    *((__m256i*)tickEssence.spectrumDigest) = *((__m256i*)etalonTick.saltedSpectrumDigest);
+                                                    *((__m256i*)tickEssence.universeDigest) = *((__m256i*)etalonTick.saltedUniverseDigest);
+                                                    *((__m256i*)tickEssence.computerDigest) = *((__m256i*)etalonTick.saltedComputerDigest);
+                                                    *((__m256i*)tickEssence.nextTickDataDigest) = ZERO;
+                                                    KangarooTwelve((unsigned char*)&tickEssence, sizeof(TickEssence), (unsigned char*)&etalonTickEssenceDigests[0], 32);
+                                                    if (EQUAL(*((__m256i*)etalonTick.nextTickDataDigest), ZERO))
+                                                    {
+                                                        _rdrand64_step((unsigned long long*) & etalonTickEssenceDigests[1]);
+                                                        _rdrand64_step(((unsigned long long*) & etalonTickEssenceDigests[1]) + 1);
+                                                        _rdrand64_step(((unsigned long long*) & etalonTickEssenceDigests[1]) + 2);
+                                                        _rdrand64_step(((unsigned long long*) & etalonTickEssenceDigests[1]) + 3);
+                                                    }
+                                                    else
+                                                    {
+                                                        *((__m256i*)tickEssence.nextTickDataDigest) = *((__m256i*)etalonTick.nextTickDataDigest);
+                                                        KangarooTwelve((unsigned char*)&tickEssence, sizeof(TickEssence), (unsigned char*)&etalonTickEssenceDigests[1], 32);
+                                                    }
                                                 }
-                                                else
+                                            }
+
+                                            if (etalonTickMustBeCreated && requestedTickData.requestTickData.requestedTickData.tick != system.tick + 1)
+                                            {
+                                                requestedTickData.requestTickData.requestedTickData.tick = system.tick + 1;
+                                                for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
                                                 {
-                                                    *((__m256i*)tickEssence.nextTickDataDigest) = *((__m256i*)etalonTick.nextTickDataDigest);
-                                                    KangarooTwelve((unsigned char*)&tickEssence, sizeof(TickEssence), (unsigned char*)&etalonTickEssenceDigests[1], 32);
+                                                    push(&peers[j], &requestedTickData.header, true);
                                                 }
                                             }
                                         }
@@ -8534,10 +8535,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                         if (uniqueTickEssenceDigestCounters[mostPopularUniqueTickEssenceDigestIndex][1] >= QUORUM)
                                                         {
                                                             etalonTickMustBeCreated = true;
-                                                            if (system.latestCreatedTick == system.tick)
-                                                            {
-                                                                system.latestCreatedTick--;
-                                                            }
                                                             etalonTick.tick = 0;
 
                                                             for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
