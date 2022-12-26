@@ -1,19 +1,16 @@
 ////////// Private Settings \\\\\\\\\\
 
 #define NUMBER_OF_COMPUTING_PROCESSORS 1
-#define NUMBER_OF_MINING_PROCESSORS 1
 #define AVX512 0
 
 // Do NOT share the data of "Private Settings" section with anybody!!!
 static unsigned char computingSeeds[][55 + 1] = {
     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 };
-#if NUMBER_OF_MINING_PROCESSORS
 static unsigned char miningSeeds[][55 + 1] = {
     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 };
 #define MIN_SCORE 0
-#endif
 
 static const unsigned char ownAddress[4] = { 0, 0, 0, 0 };
 static const unsigned char ownMask[4] = { 255, 255, 255, 255 };
@@ -35,7 +32,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 75
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -5645,10 +5642,8 @@ typedef struct
 static volatile int state = 0;
 
 static unsigned char computingSubseeds[sizeof(computingSeeds) / sizeof(computingSeeds[0])][32], computingPrivateKeys[sizeof(computingSeeds) / sizeof(computingSeeds[0])][32], computingPublicKeys[sizeof(computingSeeds) / sizeof(computingSeeds[0])][32];
-#if NUMBER_OF_MINING_PROCESSORS
 static unsigned char miningSubseeds[sizeof(miningSeeds) / sizeof(miningSeeds[0])][32], miningPrivateKeys[sizeof(miningSeeds) / sizeof(miningSeeds[0])][32], miningPublicKeys[sizeof(miningSeeds) / sizeof(miningSeeds[0])][32];
 static unsigned int receivedScores[sizeof(miningSeeds) / sizeof(miningSeeds[0])];
-#endif
 static unsigned char adminPublicKey[32];
 
 static struct
@@ -5745,14 +5740,7 @@ static unsigned long long totalRatingOfPublicPeers = 0;
 
 static EFI_EVENT computorEvents[NUMBER_OF_COMPUTING_PROCESSORS];
 
-static long long prevNumberOfMiningIterations = 0;
-static unsigned long long prevMiningPerformanceTick = 0;
-#if NUMBER_OF_MINING_PROCESSORS
 static unsigned long long miningData[65536];
-static EFI_EVENT minerEvents[NUMBER_OF_MINING_PROCESSORS];
-static unsigned short neuronLinks[NUMBER_OF_MINING_PROCESSORS][NUMBER_OF_NEURONS][2];
-static unsigned char neuronValues[NUMBER_OF_MINING_PROCESSORS][NUMBER_OF_NEURONS];
-static volatile long long numberOfMiningIterations = 0;
 static unsigned short validationNeuronLinks[NUMBER_OF_NEURONS][2];
 static unsigned char validationNeuronValues[NUMBER_OF_NEURONS];
 
@@ -5761,7 +5749,6 @@ static struct
     RequestResponseHeader header;
     BroadcastResourceTestingSolution broadcastResourceTestingSolution;
 } broadcastedSolutions[sizeof(miningSeeds) / sizeof(miningSeeds[0])];
-#endif
 
 static struct
 {
@@ -6189,7 +6176,6 @@ static void requestProcessor(void* ProcedureArgument)
                     request->resourceTestingSolution.computorPublicKey[0] ^= BROADCAST_RESOURCE_TESTING_SOLUTION;
                     if (verify(request->resourceTestingSolution.computorPublicKey, digest, request->resourceTestingSolution.signature))
                     {
-#if NUMBER_OF_MINING_PROCESSORS
                         for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
                         {
                             if (EQUAL(*((__m256i*)request->resourceTestingSolution.computorPublicKey), *((__m256i*)miningPublicKeys[i])))
@@ -6224,7 +6210,6 @@ static void requestProcessor(void* ProcedureArgument)
                                 break;
                             }
                         }
-#endif
 
                         responseSize = requestHeader->size;
                     }
@@ -6241,7 +6226,6 @@ static void requestProcessor(void* ProcedureArgument)
                     KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
                     if (verify(adminPublicKey, digest, request->resourceTestingSolutionReceipt.signature))
                     {
-#if NUMBER_OF_MINING_PROCESSORS
                         for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
                         {
                             if (EQUAL(*((__m256i*)request->resourceTestingSolutionReceipt.computorPublicKey), *((__m256i*)miningPublicKeys[i])))
@@ -6254,7 +6238,6 @@ static void requestProcessor(void* ProcedureArgument)
                                 break;
                             }
                         }
-#endif
 
                         responseSize = requestHeader->size;
                     }
@@ -6829,120 +6812,6 @@ static void computorProcessor(void* ProcedureArgument)
     }
 }
 
-#if NUMBER_OF_MINING_PROCESSORS
-static void minerProcessor(void* ProcedureArgument)
-{
-    enableAVX();
-
-    const unsigned int miningProcessorIndex = (unsigned int)((unsigned long long)ProcedureArgument);
-
-    unsigned char nonce[32];
-    while (!state)
-    {
-        _rdrand64_step((unsigned long long*)&nonce[0]);
-        _rdrand64_step((unsigned long long*)&nonce[8]);
-        _rdrand64_step((unsigned long long*)&nonce[16]);
-        _rdrand64_step((unsigned long long*)&nonce[24]);
-
-        unsigned int miningIdIndex;
-
-        unsigned int minScore = NUMBER_OF_SOLUTION_NONCES, minScoreIndex = 0;
-        for (miningIdIndex = 0; miningIdIndex < sizeof(miningSeeds) / sizeof(miningSeeds[0]); miningIdIndex++)
-        {
-            unsigned int score = 0;
-            for (unsigned int i = 0; i < NUMBER_OF_SOLUTION_NONCES; i++)
-            {
-                if (!EQUAL(*((__m256i*)broadcastedSolutions[miningIdIndex].broadcastResourceTestingSolution.resourceTestingSolution.nonces[i]), ZERO))
-                {
-                    score++;
-                }
-            }
-            if (score < MIN_SCORE)
-            {
-                break;
-            }
-            if (score < minScore)
-            {
-                minScore = score;
-                minScoreIndex = miningIdIndex;
-            }
-        }
-        if (miningIdIndex == sizeof(miningSeeds) / sizeof(miningSeeds[0]))
-        {
-            miningIdIndex = minScoreIndex;
-        }
-
-        random(miningPublicKeys[miningIdIndex], nonce, (unsigned char*)&neuronLinks[miningProcessorIndex], sizeof(neuronLinks[0]));
-        for (unsigned int i = 0; i < NUMBER_OF_NEURONS; i++)
-        {
-            neuronLinks[miningProcessorIndex][i][0] %= NUMBER_OF_NEURONS;
-            neuronLinks[miningProcessorIndex][i][1] %= NUMBER_OF_NEURONS;
-        }
-
-        bs->SetMem(neuronValues[miningProcessorIndex], sizeof(neuronValues[0]), 0xFF);
-
-        unsigned int limiter = sizeof(miningData) / sizeof(miningData[0]);
-        unsigned int score = 0;
-        while (true)
-        {
-            const unsigned int prevValue0 = neuronValues[miningProcessorIndex][NUMBER_OF_NEURONS - 1];
-            const unsigned int prevValue1 = neuronValues[miningProcessorIndex][NUMBER_OF_NEURONS - 2];
-
-            for (unsigned int j = 0; j < NUMBER_OF_NEURONS; j++)
-            {
-                neuronValues[miningProcessorIndex][j] = ~(neuronValues[miningProcessorIndex][neuronLinks[miningProcessorIndex][j][0]] & neuronValues[miningProcessorIndex][neuronLinks[miningProcessorIndex][j][1]]);
-            }
-
-            if (neuronValues[miningProcessorIndex][NUMBER_OF_NEURONS - 1] != prevValue0
-                && neuronValues[miningProcessorIndex][NUMBER_OF_NEURONS - 2] == prevValue1)
-            {
-                if (!((miningData[score >> 6] >> (score & 63)) & 1))
-                {
-                    break;
-                }
-
-                score++;
-            }
-            else
-            {
-                if (neuronValues[miningProcessorIndex][NUMBER_OF_NEURONS - 2] != prevValue1
-                    && neuronValues[miningProcessorIndex][NUMBER_OF_NEURONS - 1] == prevValue0)
-                {
-                    if ((miningData[score >> 6] >> (score & 63)) & 1)
-                    {
-                        break;
-                    }
-
-                    score++;
-                }
-                else
-                {
-                    if (!(--limiter))
-                    {
-                        break;
-                    }
-                }
-            }
-        }
-
-        if (score >= SOLUTION_THRESHOLD)
-        {
-            for (unsigned int i = 0; i < NUMBER_OF_SOLUTION_NONCES; i++)
-            {
-                if (EQUAL(*((__m256i*)broadcastedSolutions[miningIdIndex].broadcastResourceTestingSolution.resourceTestingSolution.nonces[i]), ZERO))
-                {
-                    *((__m256i*)broadcastedSolutions[miningIdIndex].broadcastResourceTestingSolution.resourceTestingSolution.nonces[i]) = *((__m256i*)nonce);
-
-                    break;
-                }
-            }
-        }
-
-        _InterlockedIncrement64(&numberOfMiningIterations);
-    }
-}
-#endif
-
 static void shutdownCallback(EFI_EVENT Event, void* Context)
 {
     bs->CloseEvent(Event);
@@ -6952,7 +6821,6 @@ static void emptyCallback(EFI_EVENT Event, void* Context)
 {
 }
 
-#if NUMBER_OF_MINING_PROCESSORS
 static void saveSolutions()
 {
     const unsigned long long beginningTick = __rdtsc();
@@ -6993,7 +6861,6 @@ static void saveSolutions()
         }
     }
 }
-#endif
 
 static void saveSpectrum()
 {
@@ -7120,7 +6987,6 @@ static BOOLEAN initialize()
         getPrivateKey(computingSubseeds[i], computingPrivateKeys[i]);
         getPublicKey(computingPrivateKeys[i], computingPublicKeys[i]);
     }
-#if NUMBER_OF_MINING_PROCESSORS
     for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
     {
         if (!getSubseed(miningSeeds[i], miningSubseeds[i]))
@@ -7131,7 +6997,6 @@ static BOOLEAN initialize()
         getPublicKey(miningPrivateKeys[i], miningPublicKeys[i]);
         receivedScores[i] = 0;
     }
-#endif
 
     getPublicKeyFromIdentity((const unsigned char*)ADMIN, adminPublicKey);
 
@@ -7169,14 +7034,12 @@ static BOOLEAN initialize()
     }
     bs->SetMem(&broadcastedComputors.broadcastComputors.computors.signature, sizeof(broadcastedComputors.broadcastComputors.computors.signature), 0);
 
-#if NUMBER_OF_MINING_PROCESSORS
     for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
     {
         broadcastedSolutions[i].header.size = sizeof(broadcastedSolutions[i]);
         broadcastedSolutions[i].header.protocol = VERSION_B;
         broadcastedSolutions[i].header.type = BROADCAST_RESOURCE_TESTING_SOLUTION;
     }
-#endif
     broadcastedTick.header.size = sizeof(broadcastedTick);
     broadcastedTick.header.protocol = VERSION_B;
     broadcastedTick.header.type = BROADCAST_TICK;
@@ -7474,7 +7337,6 @@ static BOOLEAN initialize()
             revenues[i].epoch = 0;
         }
 
-#if NUMBER_OF_MINING_PROCESSORS
         unsigned char randomSeed[32];
         bs->SetMem(randomSeed, 32, 0);
         randomSeed[0] = 128;
@@ -7530,7 +7392,6 @@ static BOOLEAN initialize()
                 return FALSE;
             }
         }
-#endif
     }
 
     if ((status = bs->AllocatePool(EfiRuntimeServicesData, 536870912, (void**)&dejavu0))
@@ -7584,12 +7445,10 @@ static void deinitialize()
     bs->SetMem(computingSubseeds, sizeof(computingSubseeds), 0);
     bs->SetMem(computingPrivateKeys, sizeof(computingPrivateKeys), 0);
     bs->SetMem(computingPublicKeys, sizeof(computingPublicKeys), 0);
-#if NUMBER_OF_MINING_PROCESSORS
     bs->SetMem(miningSeeds, sizeof(miningSeeds), 0);
     bs->SetMem(miningSubseeds, sizeof(miningSubseeds), 0);
     bs->SetMem(miningPrivateKeys, sizeof(miningPrivateKeys), 0);
     bs->SetMem(miningPublicKeys, sizeof(miningPublicKeys), 0);
-#endif
 
     if (root)
     {
@@ -7763,7 +7622,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                 log(message);
             }
         }
-#if NUMBER_OF_MINING_PROCESSORS
         log(L"Mining ids:");
         for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
         {
@@ -7773,7 +7631,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                 log(message);
             }
         }
-#endif
 
         EFI_STATUS status;
 
@@ -7839,10 +7696,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
         }
         if (numberOfProcessors)
         {
-            if (numberOfProcessors < NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS + 1)
+            if (numberOfProcessors < NUMBER_OF_COMPUTING_PROCESSORS + 1)
             {
-                setText(message, L"[NUMBER_OF_MINING_PROCESSORS] cannot be greater than ");
-                appendNumber(message, numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + 1), FALSE);
+                setText(message, L"[NUMBER_OF_COMPUTING_PROCESSORS] cannot be greater than ");
+                appendNumber(message, numberOfProcessors - 1, FALSE);
                 appendText(message, L"!");
                 log(message);
             }
@@ -7854,9 +7711,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                 appendText(message, L" processors are being used.");
                 log(message);
 
-                for (unsigned int i = 0; i < numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS); i++)
+                for (unsigned int i = 0; i < numberOfProcessors - NUMBER_OF_COMPUTING_PROCESSORS; i++)
                 {
-                    if (status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, emptyCallback, NULL, &processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].event))
+                    if (status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, emptyCallback, NULL, &processors[NUMBER_OF_COMPUTING_PROCESSORS + i].event))
                     {
                         logStatus(L"EFI_BOOT_SERVICES.CreateEvent() fails", status, __LINE__);
 
@@ -7866,7 +7723,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                     }
                     else
                     {
-                        mpServicesProtocol->StartupThisAP(mpServicesProtocol, requestProcessor, processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].number, processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i].event, 0, &processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i], NULL);
+                        mpServicesProtocol->StartupThisAP(mpServicesProtocol, requestProcessor, processors[NUMBER_OF_COMPUTING_PROCESSORS + i].number, processors[NUMBER_OF_COMPUTING_PROCESSORS + i].event, 0, &processors[NUMBER_OF_COMPUTING_PROCESSORS + i], NULL);
                     }
                 }
                 if (numberOfProcessors)
@@ -7896,19 +7753,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     mpServicesProtocol->StartupThisAP(mpServicesProtocol, computorProcessor, processors[i].number, computorEvents[i], 0, (void*)((unsigned long long)i), NULL);
                                 }
                             }
-#if NUMBER_OF_MINING_PROCESSORS
-                            for (unsigned int i = 0; i < NUMBER_OF_MINING_PROCESSORS; i++)
-                            {
-                                if (status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, shutdownCallback, NULL, &minerEvents[i]))
-                                {
-                                    logStatus(L"EFI_BOOT_SERVICES.CreateEvent() fails", status, __LINE__);
-                                }
-                                else
-                                {
-                                    mpServicesProtocol->StartupThisAP(mpServicesProtocol, minerProcessor, processors[NUMBER_OF_COMPUTING_PROCESSORS + i].number, minerEvents[i], 0, (void*)((unsigned long long)i), NULL);
-                                }
-                            }
-#endif
 
                             unsigned long long salt;
                             _rdrand64_step(&salt);
@@ -8745,16 +8589,13 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     setText(message, L"1+");
                                     appendNumber(message, NUMBER_OF_COMPUTING_PROCESSORS, TRUE);
                                     appendText(message, L"+");
-                                    appendNumber(message, NUMBER_OF_MINING_PROCESSORS, TRUE);
-                                    appendText(message, L"+");
-                                    appendNumber(message, numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS), TRUE);
+                                    appendNumber(message, numberOfProcessors - NUMBER_OF_COMPUTING_PROCESSORS, TRUE);
 
                                     appendText(message, L" | Tick = ");
                                     unsigned long long tickDuration = (tickTicks[sizeof(tickTicks) / sizeof(tickTicks[0]) - 1] - tickTicks[0]) / (sizeof(tickTicks) / sizeof(tickTicks[0]) - 1);
                                     appendNumber(message, tickDuration / frequency, FALSE);
                                     appendText(message, L".");
                                     appendNumber(message, (tickDuration % frequency) * 10 / frequency, FALSE);
-#if NUMBER_OF_MINING_PROCESSORS
                                     appendText(message, L" s | Scores = ");
                                     for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
                                     {
@@ -8774,14 +8615,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         appendText(message, L"/");
                                         appendNumber(message, score, TRUE);
                                     }
-                                    appendText(message, L" (");
-                                    appendNumber(message, (numberOfMiningIterations - prevNumberOfMiningIterations) * frequency / (curTimeTick - prevMiningPerformanceTick), TRUE);
-                                    prevMiningPerformanceTick = curTimeTick;
-                                    prevNumberOfMiningIterations = numberOfMiningIterations;
-                                    appendText(message, L" it/s);");
-#else
-                                    appendText(message, L" s |");
-#endif
                                     appendText(message, L" computor index = ");
                                     if (!numberOfOwnComputorIndices)
                                     {
@@ -9312,9 +9145,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                         || (requestResponseHeader->type == BROADCAST_TICK && ((BroadcastTick*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader)))->tick.tick == system.tick)
                                                                         || (requestResponseHeader->type == BROADCAST_FUTURE_TICK_DATA && ((BroadcastFutureTickData*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader)))->tickData.tick == system.tick + 1))
                                                                     {
-                                                                        for (unsigned int j = 0; j < numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS); j++)
+                                                                        for (unsigned int j = 0; j < numberOfProcessors - NUMBER_OF_COMPUTING_PROCESSORS; j++)
                                                                         {
-                                                                            if (!_InterlockedCompareExchange8(&processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + j].inputState, 1, 0))
+                                                                            if (!_InterlockedCompareExchange8(&processors[NUMBER_OF_COMPUTING_PROCESSORS + j].inputState, 1, 0))
                                                                             {
                                                                                 dejavu0[saltedId >> 6] |= (1ULL << (saltedId & 63));
                                                                                 if (!(--dejavuSwapCounter))
@@ -9325,10 +9158,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                                     dejavuSwapCounter = DEJAVU_SWAP_LIMIT;
                                                                                 }
 
-                                                                                processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + j].requestPeer = &peers[i];
-                                                                                bs->CopyMem(processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + j].requestBuffer, peers[i].receiveBuffer, requestResponseHeader->size);
+                                                                                processors[NUMBER_OF_COMPUTING_PROCESSORS + j].requestPeer = &peers[i];
+                                                                                bs->CopyMem(processors[NUMBER_OF_COMPUTING_PROCESSORS + j].requestBuffer, peers[i].receiveBuffer, requestResponseHeader->size);
 
-                                                                                _InterlockedCompareExchange8(&processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + j].inputState, 2, 1);
+                                                                                _InterlockedCompareExchange8(&processors[NUMBER_OF_COMPUTING_PROCESSORS + j].inputState, 2, 1);
 
                                                                                 bs->CopyMem(peers[i].receiveBuffer, ((char*)peers[i].receiveBuffer) + requestResponseHeader->size, receivedDataSize -= requestResponseHeader->size);
                                                                                 peers[i].receiveData.FragmentTable[0].FragmentBuffer = ((char*)peers[i].receiveBuffer) + receivedDataSize;
@@ -9516,7 +9349,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     }
                                 }
 
-#if NUMBER_OF_MINING_PROCESSORS
                                 if (curTimeTick - resourceTestingSolutionPublicationTick >= RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD * frequency)
                                 {
                                     resourceTestingSolutionPublicationTick = curTimeTick;
@@ -9610,11 +9442,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                     saveSolutions();
                                 }
-#endif
 
-                                for (unsigned int i = 0; i < numberOfProcessors - (NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS); i++)
+                                for (unsigned int i = 0; i < numberOfProcessors - NUMBER_OF_COMPUTING_PROCESSORS; i++)
                                 {
-                                    Processor* processor = &processors[(NUMBER_OF_COMPUTING_PROCESSORS + NUMBER_OF_MINING_PROCESSORS) + i];
+                                    Processor* processor = &processors[NUMBER_OF_COMPUTING_PROCESSORS + i];
                                     if (_InterlockedCompareExchange8(&processor->outputState, 3, 2) == 2)
                                     {
                                         RequestResponseHeader* responseHeader = (RequestResponseHeader*)processor->responseBuffer;
@@ -9707,9 +9538,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peerChildHandle);
 
                             saveSystem();
-#if NUMBER_OF_MINING_PROCESSORS
                             saveSolutions();
-#endif
 
                             setText(message, L"Qubic ");
                             appendNumber(message, VERSION_A, FALSE);
