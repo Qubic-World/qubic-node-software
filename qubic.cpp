@@ -12,13 +12,6 @@ static unsigned char miningSeeds[][55 + 1] = {
 };
 #define MIN_SCORE 0
 
-static const unsigned char ownAddress[4] = { 0, 0, 0, 0 };
-static const unsigned char ownMask[4] = { 255, 255, 255, 255 };
-static const unsigned char defaultRouteAddress[4] = { 0, 0, 0, 0 };
-static const unsigned char defaultRouteMask[4] = { 0, 0, 0, 0 };
-static const unsigned char defaultRouteGateway[4] = { 0, 0, 0, 0 };
-static const unsigned char ownPublicAddress[4] = { 0, 0, 0, 0 };
-
 static unsigned char computorsToSetMaxRevenueTo[][70 + 1] = {
     "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 };
@@ -32,7 +25,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 75
-#define VERSION_C 2
+#define VERSION_C 3
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -49,6 +42,8 @@ static unsigned short SPECTRUM_FILE_NAME[] = L"spectrum.???";
 ////////// C++ helpers \\\\\\\\\\
 
 #define EQUAL(a, b) (_mm256_movemask_epi8(_mm256_cmpeq_epi64(a, b)) == 0xFFFFFFFF)
+#define ACQUIRE(lock) while (_InterlockedCompareExchange8(&lock, 1, 0)) _mm_pause()
+#define RELEASE(lock) _InterlockedCompareExchange8(&lock, 0, 1)
 
 
 
@@ -5968,10 +5963,7 @@ static void increaseEnergy(unsigned char* publicKey, long long amount, unsigned 
 
     unsigned int index = (*((unsigned int*)publicKey)) & (SPECTRUM_CAPACITY - 1);
 
-    while (_InterlockedCompareExchange8(&spectrumLock, 1, 0))
-    {
-        _mm_pause();
-    }
+    ACQUIRE(spectrumLock);
 
 iteration:
     if (EQUAL(*((__m256i*)spectrum[index].publicKey), *((__m256i*)publicKey)))
@@ -5997,17 +5989,14 @@ iteration:
         }
     }
 
-    _InterlockedCompareExchange8(&spectrumLock, 0, 1);
+    RELEASE(spectrumLock);
 }
 
 static bool decreaseEnergy(unsigned char* publicKey, long long amount, unsigned int tick)
 {
     unsigned int index = (*((unsigned int*)publicKey)) & (SPECTRUM_CAPACITY - 1);
 
-    while (_InterlockedCompareExchange8(&spectrumLock, 1, 0))
-    {
-        _mm_pause();
-    }
+    ACQUIRE(spectrumLock);
 
 iteration:
     if (EQUAL(*((__m256i*)spectrum[index].publicKey), *((__m256i*)publicKey)))
@@ -6018,7 +6007,7 @@ iteration:
             spectrum[index].numberOfOutgoingTransfers++;
             spectrum[index].latestOutgoingTransferTick = tick;
 
-            _InterlockedCompareExchange8(&spectrumLock, 0, 1);
+            RELEASE(spectrumLock);
 
             return true;
         }
@@ -6033,7 +6022,7 @@ iteration:
         }
     }
 
-    _InterlockedCompareExchange8(&spectrumLock, 0, 1);
+    RELEASE(spectrumLock);
 
     return false;
 }
@@ -6057,7 +6046,6 @@ static void forget(int address)
 static void addPublicPeer(unsigned char address[4])
 {
     if (!(*((int*)address))
-        || *((int*)address) == *((int*)ownPublicAddress)
         || (address[0] == 127)
         || (address[0] == 10)
         || (address[0] == 172 && address[1] >= 16 && address[1] <= 31)
@@ -6299,10 +6287,7 @@ static void requestProcessor(void* ProcedureArgument)
                     request->tick.computorIndex ^= BROADCAST_TICK;
                     if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->tick.computorIndex], digest, request->tick.signature))
                     {
-                        while (_InterlockedCompareExchange8(&tickLocks[request->tick.computorIndex], 1, 0))
-                        {
-                            _mm_pause();
-                        }
+                        ACQUIRE(tickLocks[request->tick.computorIndex]);
 
                         const unsigned int offset = ((((request->tick.tick - system.initialTick) * NUMBER_OF_COMPUTORS) + request->tick.computorIndex) << 1) + (EQUAL(*((__m256i*)request->tick.nextTickDataDigest), ZERO) ? 0 : 1);
                         if ((ticks[offset].epoch == broadcastedComputors.broadcastComputors.computors.epoch
@@ -6337,7 +6322,7 @@ static void requestProcessor(void* ProcedureArgument)
                             tickFlags[request->tick.tick - system.initialTick][request->tick.computorIndex >> 6] |= (1ULL << (request->tick.computorIndex & 63));
                         }
 
-                        _InterlockedCompareExchange8(&tickLocks[request->tick.computorIndex], 0, 1);
+                        RELEASE(tickLocks[request->tick.computorIndex]);
 
                         responseSize = requestHeader->size;
                     }
@@ -6541,10 +6526,7 @@ static void requestProcessor(void* ProcedureArgument)
             {
                 responseHeader->size = responseSize;
                 void* tmp = processor->responseBuffer;
-                while (_InterlockedCompareExchange8(&processor->outputState, 1, 0))
-                {
-                    _mm_pause();
-                }
+                ACQUIRE(processor->outputState);
                 processor->responseBuffer = processor->cache;
                 processor->responsePeer = processor->cachePeer;
                 _InterlockedCompareExchange8(&processor->outputState, 2, 1);
@@ -6579,15 +6561,7 @@ static EFI_HANDLE getTcp4Protocol(const unsigned char* remoteAddress, const unsi
             EFI_TCP4_CONFIG_DATA configData;
             bs->SetMem(&configData, sizeof(configData), 0);
             configData.TimeToLive = 64;
-            if (!*((int*)ownAddress))
-            {
-                configData.AccessPoint.UseDefaultAddress = TRUE;
-            }
-            else
-            {
-                *((int*)configData.AccessPoint.StationAddress.Addr) = *((int*)ownAddress);
-                *((int*)configData.AccessPoint.SubnetMask.Addr) = *((int*)ownMask);
-            }
+            configData.AccessPoint.UseDefaultAddress = TRUE;
             if (!remoteAddress)
             {
                 configData.AccessPoint.StationPort = port;
@@ -6632,16 +6606,6 @@ static EFI_HANDLE getTcp4Protocol(const unsigned char* remoteAddress, const unsi
 
                             return NULL;
                         }
-                    }
-                }
-
-                if (*((int*)defaultRouteGateway))
-                {
-                    if (status = (*tcp4Protocol)->Routes(*tcp4Protocol, FALSE, (EFI_IPv4_ADDRESS*)&defaultRouteAddress, (EFI_IPv4_ADDRESS*)&defaultRouteMask, (EFI_IPv4_ADDRESS*)&defaultRouteGateway))
-                    {
-                        logStatus(L"EFI_TCP4_PROTOCOL.Routes() fails", status, __LINE__);
-
-                        return NULL;
                     }
                 }
 
@@ -6874,10 +6838,7 @@ static void saveSpectrum()
     }
     else
     {
-        while (_InterlockedCompareExchange8(&spectrumLock, 1, 0))
-        {
-            _mm_pause();
-        }
+        ACQUIRE(spectrumLock);
 
         unsigned long long size = SPECTRUM_CAPACITY * sizeof(Entity);
         status = dataFile->Write(dataFile, &size, spectrum);
@@ -6895,7 +6856,7 @@ static void saveSpectrum()
             log(message);
         }
 
-        _InterlockedCompareExchange8(&spectrumLock, 0, 1);
+        RELEASE(spectrumLock);
     }
 }
 
@@ -7728,11 +7689,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                 }
                 if (numberOfProcessors)
                 {
-                    setText(message, L"Own public address = ");
-                    appendIPv4Address(message, *((EFI_IPv4_ADDRESS*)ownPublicAddress));
-                    appendText(message, L".");
-                    log(message);
-
                     if (status = bs->LocateProtocol(&tcp4ServiceBindingProtocolGuid, NULL, (void**)&tcp4ServiceBindingProtocol))
                     {
                         logStatus(L"EFI_TCP4_SERVICE_BINDING_PROTOCOL is not located", status, __LINE__);
@@ -8008,12 +7964,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     push(&peers[j], &broadcastedTick.header, true);
                                                                 }
 
-                                                                while (_InterlockedCompareExchange8(&tickLocks[ownComputorIndices[i]], 1, 0))
-                                                                {
-                                                                    _mm_pause();
-                                                                }
+                                                                ACQUIRE(tickLocks[ownComputorIndices[i]]);
                                                                 bs->CopyMem(&ticks[((((broadcastedTick.broadcastTick.tick.tick - system.initialTick) * NUMBER_OF_COMPUTORS) + broadcastedTick.broadcastTick.tick.computorIndex) << 1) + (EQUAL(*((__m256i*)broadcastedTick.broadcastTick.tick.nextTickDataDigest), ZERO) ? 0 : 1)], &broadcastedTick.broadcastTick.tick, sizeof(Tick));
-                                                                _InterlockedCompareExchange8(&tickLocks[ownComputorIndices[i]], 0, 1);
+                                                                RELEASE(tickLocks[ownComputorIndices[i]]);
                                                             }
                                                         }
                                                     }
@@ -8088,10 +8041,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 *((__m256i*)tickEssence.computerDigest) = *((__m256i*)etalonTick.saltedComputerDigest);
                                                 for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
                                                 {
-                                                    while (_InterlockedCompareExchange8(&tickLocks[i], 1, 0))
-                                                    {
-                                                        _mm_pause();
-                                                    }
+                                                    ACQUIRE(tickLocks[i]);
 
                                                     {
                                                         const Tick* tick = &ticks[baseOffset + (i << 1)];
@@ -8215,7 +8165,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                         }
                                                     }
 
-                                                    _InterlockedCompareExchange8(&tickLocks[i], 0, 1);
+                                                    RELEASE(tickLocks[i]);
                                                 }
 
                                                 if (tickNumberOfComputors[0] >= QUORUM || tickNumberOfComputors[1] >= QUORUM)
@@ -8691,16 +8641,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     peers[i].isConnectedAccepted = TRUE;
 
                                                     ExchangePublicPeers* request = (ExchangePublicPeers*)&peers[i].dataToTransmit[sizeof(RequestResponseHeader)];
-                                                    unsigned int j;
-                                                    if (*((int*)ownPublicAddress))
-                                                    {
-                                                        *((int*)request->peers[0]) = *((int*)ownPublicAddress);
-                                                        j = 1;
-                                                    }
-                                                    else
-                                                    {
-                                                        j = 0;
-                                                    }
                                                     bool noVerifiedPublicPeers = true;
                                                     for (unsigned int k = 0; k < numberOfPublicPeers; k++)
                                                     {
@@ -8711,7 +8651,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                             break;
                                                         }
                                                     }
-                                                    for (; j < NUMBER_OF_EXCHANGED_PEERS; j++)
+                                                    for (unsigned int j = 0; j < NUMBER_OF_EXCHANGED_PEERS; j++)
                                                     {
                                                         unsigned int random;
                                                         _rdrand32_step(&random);
