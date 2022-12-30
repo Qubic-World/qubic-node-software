@@ -24,13 +24,13 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 75
-#define VERSION_C 3
+#define VERSION_B 76
+#define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
 static unsigned short SYSTEM_FILE_NAME[] = L"system";
-static unsigned short SOLUTION_FILE_NAME[] = L"solution.036";
+static unsigned short SOLUTION_FILE_NAME[] = L"solution.037";
 static unsigned short SPECTRUM_FILE_NAME[] = L"spectrum.???";
 
 #include <intrin.h>
@@ -43,7 +43,7 @@ static unsigned short SPECTRUM_FILE_NAME[] = L"spectrum.???";
 
 #define EQUAL(a, b) (_mm256_movemask_epi8(_mm256_cmpeq_epi64(a, b)) == 0xFFFFFFFF)
 #define ACQUIRE(lock) while (_InterlockedCompareExchange8(&lock, 1, 0)) _mm_pause()
-#define RELEASE(lock) _InterlockedCompareExchange8(&lock, 0, 1)
+#define RELEASE(lock) lock = 0
 
 
 
@@ -5283,9 +5283,9 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define MAX_SMART_CONTRACT_STATE_SIZE 1073741824
 #define MAX_UNIVERSE_SIZE 1073741824
 #define NUMBER_OF_EXCHANGED_PEERS 4
-#define NUMBER_OF_OUTGOING_CONNECTIONS 16
+#define NUMBER_OF_OUTGOING_CONNECTIONS 4
 #define NUMBER_OF_INCOMING_CONNECTIONS 48
-#define NUMBER_OF_NEURONS 19000
+#define NUMBER_OF_NEURONS 20000
 #define NUMBER_OF_SOLUTION_NONCES 1000
 #define NUMBER_OF_TRANSACTIONS_PER_TICK 1000
 #define PEER_REFRESHING_PERIOD 30
@@ -5294,7 +5294,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 90
 #define REVENUE_PUBLICATION_PERIOD 300
 #define SIGNATURE_SIZE 64
-#define SOLUTION_THRESHOLD 28
+#define SOLUTION_THRESHOLD 29
 #define SPECTRUM_CAPACITY 0x1000000ULL // Must be 2^N
 #define SPECTRUM_DEPTH 24 // Is derived from SPECTRUM_CAPACITY (=N)
 #define SPECTRUM_FRAGMENT_LENGTH 256
@@ -7188,7 +7188,7 @@ static BOOLEAN initialize()
                 {
                     bs->SetMem(&system, sizeof(system), 0);
 
-                    system.epoch = 36;
+                    system.epoch = 37;
                     system.epochBeginningHour = 12;
                     system.epochBeginningDay = 13;
                     system.epochBeginningMonth = 4;
@@ -7196,7 +7196,7 @@ static BOOLEAN initialize()
                 }
 
                 system.version = VERSION_B;
-                system.initialTick = system.tick = 4201000;
+                system.initialTick = system.tick = 4300000;
 
                 prevTickMillisecond = system.epochBeginningMillisecond;
                 prevTickSecond = system.epochBeginningSecond;
@@ -7303,8 +7303,8 @@ static BOOLEAN initialize()
         randomSeed[0] = 128;
         randomSeed[1] = 80;
         randomSeed[2] = 115;
-        randomSeed[3] = 3;
-        randomSeed[4] = 212;
+        randomSeed[3] = 130;
+        randomSeed[4] = 112;
         randomSeed[5] = 249;
         randomSeed[6] = 70;
         randomSeed[7] = 112;
