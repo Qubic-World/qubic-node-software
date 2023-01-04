@@ -24,13 +24,13 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 76
+#define VERSION_B 77
 #define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
 static unsigned short SYSTEM_FILE_NAME[] = L"system";
-static unsigned short SOLUTION_FILE_NAME[] = L"solution.037";
+static unsigned short SOLUTION_FILE_NAME[] = L"solution.038";
 static unsigned short SPECTRUM_FILE_NAME[] = L"spectrum.???";
 
 #include <intrin.h>
@@ -5268,7 +5268,6 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 
 #define BUFFER_SIZE 1048576
 #define TARGET_TICK_DURATION 10
-#define CRITICAL_TICK_DURATION 60
 #define DEJAVU_SWAP_LIMIT 28000000
 #define DISSEMINATION_MULTIPLIER 4
 #define ISSUANCE_RATE 1000000000000
@@ -5285,7 +5284,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define NUMBER_OF_EXCHANGED_PEERS 4
 #define NUMBER_OF_OUTGOING_CONNECTIONS 4
 #define NUMBER_OF_INCOMING_CONNECTIONS 48
-#define NUMBER_OF_NEURONS 20000
+#define NUMBER_OF_NEURONS 65536
 #define NUMBER_OF_SOLUTION_NONCES 1000
 #define NUMBER_OF_TRANSACTIONS_PER_TICK 1000
 #define PEER_REFRESHING_PERIOD 30
@@ -6244,7 +6243,7 @@ static void requestProcessor(void* ProcedureArgument)
                     {
                         bs->CopyMem(&broadcastedComputors.broadcastComputors.computors, &request->computors, sizeof(Computors));
 
-                        if (request->computors.epoch == system.epoch)
+                        /*if (request->computors.epoch == system.epoch)
                         {
                             numberOfOwnComputorIndices = 0;
                             for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
@@ -6260,7 +6259,7 @@ static void requestProcessor(void* ProcedureArgument)
                                     }
                                 }
                             }
-                        }
+                        }*/
 
                         responseSize = requestHeader->size;
                     }
@@ -6966,10 +6965,25 @@ static BOOLEAN initialize()
         getPublicKeyFromIdentity(computorsToSetMaxRevenueTo[i], computorsToSetMaxRevenueTo[i]);
     }
 
+
+    int cpuInfo[4];
+    __cpuid(cpuInfo, 0x15);
+    if (cpuInfo[2] == 0 || cpuInfo[1] == 0 || cpuInfo[0] == 0)
+    {
+        log(L"Theoretical TSC frequency = n/a.");
+    }
+    else
+    {
+        setText(message, L"Theoretical TSC frequency = ");
+        appendNumber(message, ((unsigned long long)cpuInfo[1]) * cpuInfo[2] / cpuInfo[0], TRUE);
+        appendText(message, L" Hz.");
+        log(message);
+    }
+
     frequency = __rdtsc();
     bs->Stall(1000000);
     frequency = __rdtsc() - frequency;
-    setText(message, L"TSC frequency = ");
+    setText(message, L"Practical TSC frequency = ");
     appendNumber(message, frequency, TRUE);
     appendText(message, L" Hz.");
     log(message);
@@ -7188,7 +7202,7 @@ static BOOLEAN initialize()
                 {
                     bs->SetMem(&system, sizeof(system), 0);
 
-                    system.epoch = 37;
+                    system.epoch = 38;
                     system.epochBeginningHour = 12;
                     system.epochBeginningDay = 13;
                     system.epochBeginningMonth = 4;
@@ -7196,7 +7210,7 @@ static BOOLEAN initialize()
                 }
 
                 system.version = VERSION_B;
-                system.initialTick = system.tick = 4300000;
+                system.initialTick = system.tick = 4400000;
 
                 prevTickMillisecond = system.epochBeginningMillisecond;
                 prevTickSecond = system.epochBeginningSecond;
@@ -7305,8 +7319,8 @@ static BOOLEAN initialize()
         randomSeed[2] = 115;
         randomSeed[3] = 130;
         randomSeed[4] = 112;
-        randomSeed[5] = 249;
-        randomSeed[6] = 70;
+        randomSeed[5] = 88;
+        randomSeed[6] = 16;
         randomSeed[7] = 112;
         random(randomSeed, randomSeed, (unsigned char*)miningData, sizeof(miningData));
 
@@ -7536,7 +7550,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
     bs->SetWatchdogTimer(0, 0, 0, NULL);
 
-    EFI_TIME_CAPABILITIES timeCapabilities;
     {
         bs->SetMem(&time, sizeof(time), 0);
         time.Year = 2022;
@@ -7545,13 +7558,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
         time.Hour = 12;
 
         EFI_TIME newTime;
-        if (!rs->GetTime(&newTime, &timeCapabilities))
+        if (!rs->GetTime(&newTime, NULL))
         {
             bs->CopyMem(&time, &newTime, sizeof(time));
-        }
-        else
-        {
-            bs->SetMem(&timeCapabilities, sizeof(timeCapabilities), 0);
         }
     }
 
@@ -7563,13 +7572,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
     appendText(message, L".");
     appendNumber(message, VERSION_C, FALSE);
     appendText(message, L" is launched.");
-    log(message);
-
-    setText(message, L"Clock resolution = ");
-    appendNumber(message, timeCapabilities.Resolution, TRUE);
-    appendText(message, L" Hz; clock accuracy = ");
-    appendNumber(message, timeCapabilities.Accuracy, TRUE);
-    appendText(message, L" millionth.");
     log(message);
 
     if (initialize())
@@ -7998,15 +8000,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     }
                                                 }
                                             }
-
-                                            if (etalonTickMustBeCreated && requestedTickData.requestTickData.requestedTickData.tick != system.tick + 1)
-                                            {
-                                                requestedTickData.requestTickData.requestedTickData.tick = system.tick + 1;
-                                                for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
-                                                {
-                                                    push(&peers[j], &requestedTickData.header, true);
-                                                }
-                                            }
                                         }
 
                                         const unsigned int baseOffset = ((system.tick - system.initialTick) * NUMBER_OF_COMPUTORS) << 1;
@@ -8266,15 +8259,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 }
                                                 else
                                                 {
-                                                    if (futureTickTotalNumberOfComputors > (NUMBER_OF_COMPUTORS - QUORUM) && requestedQuorumTick.requestQuorumTick.quorumTick.tick != system.tick)
-                                                    {
-                                                        requestedQuorumTick.requestQuorumTick.quorumTick.tick = system.tick;
-                                                        for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
-                                                        {
-                                                            push(&peers[j], &requestedQuorumTick.header, true);
-                                                        }
-                                                    }
-
                                                     if (numberOfUniqueTickEssenceDigests[0])
                                                     {
                                                         unsigned int mostPopularUniqueTickEssenceDigestIndex = 0, totalUniqueTickEssenceDigestCounter = uniqueTickEssenceDigestCounters[0][0];
@@ -8367,24 +8351,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     log(L"Report case C!");
                                                                 }
                                                             }
-                                                            else
-                                                            {
-                                                                if (tickTotalNumberOfComputors >= QUORUM
-                                                                    && (__rdtsc() - latestTickTick > CRITICAL_TICK_DURATION * frequency)
-                                                                    && !EQUAL(*((__m256i*)etalonTick.nextTickDataDigest), ZERO))
-                                                                {
-                                                                    etalonTickMustBeCreated = true;
-                                                                    if (system.latestCreatedTick == system.tick)
-                                                                    {
-                                                                        system.latestCreatedTick--;
-                                                                    }
-                                                                    etalonTick.tick = 0;
-
-                                                                    targetNextTickDataDigest = ZERO;
-                                                                    if (targetNextTickDataDigestIsKnown) log(L"Report case D-4!");
-                                                                    targetNextTickDataDigestIsKnown = true;
-                                                                }
-                                                            }
                                                         }
                                                     }
                                                 }
@@ -8425,7 +8391,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             {
                                                 for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
                                                 {
-                                                    broadcastedRevenues.broadcastRevenues.revenues.revenues[j] = (faultyComputorFlags[j >> 6] & (1ULL << (j & 63))) ? 0 : ((system.tickCounters[j] >= maxCounter) ? (ISSUANCE_RATE / NUMBER_OF_COMPUTORS) : (system.tickCounters[j] * ((unsigned long long)(ISSUANCE_RATE / NUMBER_OF_COMPUTORS)) / maxCounter));
+                                                    broadcastedRevenues.broadcastRevenues.revenues.revenues[j] = /*(faultyComputorFlags[j >> 6] & (1ULL << (j & 63))) ? 0 :*/ ((system.tickCounters[j] >= maxCounter) ? (ISSUANCE_RATE / NUMBER_OF_COMPUTORS) : (system.tickCounters[j] * ((unsigned long long)(ISSUANCE_RATE / NUMBER_OF_COMPUTORS)) / maxCounter));
                                                     for (unsigned int k = 0; k < sizeof(computorsToSetMaxRevenueTo) / sizeof(computorsToSetMaxRevenueTo[0]); k++)
                                                     {
                                                         if (EQUAL(*((__m256i*)broadcastedComputors.broadcastComputors.computors.publicKeys[j]), *((__m256i*)computorsToSetMaxRevenueTo[k])))
@@ -8699,9 +8665,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     }
 
                                                     _InterlockedIncrement64(&numberOfDisseminatedRequests);
-
-                                                    requestedQuorumTick.requestQuorumTick.quorumTick.tick = 0;
-                                                    requestedTickData.requestTickData.requestedTickData.tick = 0;
                                                 }
                                             }
                                         }
@@ -8858,9 +8821,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                             }
 
                                                                             _InterlockedIncrement64(&numberOfDisseminatedRequests);
-
-                                                                            requestedQuorumTick.requestQuorumTick.quorumTick.tick = 0;
-                                                                            requestedTickData.requestTickData.requestedTickData.tick = 0;
                                                                         }
                                                                     }
 
@@ -8990,11 +8950,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                         if (EQUAL(*((__m256i*)request->minerPublicKey), *((__m256i*)miningPublicKeys[j])))
                                                                         {
                                                                             random(request->minerPublicKey, request->nonce, (unsigned char*)validationNeuronLinks, sizeof(validationNeuronLinks));
-                                                                            for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
+                                                                            /*for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
                                                                             {
                                                                                 validationNeuronLinks[k][0] %= NUMBER_OF_NEURONS;
                                                                                 validationNeuronLinks[k][1] %= NUMBER_OF_NEURONS;
-                                                                            }
+                                                                            }*/
 
                                                                             bs->SetMem(validationNeuronValues, sizeof(validationNeuronValues), 0xFF);
 
@@ -9308,11 +9268,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if (!EQUAL(*((__m256i*)broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces[j]), ZERO))
                                             {
                                                 ::random(broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey, broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces[j], (unsigned char*)validationNeuronLinks, sizeof(validationNeuronLinks));
-                                                for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
+                                                /*for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
                                                 {
                                                     validationNeuronLinks[k][0] %= NUMBER_OF_NEURONS;
                                                     validationNeuronLinks[k][1] %= NUMBER_OF_NEURONS;
-                                                }
+                                                }*/
 
                                                 bs->SetMem(validationNeuronValues, sizeof(validationNeuronValues), 0xFF);
 
