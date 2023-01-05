@@ -25,7 +25,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 77
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -6246,7 +6246,7 @@ static void requestProcessor(void* ProcedureArgument)
                     {
                         bs->CopyMem(&broadcastedComputors.broadcastComputors.computors, &request->computors, sizeof(Computors));
 
-                        /*if (request->computors.epoch == system.epoch)
+                        if (request->computors.epoch == system.epoch)
                         {
                             numberOfOwnComputorIndices = 0;
                             for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
@@ -6262,7 +6262,7 @@ static void requestProcessor(void* ProcedureArgument)
                                     }
                                 }
                             }
-                        }*/
+                        }
 
                         responseSize = requestHeader->size;
                     }
