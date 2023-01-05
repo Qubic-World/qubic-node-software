@@ -25,7 +25,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 77
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -35,7 +35,7 @@ static unsigned short SPECTRUM_FILE_NAME[] = L"spectrum.???";
 
 #include <intrin.h>
 
-//#include "qubics.h"
+#include "qubics.h"
 
 
 
@@ -5270,6 +5270,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define TARGET_TICK_DURATION 10
 #define DEJAVU_SWAP_LIMIT 28000000
 #define DISSEMINATION_MULTIPLIER 4
+#define FIRST_TICK_TRANSACTION_OFFSET sizeof(unsigned long long)
 #define ISSUANCE_RATE 1000000000000
 #define MAX_INVOCATION_SIZE 1024
 #define MAX_MESSAGE_SIZE 1024
@@ -5286,7 +5287,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define NUMBER_OF_INCOMING_CONNECTIONS 48
 #define NUMBER_OF_NEURONS 65536
 #define NUMBER_OF_SOLUTION_NONCES 1000
-#define NUMBER_OF_TRANSACTIONS_PER_TICK 1000
+#define NUMBER_OF_TRANSACTIONS_PER_TICK 1024 // Must be 2^N
 #define PEER_REFRESHING_PERIOD 30
 #define PORT 21841
 #define QUORUM (NUMBER_OF_COMPUTORS * 2 / 3 + 1)
@@ -5682,6 +5683,8 @@ static Revenues revenues[NUMBER_OF_COMPUTORS];
 static Tick* ticks = NULL;
 static unsigned long long tickFlags[MAX_NUMBER_OF_TICKS_PER_EPOCH][(NUMBER_OF_COMPUTORS + 63) / 64];
 static TickData* tickData = NULL;
+static unsigned char* tickTransactions = NULL;
+static unsigned long long nextTickTransactionOffset = FIRST_TICK_TRANSACTION_OFFSET;
 
 static __m256i tickEssenceDigests[NUMBER_OF_COMPUTORS][2];
 static __m256i uniqueTickEssenceDigests[NUMBER_OF_COMPUTORS][2];
@@ -7150,7 +7153,8 @@ static BOOLEAN initialize()
         }
         bs->SetMem(ticks, ((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * NUMBER_OF_COMPUTORS * 2 * sizeof(Tick), 0);
         bs->SetMem(tickFlags, sizeof(tickFlags), 0);
-        if (status = bs->AllocatePool(EfiRuntimeServicesData, ((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * sizeof(TickData), (void**)&tickData))
+        if ((status = bs->AllocatePool(EfiRuntimeServicesData, ((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * sizeof(TickData), (void**)&tickData))
+            || (status = bs->AllocatePool(EfiRuntimeServicesData, FIRST_TICK_TRANSACTION_OFFSET + (((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * NUMBER_OF_TRANSACTIONS_PER_TICK * sizeof(Transfer)), (void**)&tickTransactions)))
         {
             logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status, __LINE__);
 
@@ -7447,6 +7451,10 @@ static void deinitialize()
         bs->FreePool(initSpectrum);
     }
 
+    if (tickTransactions)
+    {
+        bs->FreePool(tickTransactions);
+    }
     if (tickData)
     {
         bs->FreePool(tickData);
