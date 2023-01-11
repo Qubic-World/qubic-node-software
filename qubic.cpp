@@ -24,13 +24,13 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 79
-#define VERSION_C 1
+#define VERSION_B 80
+#define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
 static unsigned short SYSTEM_FILE_NAME[] = L"system";
-static unsigned short SOLUTION_FILE_NAME[] = L"solution.038";
+static unsigned short SOLUTION_FILE_NAME[] = L"solution.039";
 static unsigned short SPECTRUM_FILE_NAME[] = L"spectrum.???";
 
 #include <intrin.h>
@@ -5266,7 +5266,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 
 ////////// Qubic \\\\\\\\\\
 
-#define BUFFER_SIZE 1048576
+#define BUFFER_SIZE (1048576 * 4)
 #define TARGET_TICK_DURATION 10
 #define DEJAVU_SWAP_LIMIT 28000000
 #define DISSEMINATION_MULTIPLIER 4
@@ -5285,7 +5285,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define NUMBER_OF_EXCHANGED_PEERS 4
 #define NUMBER_OF_OUTGOING_CONNECTIONS 4
 #define NUMBER_OF_INCOMING_CONNECTIONS 48
-#define NUMBER_OF_NEURONS 65536
+#define NUMBER_OF_NEURONS 200000
 #define NUMBER_OF_SOLUTION_NONCES 1000
 #define NUMBER_OF_TRANSACTIONS_PER_TICK 1024 // Must be 2^N
 #define PEER_REFRESHING_PERIOD 10
@@ -5294,7 +5294,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 90
 #define REVENUE_PUBLICATION_PERIOD 300
 #define SIGNATURE_SIZE 64
-#define SOLUTION_THRESHOLD 29
+#define SOLUTION_THRESHOLD 28
 #define SPECTRUM_CAPACITY 0x1000000ULL // Must be 2^N
 #define SPECTRUM_DEPTH 24 // Is derived from SPECTRUM_CAPACITY (=N)
 #define SPECTRUM_FRAGMENT_LENGTH 256
@@ -5726,7 +5726,7 @@ static unsigned long long totalRatingOfPublicPeers = 0;
 static EFI_EVENT computorEvents[NUMBER_OF_COMPUTING_PROCESSORS];
 
 static unsigned long long miningData[65536];
-static unsigned short validationNeuronLinks[NUMBER_OF_NEURONS][2];
+static unsigned int validationNeuronLinks[NUMBER_OF_NEURONS][2];
 static unsigned char validationNeuronValues[NUMBER_OF_NEURONS];
 
 static struct
@@ -6272,7 +6272,7 @@ static void requestProcessor(void* ProcedureArgument)
                     {
                         bs->CopyMem(&broadcastedComputors.broadcastComputors.computors, &request->computors, sizeof(Computors));
 
-                        if (request->computors.epoch == system.epoch)
+                        /*if (request->computors.epoch == system.epoch)
                         {
                             numberOfOwnComputorIndices = 0;
                             for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
@@ -6288,7 +6288,7 @@ static void requestProcessor(void* ProcedureArgument)
                                     }
                                 }
                             }
-                        }
+                        }*/
 
                         responseSize = requestHeader->size;
                     }
@@ -6529,6 +6529,8 @@ static void requestProcessor(void* ProcedureArgument)
                         KangarooTwelve((unsigned char*)request, sizeof(Terminator) - SIGNATURE_SIZE, digest, sizeof(digest));
                         if (verify(adminPublicKey, digest, request->terminator.signature))
                         {
+                            bs->CopyMem(&broadcastedTerminator.broadcastTerminator.terminator, &request->terminator, sizeof(Terminator));
+
                             responseSize = requestHeader->size;
                         }
                     }
@@ -7228,7 +7230,7 @@ static BOOLEAN initialize()
                 {
                     bs->SetMem(&system, sizeof(system), 0);
 
-                    system.epoch = 38;
+                    system.epoch = 39;
                     system.epochBeginningHour = 12;
                     system.epochBeginningDay = 13;
                     system.epochBeginningMonth = 4;
@@ -7236,11 +7238,14 @@ static BOOLEAN initialize()
                 }
 
                 system.version = VERSION_B;
-                if (system.tick < 4440000)
+                if (system.epoch == 39)
                 {
-                    system.tick = 4440000;
+                    system.initialTick = system.tick = 4450000;
                 }
-                system.initialTick = system.tick;
+                else
+                {
+                    system.tick = system.initialTick;
+                }
 
                 prevTickMillisecond = system.epochBeginningMillisecond;
                 prevTickSecond = system.epochBeginningSecond;
@@ -7345,13 +7350,13 @@ static BOOLEAN initialize()
         unsigned char randomSeed[32];
         bs->SetMem(randomSeed, 32, 0);
         randomSeed[0] = 128;
-        randomSeed[1] = 80;
+        randomSeed[1] = 87;
         randomSeed[2] = 115;
-        randomSeed[3] = 130;
+        randomSeed[3] = 131;
         randomSeed[4] = 112;
-        randomSeed[5] = 88;
+        randomSeed[5] = 86;
         randomSeed[6] = 16;
-        randomSeed[7] = 112;
+        randomSeed[7] = 111;
         random(randomSeed, randomSeed, (unsigned char*)miningData, sizeof(miningData));
 
         if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SOLUTION_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, EFI_FILE_ARCHIVE))
@@ -8746,7 +8751,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     if (receivedDataSize >= sizeof(RequestResponseHeader))
                                                     {
                                                         RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                        if (requestResponseHeader->protocol < VERSION_B - 2 || requestResponseHeader->protocol > VERSION_B + 1)
+                                                        if (requestResponseHeader->protocol < VERSION_B || requestResponseHeader->protocol > VERSION_B + 1)
                                                         {
                                                             closePeer(&peers[i]);
                                                         }
@@ -8983,11 +8988,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                         if (EQUAL(*((__m256i*)request->minerPublicKey), *((__m256i*)miningPublicKeys[j])))
                                                                         {
                                                                             random(request->minerPublicKey, request->nonce, (unsigned char*)validationNeuronLinks, sizeof(validationNeuronLinks));
-                                                                            /*for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
+                                                                            for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
                                                                             {
                                                                                 validationNeuronLinks[k][0] %= NUMBER_OF_NEURONS;
                                                                                 validationNeuronLinks[k][1] %= NUMBER_OF_NEURONS;
-                                                                            }*/
+                                                                            }
 
                                                                             bs->SetMem(validationNeuronValues, sizeof(validationNeuronValues), 0xFF);
 
@@ -9299,11 +9304,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if (!EQUAL(*((__m256i*)broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces[j]), ZERO))
                                             {
                                                 ::random(broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey, broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces[j], (unsigned char*)validationNeuronLinks, sizeof(validationNeuronLinks));
-                                                /*for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
+                                                for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
                                                 {
                                                     validationNeuronLinks[k][0] %= NUMBER_OF_NEURONS;
                                                     validationNeuronLinks[k][1] %= NUMBER_OF_NEURONS;
-                                                }*/
+                                                }
 
                                                 bs->SetMem(validationNeuronValues, sizeof(validationNeuronValues), 0xFF);
 
