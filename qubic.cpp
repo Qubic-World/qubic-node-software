@@ -25,7 +25,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 79
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -6378,6 +6378,18 @@ static void requestProcessor(void* ProcedureArgument)
                                 }
                             }
                         }
+                        else
+                        {
+                            if (!EQUAL(*((__m256i*)request->tick.varStruct.nextTickData.zero), ZERO))
+                            {
+                                KangarooTwelve((unsigned char*)&request->tick.tick, sizeof(request->tick.tick), digest, sizeof(digest));
+                                if (!verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->tick.tick % NUMBER_OF_COMPUTORS], digest, request->tick.varStruct.trigger.signature)
+                                    && !verify(adminPublicKey, digest, request->tick.varStruct.trigger.signature))
+                                {
+                                    isFaulty = true;
+                                }
+                            }
+                        }
 
                         if (isFaulty)
                         {
@@ -7224,9 +7236,9 @@ static BOOLEAN initialize()
                 }
 
                 system.version = VERSION_B;
-                if (system.epoch == 38)
+                if (system.tick < 4440000)
                 {
-                    system.tick = 4430000;
+                    system.tick = 4440000;
                 }
                 system.initialTick = system.tick;
 
@@ -7750,6 +7762,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             __m256i etalonTickEssenceDigest;
                             bool etalonTickMustBeCreated = false;
                             unsigned char triggerSignature[SIGNATURE_SIZE];
+                            bs->SetMem(triggerSignature, sizeof(triggerSignature), 0);
                             unsigned long long clockTick = 0, systemDataSavingTick = 0, loggingTick = 0, peerRefreshingTick = 0, resourceTestingSolutionPublicationTick = 0;
                             while (!state)
                             {
@@ -7866,6 +7879,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                 if (EQUAL(*((__m256i*)triggerSignature), ZERO))
                                                 {
+                                                    *((__m256i*)etalonTick.varStruct.nextTickData.zero) = ZERO;
+
                                                     if (targetNextTickDataDigestIsKnown)
                                                     {
                                                         if (EQUAL(targetNextTickDataDigest, ZERO))
@@ -8211,7 +8226,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                                 for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
                                                                 {
-                                                                    system.tickCounters[i] += counters[i];
+                                                                    //system.tickCounters[i] += counters[i];
                                                                 }
 
                                                                 prevTickMillisecond = etalonTick.millisecond;
