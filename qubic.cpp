@@ -25,7 +25,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 80
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -5285,7 +5285,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define NUMBER_OF_EXCHANGED_PEERS 4
 #define NUMBER_OF_OUTGOING_CONNECTIONS 4
 #define NUMBER_OF_INCOMING_CONNECTIONS 48
-#define NUMBER_OF_NEURONS 200000
+#define NUMBER_OF_NEURONS 20000
 #define NUMBER_OF_SOLUTION_NONCES 1000
 #define NUMBER_OF_TRANSACTIONS_PER_TICK 1024 // Must be 2^N
 #define PEER_REFRESHING_PERIOD 10
@@ -5682,7 +5682,7 @@ static volatile char spectrumLock = 0;
 static Entity* spectrum = NULL;
 static unsigned int numberOfEntities = 0;
 static volatile char entityPendingTransactionsLock = 0;
-static unsigned char* entityPendingTransactions = NULL;
+static Transaction* entityPendingTransactions = NULL;
 static unsigned long long spectrumUpdatingBeginningTick = 0;
 static unsigned long long spectrumDigestCalculationBeginningTick = 0;
 static volatile unsigned char spectrumDigestLevel = 0;
@@ -5949,6 +5949,30 @@ static void logStatus(const CHAR16* message, const EFI_STATUS status, const unsi
     appendNumber(::message, lineNumber, FALSE);
     appendText(::message, L"!");
     log(::message);
+}
+
+static int spectrumIndex(unsigned char* publicKey)
+{
+    unsigned int index = (*((unsigned int*)publicKey)) & (SPECTRUM_CAPACITY - 1);
+
+iteration:
+    if (EQUAL(*((__m256i*)spectrum[index].publicKey), *((__m256i*)publicKey)))
+    {
+        return index;
+    }
+    else
+    {
+        if (EQUAL(*((__m256i*)spectrum[index].publicKey), ZERO))
+        {
+            return -1;
+        }
+        else
+        {
+            index = (index + 1) & (SPECTRUM_CAPACITY - 1);
+
+            goto iteration;
+        }
+    }
 }
 
 static void increaseEnergy(unsigned char* publicKey, long long amount, unsigned int tick)
@@ -6272,7 +6296,7 @@ static void requestProcessor(void* ProcedureArgument)
                     {
                         bs->CopyMem(&broadcastedComputors.broadcastComputors.computors, &request->computors, sizeof(Computors));
 
-                        /*if (request->computors.epoch == system.epoch)
+                        if (request->computors.epoch == system.epoch)
                         {
                             numberOfOwnComputorIndices = 0;
                             for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
@@ -6288,7 +6312,7 @@ static void requestProcessor(void* ProcedureArgument)
                                     }
                                 }
                             }
-                        }*/
+                        }
 
                         responseSize = requestHeader->size;
                     }
@@ -6551,18 +6575,17 @@ static void requestProcessor(void* ProcedureArgument)
                     {
                         responseSize = requestHeader->size;
 
-                        unsigned int tick = system.tick;
-                        if (request->tick > tick && request->tick - tick <= NUMBER_OF_COMPUTORS)
+                        const int spectrumIndex = ::spectrumIndex(request->sourcePublicKey);
+                        if (spectrumIndex >= 0)
                         {
-                            for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
-                            {
-                                if (request->tick % NUMBER_OF_COMPUTORS == ownComputorIndices[i])
-                                {
-                                    // TODO: Buffer the transaction
+                            ACQUIRE(entityPendingTransactionsLock);
 
-                                    break;
-                                }
+                            if (entityPendingTransactions[spectrumIndex].tick < request->tick)
+                            {
+                                bs->CopyMem(&entityPendingTransactions[spectrumIndex], request, sizeof(Transaction) + request->inputSize + SIGNATURE_SIZE);
                             }
+
+                            RELEASE(entityPendingTransactionsLock);
                         }
                     }
                 }
@@ -6848,7 +6871,7 @@ static void saveSpectrum()
 
     EFI_FILE_PROTOCOL* dataFile;
     EFI_STATUS status;
-    if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SPECTRUM_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0))
+    if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SPECTRUM_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, 0))
     {
         logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status, __LINE__);
     }
@@ -7184,7 +7207,10 @@ static BOOLEAN initialize()
             return FALSE;
         }
         bs->SetMem(tickData, ((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * sizeof(TickData), 0);
-        bs->SetMem(entityPendingTransactions, SPECTRUM_CAPACITY * MAX_TRANSACTION_SIZE, 0);
+        for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
+        {
+            entityPendingTransactions[i].tick = 0;
+        }
 
         if ((status = bs->AllocatePool(EfiRuntimeServicesData, SPECTRUM_CAPACITY * sizeof(Entity), (void**)&initSpectrum))
             || (status = bs->AllocatePool(EfiRuntimeServicesData, SPECTRUM_CAPACITY * sizeof(Entity), (void**)&spectrum))
@@ -7786,7 +7812,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                 if (epochMustBeTerminated)
                                 {
-                                    if (broadcastedTerminator.broadcastTerminator.terminator.epoch == system.epoch
+                                    /*if (broadcastedTerminator.broadcastTerminator.terminator.epoch == system.epoch
                                         && broadcastedTerminator.broadcastTerminator.terminator.tick == system.tick)
                                     {
                                         long long adminRevenue = ISSUANCE_RATE - ((unsigned long long)(ISSUANCE_RATE / NUMBER_OF_COMPUTORS)) * broadcastedTerminator.broadcastTerminator.terminator.numberOfNewComputors;
@@ -7826,7 +7852,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         numberOfOwnComputorIndices = 0;
 
                                         epochMustBeTerminated = false;
-                                    }
+                                    }*/
                                 }
                                 else
                                 {
@@ -8231,7 +8257,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                                 for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
                                                                 {
-                                                                    //system.tickCounters[i] += counters[i];
+                                                                    system.tickCounters[i] += counters[i];
                                                                 }
 
                                                                 prevTickMillisecond = etalonTick.millisecond;
@@ -8250,8 +8276,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     tickTicks[i] = tickTicks[i + 1];
                                                                 }
                                                                 tickTicks[sizeof(tickTicks) / sizeof(tickTicks[0]) - 1] = __rdtsc();
-
-                                                                // TODO: Check if the transaction buffer must be emptied
 
                                                                 if (system.tick > system.latestCreatedTick
                                                                     && futureTickTotalNumberOfComputors <= NUMBER_OF_COMPUTORS - QUORUM)
@@ -8488,9 +8512,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         }
                                     }
                                     appendNumber(message, numberOfConnectingSlots, FALSE);
-                                    appendText(message, L">>");
+                                    appendText(message, L"|");
                                     appendNumber(message, numberOfConnectedSlots, FALSE);
-                                    appendText(message, L">>");
+                                    appendText(message, L"|");
                                     appendNumber(message, numberOfHandshakedSlots, FALSE);
 
                                     appendText(message, L" ");
@@ -8585,6 +8609,18 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             }
                                         }
                                     }
+                                    log(message);
+
+                                    unsigned int numberOfPendingTransactions = 0;
+                                    for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
+                                    {
+                                        if (entityPendingTransactions[i].tick >= system.tick)
+                                        {
+                                            numberOfPendingTransactions++;
+                                        }
+                                    }
+                                    setNumber(message, numberOfPendingTransactions, TRUE);
+                                    appendText(message, L" pending transactions.");
                                     log(message);
                                 }
 
