@@ -25,7 +25,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 80
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -5530,6 +5530,7 @@ typedef struct
 typedef struct
 {
     unsigned int tick;
+    unsigned char voteFlags[NUMBER_OF_COMPUTORS / 4];
 } RequestedQuorumTick;
 
 typedef struct
@@ -8706,6 +8707,16 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     }
 
                                                     requestedQuorumTick.requestQuorumTick.quorumTick.tick = system.tick;
+                                                    bs->SetMem(&requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags, sizeof(requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags), 0);
+                                                    const unsigned int baseOffset = (system.tick - system.initialTick) * NUMBER_OF_COMPUTORS;
+                                                    for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
+                                                    {
+                                                        const Tick* tick = &ticks[baseOffset + j];
+                                                        if (tick->epoch == system.epoch)
+                                                        {
+                                                            requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags[j >> 2] |= ((EQUAL(*((__m256i*)tick->varStruct.nextTickData.zero), ZERO)) ? 1 : 2) << ((j & 3) << 1);
+                                                        }
+                                                    }
                                                     bs->CopyMem(ptr, &requestedQuorumTick, requestedQuorumTick.header.size);
                                                     peers[i].dataToTransmitSize += requestedQuorumTick.header.size;
                                                     _InterlockedIncrement64(&numberOfDisseminatedRequests);
@@ -8787,7 +8798,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     if (receivedDataSize >= sizeof(RequestResponseHeader))
                                                     {
                                                         RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                        if (requestResponseHeader->protocol < VERSION_B || requestResponseHeader->protocol > VERSION_B + 1)
+                                                        if (requestResponseHeader->protocol < VERSION_B - 1 || requestResponseHeader->protocol > VERSION_B + 1)
                                                         {
                                                             closePeer(&peers[i]);
                                                         }
@@ -8871,6 +8882,16 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                             }
 
                                                                             requestedQuorumTick.requestQuorumTick.quorumTick.tick = system.tick;
+                                                                            bs->SetMem(&requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags, sizeof(requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags), 0);
+                                                                            const unsigned int baseOffset = (system.tick - system.initialTick) * NUMBER_OF_COMPUTORS;
+                                                                            for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
+                                                                            {
+                                                                                const Tick* tick = &ticks[baseOffset + j];
+                                                                                if (tick->epoch == system.epoch)
+                                                                                {
+                                                                                    requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags[j >> 2] |= ((EQUAL(*((__m256i*)tick->varStruct.nextTickData.zero), ZERO)) ? 1 : 2) << ((j & 3) << 1);
+                                                                                }
+                                                                            }
                                                                             bs->CopyMem(ptr, &requestedQuorumTick, requestedQuorumTick.header.size);
                                                                             peers[i].dataToTransmitSize += requestedQuorumTick.header.size;
                                                                             _InterlockedIncrement64(&numberOfDisseminatedRequests);
@@ -8937,11 +8958,17 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                                 _rdrand16_step(&random);
                                                                                 const unsigned short index = random % numberOfComputorIndices;
 
-                                                                                const unsigned int offset = ((request->quorumTick.tick - system.initialTick) * NUMBER_OF_COMPUTORS) + index;
-                                                                                if (ticks[offset].epoch == system.epoch)
+                                                                                if (!(request->quorumTick.voteFlags[index >> 2] & (2 << ((index & 3) << 1))))
                                                                                 {
-                                                                                    bs->CopyMem(&broadcastedTick.broadcastTick.tick, &ticks[offset], sizeof(Tick));
-                                                                                    push(&peers[i], &broadcastedTick.header, true);
+                                                                                    const unsigned int offset = ((request->quorumTick.tick - system.initialTick) * NUMBER_OF_COMPUTORS) + index;
+                                                                                    if (ticks[offset].epoch == system.epoch)
+                                                                                    {
+                                                                                        if (!EQUAL(*((__m256i*)ticks[offset].varStruct.nextTickData.zero), ZERO) || !(request->quorumTick.voteFlags[index >> 2] & (1 << ((index & 3) << 1))))
+                                                                                        {
+                                                                                            bs->CopyMem(&broadcastedTick.broadcastTick.tick, &ticks[offset], sizeof(Tick));
+                                                                                            push(&peers[i], &broadcastedTick.header, true);
+                                                                                        }
+                                                                                    }
                                                                                 }
 
                                                                                 computorIndices[index] = computorIndices[--numberOfComputorIndices];
