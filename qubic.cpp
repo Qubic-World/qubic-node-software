@@ -24,8 +24,8 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 80
-#define VERSION_C 2
+#define VERSION_B 81
+#define VERSION_C 0
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -5613,6 +5613,14 @@ typedef struct
 
 #define REQUEST_TERMINATOR 25
 
+#define BROADCAST_TICK_TRIGGER 26
+
+typedef struct
+{
+    unsigned int tick;
+    unsigned char signature[SIGNATURE_SIZE];
+} TickTrigger;
+
 static volatile int state = 0;
 
 static unsigned char computingSubseeds[sizeof(computingSeeds) / sizeof(computingSeeds[0])][32], computingPrivateKeys[sizeof(computingSeeds) / sizeof(computingSeeds[0])][32], computingPublicKeys[sizeof(computingSeeds) / sizeof(computingSeeds[0])][32];
@@ -5669,6 +5677,9 @@ static Revenues revenues[NUMBER_OF_COMPUTORS];
 static Tick* ticks = NULL;
 static unsigned long long tickFlags[MAX_NUMBER_OF_TICKS_PER_EPOCH][(NUMBER_OF_COMPUTORS + 63) / 64];
 static TickData* tickData = NULL;
+static Tick etalonTick;
+static bool etalonTickMustBeCreated = false;
+static unsigned char triggerSignature[SIGNATURE_SIZE];
 static volatile char tickTransactionsLock = 0;
 static unsigned char* tickTransactions = NULL;
 static unsigned long long nextTickTransactionOffset = FIRST_TICK_TRANSACTION_OFFSET;
@@ -6592,6 +6603,30 @@ static void requestProcessor(void* ProcedureArgument)
                 }
             }
             break;
+
+            case BROADCAST_TICK_TRIGGER:
+            {
+                TickTrigger* request = (TickTrigger*)((char*)processor->cache + sizeof(RequestResponseHeader));
+                unsigned char digest[32];
+                KangarooTwelve((unsigned char*)&request->tick, sizeof(request->tick), digest, sizeof(digest));
+                if (verify(adminPublicKey, digest, request->signature))
+                {
+                    if (request->tick == system.tick && EQUAL(*((__m256i*)triggerSignature), ZERO))
+                    {
+                        bs->CopyMem(triggerSignature, (void*)request->signature, SIGNATURE_SIZE);
+
+                        etalonTickMustBeCreated = true;
+                        etalonTick.tick = 0;
+                        if (system.latestCreatedTick == system.tick)
+                        {
+                            system.latestCreatedTick--;
+                        }
+                    }
+
+                    responseSize = requestHeader->size;
+                }
+            }
+            break;
             }
 
             if (responseSize)
@@ -7267,7 +7302,7 @@ static BOOLEAN initialize()
                 system.version = VERSION_B;
                 if (system.epoch == 39)
                 {
-                    system.initialTick = system.tick = 4450000;
+                    system.initialTick = system.tick = 4460000;
                 }
                 else
                 {
@@ -7611,6 +7646,447 @@ static unsigned int revenue(unsigned int computorIndex)
     return revenueAmounts[i];
 }
 
+static void terminateEpoch()
+{
+    if (broadcastedTerminator.broadcastTerminator.terminator.epoch == system.epoch
+        && broadcastedTerminator.broadcastTerminator.terminator.tick == system.tick)
+    {
+        long long adminRevenue = ISSUANCE_RATE - ((unsigned long long)(ISSUANCE_RATE / NUMBER_OF_COMPUTORS)) * broadcastedTerminator.broadcastTerminator.terminator.numberOfNewComputors;
+        for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+        {
+            if (broadcastedTerminator.broadcastTerminator.terminator.revenues[i])
+            {
+                increaseEnergy(broadcastedComputors.broadcastComputors.computors.publicKeys[i], broadcastedTerminator.broadcastTerminator.terminator.revenues[i], system.tick);
+                adminRevenue -= broadcastedTerminator.broadcastTerminator.terminator.revenues[i];
+            }
+        }
+        if (adminRevenue > 0)
+        {
+            increaseEnergy(adminPublicKey, adminRevenue, system.tick);
+        }
+
+        system.epoch++;
+        system.initialTick = system.tick;
+        bs->SetMem(system.tickCounters, sizeof(system.tickCounters), 0);
+        saveSystem();
+
+        SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 4] = system.epoch / 100 + L'0';
+        SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 3] = (system.epoch % 100) / 10 + L'0';
+        SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 2] = system.epoch % 10 + L'0';
+        saveSpectrum();
+
+        broadcastedComputors.broadcastComputors.computors.epoch = 0;
+        for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+        {
+            _rdrand64_step((unsigned long long*) & broadcastedComputors.broadcastComputors.computors.publicKeys[i][0]);
+            _rdrand64_step((unsigned long long*) & broadcastedComputors.broadcastComputors.computors.publicKeys[i][8]);
+            _rdrand64_step((unsigned long long*) & broadcastedComputors.broadcastComputors.computors.publicKeys[i][16]);
+            _rdrand64_step((unsigned long long*) & broadcastedComputors.broadcastComputors.computors.publicKeys[i][24]);
+        }
+        bs->SetMem(&broadcastedComputors.broadcastComputors.computors.signature, sizeof(broadcastedComputors.broadcastComputors.computors.signature), 0);
+
+        numberOfOwnComputorIndices = 0;
+
+        epochMustBeTerminated = false;
+    }
+}
+
+static void publishSolutions()
+{
+    for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
+    {
+        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.millisecond = time.Nanosecond / 1000000;
+        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.second = time.Second;
+        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.minute = time.Minute;
+        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.hour = time.Hour;
+        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.day = time.Day;
+        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.month = time.Month;
+        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.year = time.Year - 2000;
+
+        for (unsigned int j = 0; j < NUMBER_OF_SOLUTION_NONCES; j++)
+        {
+            if (!EQUAL(*((__m256i*)broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces[j]), ZERO))
+            {
+                ::random(broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey, broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces[j], (unsigned char*)validationNeuronLinks, sizeof(validationNeuronLinks));
+                for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
+                {
+                    validationNeuronLinks[k][0] %= NUMBER_OF_NEURONS;
+                    validationNeuronLinks[k][1] %= NUMBER_OF_NEURONS;
+                }
+
+                bs->SetMem(validationNeuronValues, sizeof(validationNeuronValues), 0xFF);
+
+                unsigned int limiter = sizeof(miningData) / sizeof(miningData[0]);
+                int outputLength = 0;
+                while (outputLength < (sizeof(miningData) << 3))
+                {
+                    const unsigned int prevValue0 = validationNeuronValues[NUMBER_OF_NEURONS - 1];
+                    const unsigned int prevValue1 = validationNeuronValues[NUMBER_OF_NEURONS - 2];
+
+                    for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
+                    {
+                        validationNeuronValues[k] = ~(validationNeuronValues[validationNeuronLinks[k][0]] & validationNeuronValues[validationNeuronLinks[k][1]]);
+                    }
+
+                    if (validationNeuronValues[NUMBER_OF_NEURONS - 1] != prevValue0
+                        && validationNeuronValues[NUMBER_OF_NEURONS - 2] == prevValue1)
+                    {
+                        if (!((miningData[outputLength >> 6] >> (outputLength & 63)) & 1))
+                        {
+                            break;
+                        }
+
+                        outputLength++;
+                    }
+                    else
+                    {
+                        if (validationNeuronValues[NUMBER_OF_NEURONS - 2] != prevValue1
+                            && validationNeuronValues[NUMBER_OF_NEURONS - 1] == prevValue0)
+                        {
+                            if ((miningData[outputLength >> 6] >> (outputLength & 63)) & 1)
+                            {
+                                break;
+                            }
+
+                            outputLength++;
+                        }
+                        else
+                        {
+                            if (!(--limiter))
+                            {
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (outputLength < SOLUTION_THRESHOLD)
+                {
+                    *((__m256i*)broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces[j]) = ZERO;
+                    log(L"An invalid resource testing solution is removed!");
+                }
+            }
+        }
+
+        unsigned char digest[32];
+        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey[0] ^= BROADCAST_RESOURCE_TESTING_SOLUTION;
+        KangarooTwelve((unsigned char*)&broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution, sizeof(ResourceTestingSolution) - SIGNATURE_SIZE, digest, sizeof(digest));
+        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey[0] ^= BROADCAST_RESOURCE_TESTING_SOLUTION;
+        sign(miningSubseeds[i], miningPublicKeys[i], digest, broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.signature);
+
+        for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
+        {
+            push(&peers[j], &broadcastedSolutions[i].header, true);
+        }
+    }
+}
+
+static void publishRevenue()
+{
+    broadcastedRevenues.broadcastRevenues.revenues.epoch = system.epoch;
+
+    for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
+    {
+        broadcastedRevenues.broadcastRevenues.revenues.computorIndex = ownComputorIndices[i];
+
+        unsigned int maxCounter = 0;
+        for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
+        {
+            if (system.tickCounters[j] > maxCounter)
+            {
+                unsigned int k;
+                for (k = 0; k < numberOfOwnComputorIndices; k++)
+                {
+                    if (ownComputorIndices[k] == j)
+                    {
+                        break;
+                    }
+                }
+                if (k == numberOfOwnComputorIndices)
+                {
+                    maxCounter = system.tickCounters[j];
+                }
+            }
+        }
+        if (maxCounter)
+        {
+            for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
+            {
+                broadcastedRevenues.broadcastRevenues.revenues.revenues[j] = /*(faultyComputorFlags[j >> 6] & (1ULL << (j & 63))) ? 0 :*/ ((system.tickCounters[j] >= maxCounter) ? (ISSUANCE_RATE / NUMBER_OF_COMPUTORS) : (system.tickCounters[j] * ((unsigned long long)(ISSUANCE_RATE / NUMBER_OF_COMPUTORS)) / maxCounter));
+                for (unsigned int k = 0; k < sizeof(computorsToSetMaxRevenueTo) / sizeof(computorsToSetMaxRevenueTo[0]); k++)
+                {
+                    if (EQUAL(*((__m256i*)broadcastedComputors.broadcastComputors.computors.publicKeys[j]), *((__m256i*)computorsToSetMaxRevenueTo[k])))
+                    {
+                        broadcastedRevenues.broadcastRevenues.revenues.revenues[j] = ISSUANCE_RATE / NUMBER_OF_COMPUTORS;
+
+                        break;
+                    }
+                }
+            }
+        }
+        else
+        {
+            bs->SetMem(broadcastedRevenues.broadcastRevenues.revenues.revenues, sizeof(broadcastedRevenues.broadcastRevenues.revenues.revenues), 0);
+        }
+
+        unsigned char digest[32];
+        broadcastedRevenues.broadcastRevenues.revenues.computorIndex ^= BROADCAST_REVENUES;
+        KangarooTwelve((unsigned char*)&broadcastedRevenues.broadcastRevenues.revenues, sizeof(Revenues) - SIGNATURE_SIZE, digest, sizeof(digest));
+        broadcastedRevenues.broadcastRevenues.revenues.computorIndex ^= BROADCAST_REVENUES;
+        sign(computingSubseeds[ownComputorIndicesMapping[i]], computingPublicKeys[ownComputorIndicesMapping[i]], digest, broadcastedRevenues.broadcastRevenues.revenues.signature);
+
+        for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
+        {
+            push(&peers[j], &broadcastedRevenues.header, true);
+        }
+    }
+}
+
+static void logInfo()
+{
+    unsigned long long numberOfWaitingBytes = 0;
+
+    for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
+    {
+        if (peers[i].tcp4Protocol)
+        {
+            numberOfWaitingBytes += peers[i].dataToTransmitSize;
+        }
+    }
+
+    unsigned int numberOfVerifiedPublicPeers = 0;
+
+    for (unsigned int i = 0; i < numberOfPublicPeers; i++)
+    {
+        if (publicPeers[i].isVerified)
+        {
+            numberOfVerifiedPublicPeers++;
+        }
+    }
+
+    setText(message, L"[+");
+    appendNumber(message, numberOfProcessedRequests - prevNumberOfProcessedRequests, TRUE);
+    appendText(message, L" -");
+    appendNumber(message, numberOfDiscardedRequests - prevNumberOfDiscardedRequests, TRUE);
+    appendText(message, L" *");
+    appendNumber(message, numberOfDuplicateRequests - prevNumberOfDuplicateRequests, TRUE);
+    appendText(message, L" /");
+    appendNumber(message, numberOfDisseminatedRequests - prevNumberOfDisseminatedRequests, TRUE);
+    appendText(message, L"] ");
+
+    unsigned int numberOfConnectingSlots = 0, numberOfConnectedSlots = 0, numberOfHandshakedSlots = 0;
+    for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
+    {
+        if (peers[i].tcp4Protocol)
+        {
+            if (!peers[i].isConnectedAccepted)
+            {
+                numberOfConnectingSlots++;
+            }
+            else
+            {
+                if (!peers[i].exchangedPublicPeers)
+                {
+                    numberOfConnectedSlots++;
+                }
+                else
+                {
+                    numberOfHandshakedSlots++;
+                }
+            }
+        }
+    }
+    appendNumber(message, numberOfConnectingSlots, FALSE);
+    appendText(message, L"|");
+    appendNumber(message, numberOfConnectedSlots, FALSE);
+    appendText(message, L"|");
+    appendNumber(message, numberOfHandshakedSlots, FALSE);
+
+    appendText(message, L" ");
+    appendNumber(message, numberOfVerifiedPublicPeers, TRUE);
+    appendText(message, L"/");
+    appendNumber(message, numberOfPublicPeers, TRUE);
+    appendText(message, L" (+");
+    appendNumber(message, numberOfReceivedBytes - prevNumberOfReceivedBytes, TRUE);
+    appendText(message, L" -");
+    appendNumber(message, numberOfTransmittedBytes - prevNumberOfTransmittedBytes, TRUE);
+    appendText(message, L" ..."); appendNumber(message, numberOfWaitingBytes, TRUE);
+    appendText(message, L").");
+    log(message);
+    prevNumberOfProcessedRequests = numberOfProcessedRequests;
+    prevNumberOfDiscardedRequests = numberOfDiscardedRequests;
+    prevNumberOfDuplicateRequests = numberOfDuplicateRequests;
+    prevNumberOfDisseminatedRequests = numberOfDisseminatedRequests;
+    prevNumberOfReceivedBytes = numberOfReceivedBytes;
+    prevNumberOfTransmittedBytes = numberOfTransmittedBytes;
+
+    setText(message, L"1+");
+    appendNumber(message, NUMBER_OF_COMPUTING_PROCESSORS, TRUE);
+    appendText(message, L"+");
+    appendNumber(message, numberOfProcessors - NUMBER_OF_COMPUTING_PROCESSORS, TRUE);
+
+    appendText(message, L" | Tick = ");
+    unsigned long long tickDuration = (tickTicks[sizeof(tickTicks) / sizeof(tickTicks[0]) - 1] - tickTicks[0]) / (sizeof(tickTicks) / sizeof(tickTicks[0]) - 1);
+    appendNumber(message, tickDuration / frequency, FALSE);
+    appendText(message, L".");
+    appendNumber(message, (tickDuration % frequency) * 10 / frequency, FALSE);
+    appendText(message, L" s | Scores = ");
+    for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
+    {
+        int score = 0;
+        for (unsigned int j = 0; j < NUMBER_OF_SOLUTION_NONCES; j++)
+        {
+            if (!EQUAL(*((__m256i*)broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces[j]), ZERO))
+            {
+                score++;
+            }
+        }
+        if (i)
+        {
+            appendText(message, L"+");
+        }
+        appendNumber(message, receivedScores[i], TRUE);
+        appendText(message, L"/");
+        appendNumber(message, score, TRUE);
+    }
+    appendText(message, L" computor index = ");
+    if (!numberOfOwnComputorIndices)
+    {
+        appendText(message, L"?.");
+    }
+    else
+    {
+        const CHAR16 alphabet[26][2] = { L"A", L"B", L"C", L"D", L"E", L"F", L"G", L"H", L"I", L"J", L"K", L"L", L"M", L"N", L"O", L"P", L"Q", L"R", L"S", L"T", L"U", L"V", L"W", L"X", L"Y", L"Z" };
+        unsigned long long totalRevenue = 0, maxRevenue = 0;
+        for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
+        {
+            totalRevenue += revenue(ownComputorIndices[i]);
+            maxRevenue += ISSUANCE_RATE / NUMBER_OF_COMPUTORS;
+
+            appendText(message, alphabet[ownComputorIndices[i] / 26]);
+            appendText(message, alphabet[ownComputorIndices[i] % 26]);
+            appendText(message, i ? L"[" : L"[in ");
+            appendNumber(message, ((ownComputorIndices[i] + NUMBER_OF_COMPUTORS) - system.tick % NUMBER_OF_COMPUTORS) % NUMBER_OF_COMPUTORS, FALSE);
+            appendText(message, i ? L"/" : L" ticks/");
+            appendNumber(message, /*numberOfBufferedTransfers[i]*/0, TRUE);
+            appendText(message, i ? L"]" : L" transactions]");
+            if (i < (unsigned int)(numberOfOwnComputorIndices - 1))
+            {
+                appendText(message, L"+");
+            }
+            else
+            {
+                appendText(message, L" (revenue = ");
+                appendNumber(message, totalRevenue, TRUE);
+                appendText(message, L"/");
+                appendNumber(message, maxRevenue, TRUE);
+                unsigned int numberOfRevenueVotes = 0;
+                for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
+                {
+                    if (revenues[j].epoch == system.epoch)
+                    {
+                        numberOfRevenueVotes++;
+                    }
+                }
+                appendText(message, L" qus by ");
+                appendNumber(message, numberOfRevenueVotes, TRUE);
+                appendText(message, L" computors).");
+            }
+        }
+    }
+    log(message);
+
+    unsigned int numberOfPendingTransactions = 0;
+    for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
+    {
+        if (entityPendingTransactions[i].tick >= system.tick)
+        {
+            numberOfPendingTransactions++;
+        }
+    }
+    setNumber(message, numberOfPendingTransactions, TRUE);
+    appendText(message, L" pending transactions.");
+    log(message);
+}
+
+static void processKeyPresses()
+{
+    EFI_INPUT_KEY key;
+    if (!st->ConIn->ReadKeyStroke(st->ConIn, &key))
+    {
+        switch (key.ScanCode)
+        {
+        case 0x0B:
+        {
+            log(L"[F4] Close all connections | [Pause] Toggle logging | [ESC] Shut down.");
+        }
+        break;
+
+        case 0x0C:
+        {
+            unsigned int numberOfFaultyComputors = 0;
+            for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+            {
+                if (faultyComputorFlags[i >> 6] & (1ULL << (i & 63)))
+                {
+                    numberOfFaultyComputors++;
+                }
+            }
+            setNumber(message, numberOfFaultyComputors, TRUE);
+            appendText(message, L" faulty computors.");
+            log(message);
+
+            setText(message, L"Tick time was set to ");
+            appendNumber(message, etalonTick.year / 10, FALSE);
+            appendNumber(message, etalonTick.year % 10, FALSE);
+            appendText(message, L".");
+            appendNumber(message, etalonTick.month / 10, FALSE);
+            appendNumber(message, etalonTick.month % 10, FALSE);
+            appendText(message, L".");
+            appendNumber(message, etalonTick.day / 10, FALSE);
+            appendNumber(message, etalonTick.day % 10, FALSE);
+            appendText(message, L" ");
+            appendNumber(message, etalonTick.hour / 10, FALSE);
+            appendNumber(message, etalonTick.hour % 10, FALSE);
+            appendText(message, L":");
+            appendNumber(message, etalonTick.minute / 10, FALSE);
+            appendNumber(message, etalonTick.minute % 10, FALSE);
+            appendText(message, L":");
+            appendNumber(message, etalonTick.second / 10, FALSE);
+            appendNumber(message, etalonTick.second % 10, FALSE);
+            appendText(message, L".");
+            appendNumber(message, etalonTick.millisecond / 100, FALSE);
+            appendNumber(message, etalonTick.millisecond % 100 / 10, FALSE);
+            appendNumber(message, etalonTick.millisecond % 10, FALSE);
+            appendText(message, L".");
+            log(message);
+        }
+        break;
+
+        case 0x0E:
+        {
+            for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
+            {
+                closePeer(&peers[i]);
+            }
+        }
+        break;
+
+        case 0x17:
+        {
+            state = 1;
+        }
+        break;
+
+        case 0x48:
+        {
+            disableLogging = !disableLogging;
+        }
+        break;
+        }
+    }
+}
+
 EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 {
     ih = imageHandle;
@@ -7789,11 +8265,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             __m256i prevTickSpectrumDigest = initSpectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1];
                             TickData curTickData, nextTickData;
                             curTickData.epoch = 0;
-                            Tick etalonTick;
                             etalonTick.tick = 0;
                             __m256i etalonTickEssenceDigest;
-                            bool etalonTickMustBeCreated = false;
-                            unsigned char triggerSignature[SIGNATURE_SIZE];
                             bs->SetMem(triggerSignature, sizeof(triggerSignature), 0);
                             unsigned long long clockTick = 0, systemDataSavingTick = 0, loggingTick = 0, peerRefreshingTick = 0, resourceTestingSolutionPublicationTick = 0;
                             while (!state)
@@ -7813,47 +8286,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                 if (epochMustBeTerminated)
                                 {
-                                    /*if (broadcastedTerminator.broadcastTerminator.terminator.epoch == system.epoch
-                                        && broadcastedTerminator.broadcastTerminator.terminator.tick == system.tick)
-                                    {
-                                        long long adminRevenue = ISSUANCE_RATE - ((unsigned long long)(ISSUANCE_RATE / NUMBER_OF_COMPUTORS)) * broadcastedTerminator.broadcastTerminator.terminator.numberOfNewComputors;
-                                        for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
-                                        {
-                                            if (broadcastedTerminator.broadcastTerminator.terminator.revenues[i])
-                                            {
-                                                increaseEnergy(broadcastedComputors.broadcastComputors.computors.publicKeys[i], broadcastedTerminator.broadcastTerminator.terminator.revenues[i], system.tick);
-                                                adminRevenue -= broadcastedTerminator.broadcastTerminator.terminator.revenues[i];
-                                            }
-                                        }
-                                        if (adminRevenue > 0)
-                                        {
-                                            increaseEnergy(adminPublicKey, adminRevenue, system.tick);
-                                        }
-
-                                        system.epoch++;
-                                        system.initialTick = system.tick;
-                                        bs->SetMem(system.tickCounters, sizeof(system.tickCounters), 0);
-                                        saveSystem();
-
-                                        SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 4] = system.epoch / 100 + L'0';
-                                        SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 3] = (system.epoch % 100) / 10 + L'0';
-                                        SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 2] = system.epoch % 10 + L'0';
-                                        saveSpectrum();
-
-                                        broadcastedComputors.broadcastComputors.computors.epoch = 0;
-                                        for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
-                                        {
-                                            _rdrand64_step((unsigned long long*)&broadcastedComputors.broadcastComputors.computors.publicKeys[i][0]);
-                                            _rdrand64_step((unsigned long long*)&broadcastedComputors.broadcastComputors.computors.publicKeys[i][8]);
-                                            _rdrand64_step((unsigned long long*)&broadcastedComputors.broadcastComputors.computors.publicKeys[i][16]);
-                                            _rdrand64_step((unsigned long long*)&broadcastedComputors.broadcastComputors.computors.publicKeys[i][24]);
-                                        }
-                                        bs->SetMem(&broadcastedComputors.broadcastComputors.computors.signature, sizeof(broadcastedComputors.broadcastComputors.computors.signature), 0);
-
-                                        numberOfOwnComputorIndices = 0;
-
-                                        epochMustBeTerminated = false;
-                                    }*/
+                                    terminateEpoch();
                                 }
                                 else
                                 {
@@ -8395,63 +8828,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         {
                                             latestRevenuePublicationTick = curTimeTick;
 
-                                            broadcastedRevenues.broadcastRevenues.revenues.epoch = system.epoch;
-
-                                            for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
-                                            {
-                                                broadcastedRevenues.broadcastRevenues.revenues.computorIndex = ownComputorIndices[i];
-
-                                                unsigned int maxCounter = 0;
-                                                for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
-                                                {
-                                                    if (system.tickCounters[j] > maxCounter)
-                                                    {
-                                                        unsigned int k;
-                                                        for (k = 0; k < numberOfOwnComputorIndices; k++)
-                                                        {
-                                                            if (ownComputorIndices[k] == j)
-                                                            {
-                                                                break;
-                                                            }
-                                                        }
-                                                        if (k == numberOfOwnComputorIndices)
-                                                        {
-                                                            maxCounter = system.tickCounters[j];
-                                                        }
-                                                    }
-                                                }
-                                                if (maxCounter)
-                                                {
-                                                    for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
-                                                    {
-                                                        broadcastedRevenues.broadcastRevenues.revenues.revenues[j] = /*(faultyComputorFlags[j >> 6] & (1ULL << (j & 63))) ? 0 :*/ ((system.tickCounters[j] >= maxCounter) ? (ISSUANCE_RATE / NUMBER_OF_COMPUTORS) : (system.tickCounters[j] * ((unsigned long long)(ISSUANCE_RATE / NUMBER_OF_COMPUTORS)) / maxCounter));
-                                                        for (unsigned int k = 0; k < sizeof(computorsToSetMaxRevenueTo) / sizeof(computorsToSetMaxRevenueTo[0]); k++)
-                                                        {
-                                                            if (EQUAL(*((__m256i*)broadcastedComputors.broadcastComputors.computors.publicKeys[j]), *((__m256i*)computorsToSetMaxRevenueTo[k])))
-                                                            {
-                                                                broadcastedRevenues.broadcastRevenues.revenues.revenues[j] = ISSUANCE_RATE / NUMBER_OF_COMPUTORS;
-
-                                                                break;
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                                else
-                                                {
-                                                    bs->SetMem(broadcastedRevenues.broadcastRevenues.revenues.revenues, sizeof(broadcastedRevenues.broadcastRevenues.revenues.revenues), 0);
-                                                }
-
-                                                unsigned char digest[32];
-                                                broadcastedRevenues.broadcastRevenues.revenues.computorIndex ^= BROADCAST_REVENUES;
-                                                KangarooTwelve((unsigned char*)&broadcastedRevenues.broadcastRevenues.revenues, sizeof(Revenues) - SIGNATURE_SIZE, digest, sizeof(digest));
-                                                broadcastedRevenues.broadcastRevenues.revenues.computorIndex ^= BROADCAST_REVENUES;
-                                                sign(computingSubseeds[ownComputorIndicesMapping[i]], computingPublicKeys[ownComputorIndicesMapping[i]], digest, broadcastedRevenues.broadcastRevenues.revenues.signature);
-
-                                                for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
-                                                {
-                                                    push(&peers[j], &broadcastedRevenues.header, true);
-                                                }
-                                            }
+                                            publishRevenue();
                                         }
                                     }
                                 }
@@ -8460,169 +8837,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 {
                                     loggingTick = curTimeTick;
 
-                                    unsigned long long numberOfWaitingBytes = 0;
-
-                                    for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
-                                    {
-                                        if (peers[i].tcp4Protocol)
-                                        {
-                                            numberOfWaitingBytes += peers[i].dataToTransmitSize;
-                                        }
-                                    }
-
-                                    unsigned int numberOfVerifiedPublicPeers = 0;
-
-                                    for (unsigned int i = 0; i < numberOfPublicPeers; i++)
-                                    {
-                                        if (publicPeers[i].isVerified)
-                                        {
-                                            numberOfVerifiedPublicPeers++;
-                                        }
-                                    }
-
-                                    setText(message, L"[+");
-                                    appendNumber(message, numberOfProcessedRequests - prevNumberOfProcessedRequests, TRUE);
-                                    appendText(message, L" -");
-                                    appendNumber(message, numberOfDiscardedRequests - prevNumberOfDiscardedRequests, TRUE);
-                                    appendText(message, L" *");
-                                    appendNumber(message, numberOfDuplicateRequests - prevNumberOfDuplicateRequests, TRUE);
-                                    appendText(message, L" /");
-                                    appendNumber(message, numberOfDisseminatedRequests - prevNumberOfDisseminatedRequests, TRUE);
-                                    appendText(message, L"] ");
-
-                                    unsigned int numberOfConnectingSlots = 0, numberOfConnectedSlots = 0, numberOfHandshakedSlots = 0;
-                                    for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
-                                    {
-                                        if (peers[i].tcp4Protocol)
-                                        {
-                                            if (!peers[i].isConnectedAccepted)
-                                            {
-                                                numberOfConnectingSlots++;
-                                            }
-                                            else
-                                            {
-                                                if (!peers[i].exchangedPublicPeers)
-                                                {
-                                                    numberOfConnectedSlots++;
-                                                }
-                                                else
-                                                {
-                                                    numberOfHandshakedSlots++;
-                                                }
-                                            }
-                                        }
-                                    }
-                                    appendNumber(message, numberOfConnectingSlots, FALSE);
-                                    appendText(message, L"|");
-                                    appendNumber(message, numberOfConnectedSlots, FALSE);
-                                    appendText(message, L"|");
-                                    appendNumber(message, numberOfHandshakedSlots, FALSE);
-
-                                    appendText(message, L" ");
-                                    appendNumber(message, numberOfVerifiedPublicPeers, TRUE);
-                                    appendText(message, L"/");
-                                    appendNumber(message, numberOfPublicPeers, TRUE);
-                                    appendText(message, L" (+");
-                                    appendNumber(message, numberOfReceivedBytes - prevNumberOfReceivedBytes, TRUE);
-                                    appendText(message, L" -");
-                                    appendNumber(message, numberOfTransmittedBytes - prevNumberOfTransmittedBytes, TRUE);
-                                    appendText(message, L" ..."); appendNumber(message, numberOfWaitingBytes, TRUE);
-                                    appendText(message, L").");
-                                    log(message);
-                                    prevNumberOfProcessedRequests = numberOfProcessedRequests;
-                                    prevNumberOfDiscardedRequests = numberOfDiscardedRequests;
-                                    prevNumberOfDuplicateRequests = numberOfDuplicateRequests;
-                                    prevNumberOfDisseminatedRequests = numberOfDisseminatedRequests;
-                                    prevNumberOfReceivedBytes = numberOfReceivedBytes;
-                                    prevNumberOfTransmittedBytes = numberOfTransmittedBytes;
-
-                                    setText(message, L"1+");
-                                    appendNumber(message, NUMBER_OF_COMPUTING_PROCESSORS, TRUE);
-                                    appendText(message, L"+");
-                                    appendNumber(message, numberOfProcessors - NUMBER_OF_COMPUTING_PROCESSORS, TRUE);
-
-                                    appendText(message, L" | Tick = ");
-                                    unsigned long long tickDuration = (tickTicks[sizeof(tickTicks) / sizeof(tickTicks[0]) - 1] - tickTicks[0]) / (sizeof(tickTicks) / sizeof(tickTicks[0]) - 1);
-                                    appendNumber(message, tickDuration / frequency, FALSE);
-                                    appendText(message, L".");
-                                    appendNumber(message, (tickDuration % frequency) * 10 / frequency, FALSE);
-                                    appendText(message, L" s | Scores = ");
-                                    for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
-                                    {
-                                        int score = 0;
-                                        for (unsigned int j = 0; j < NUMBER_OF_SOLUTION_NONCES; j++)
-                                        {
-                                            if (!EQUAL(*((__m256i*)broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces[j]), ZERO))
-                                            {
-                                                score++;
-                                            }
-                                        }
-                                        if (i)
-                                        {
-                                            appendText(message, L"+");
-                                        }
-                                        appendNumber(message, receivedScores[i], TRUE);
-                                        appendText(message, L"/");
-                                        appendNumber(message, score, TRUE);
-                                    }
-                                    appendText(message, L" computor index = ");
-                                    if (!numberOfOwnComputorIndices)
-                                    {
-                                        appendText(message, L"?.");
-                                    }
-                                    else
-                                    {
-                                        const CHAR16 alphabet[26][2] = { L"A", L"B", L"C", L"D", L"E", L"F", L"G", L"H", L"I", L"J", L"K", L"L", L"M", L"N", L"O", L"P", L"Q", L"R", L"S", L"T", L"U", L"V", L"W", L"X", L"Y", L"Z" };
-                                        unsigned long long totalRevenue = 0, maxRevenue = 0;
-                                        for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
-                                        {
-                                            totalRevenue += revenue(ownComputorIndices[i]);
-                                            maxRevenue += ISSUANCE_RATE / NUMBER_OF_COMPUTORS;
-
-                                            appendText(message, alphabet[ownComputorIndices[i] / 26]);
-                                            appendText(message, alphabet[ownComputorIndices[i] % 26]);
-                                            appendText(message, i ? L"[" : L"[in ");
-                                            appendNumber(message, ((ownComputorIndices[i] + NUMBER_OF_COMPUTORS) - system.tick % NUMBER_OF_COMPUTORS) % NUMBER_OF_COMPUTORS, FALSE);
-                                            appendText(message, i ? L"/" : L" ticks/");
-                                            appendNumber(message, /*numberOfBufferedTransfers[i]*/0, TRUE);
-                                            appendText(message, i ? L"]" : L" transactions]");
-                                            if (i < (unsigned int)(numberOfOwnComputorIndices - 1))
-                                            {
-                                                appendText(message, L"+");
-                                            }
-                                            else
-                                            {
-                                                appendText(message, L" (revenue = ");
-                                                appendNumber(message, totalRevenue, TRUE);
-                                                appendText(message, L"/");
-                                                appendNumber(message, maxRevenue, TRUE);
-                                                unsigned int numberOfRevenueVotes = 0;
-                                                for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
-                                                {
-                                                    if (revenues[j].epoch == system.epoch)
-                                                    {
-                                                        numberOfRevenueVotes++;
-                                                    }
-                                                }
-                                                appendText(message, L" qus by ");
-                                                appendNumber(message, numberOfRevenueVotes, TRUE);
-                                                appendText(message, L" computors).");
-                                            }
-                                        }
-                                    }
-                                    log(message);
-
-                                    unsigned int numberOfPendingTransactions = 0;
-                                    for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
-                                    {
-                                        if (entityPendingTransactions[i].tick >= system.tick)
-                                        {
-                                            numberOfPendingTransactions++;
-                                        }
-                                    }
-                                    setNumber(message, numberOfPendingTransactions, TRUE);
-                                    appendText(message, L" pending transactions.");
-                                    log(message);
+                                    logInfo();
                                 }
 
                                 peerTcp4Protocol->Poll(peerTcp4Protocol);
@@ -9352,92 +9567,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 {
                                     resourceTestingSolutionPublicationTick = curTimeTick;
 
-                                    for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
-                                    {
-                                        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.millisecond = time.Nanosecond / 1000000;
-                                        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.second = time.Second;
-                                        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.minute = time.Minute;
-                                        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.hour = time.Hour;
-                                        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.day = time.Day;
-                                        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.month = time.Month;
-                                        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.year = time.Year - 2000;
-
-                                        for (unsigned int j = 0; j < NUMBER_OF_SOLUTION_NONCES; j++)
-                                        {
-                                            if (!EQUAL(*((__m256i*)broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces[j]), ZERO))
-                                            {
-                                                ::random(broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey, broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces[j], (unsigned char*)validationNeuronLinks, sizeof(validationNeuronLinks));
-                                                for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
-                                                {
-                                                    validationNeuronLinks[k][0] %= NUMBER_OF_NEURONS;
-                                                    validationNeuronLinks[k][1] %= NUMBER_OF_NEURONS;
-                                                }
-
-                                                bs->SetMem(validationNeuronValues, sizeof(validationNeuronValues), 0xFF);
-
-                                                unsigned int limiter = sizeof(miningData) / sizeof(miningData[0]);
-                                                int outputLength = 0;
-                                                while (outputLength < (sizeof(miningData) << 3))
-                                                {
-                                                    const unsigned int prevValue0 = validationNeuronValues[NUMBER_OF_NEURONS - 1];
-                                                    const unsigned int prevValue1 = validationNeuronValues[NUMBER_OF_NEURONS - 2];
-
-                                                    for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
-                                                    {
-                                                        validationNeuronValues[k] = ~(validationNeuronValues[validationNeuronLinks[k][0]] & validationNeuronValues[validationNeuronLinks[k][1]]);
-                                                    }
-
-                                                    if (validationNeuronValues[NUMBER_OF_NEURONS - 1] != prevValue0
-                                                        && validationNeuronValues[NUMBER_OF_NEURONS - 2] == prevValue1)
-                                                    {
-                                                        if (!((miningData[outputLength >> 6] >> (outputLength & 63)) & 1))
-                                                        {
-                                                            break;
-                                                        }
-
-                                                        outputLength++;
-                                                    }
-                                                    else
-                                                    {
-                                                        if (validationNeuronValues[NUMBER_OF_NEURONS - 2] != prevValue1
-                                                            && validationNeuronValues[NUMBER_OF_NEURONS - 1] == prevValue0)
-                                                        {
-                                                            if ((miningData[outputLength >> 6] >> (outputLength & 63)) & 1)
-                                                            {
-                                                                break;
-                                                            }
-
-                                                            outputLength++;
-                                                        }
-                                                        else
-                                                        {
-                                                            if (!(--limiter))
-                                                            {
-                                                                break;
-                                                            }
-                                                        }
-                                                    }
-                                                }
-
-                                                if (outputLength < SOLUTION_THRESHOLD)
-                                                {
-                                                    *((__m256i*)broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces[j]) = ZERO;
-                                                    log(L"An invalid resource testing solution is removed!");
-                                                }
-                                            }
-                                        }
-
-                                        unsigned char digest[32];
-                                        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey[0] ^= BROADCAST_RESOURCE_TESTING_SOLUTION;
-                                        KangarooTwelve((unsigned char*)&broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution, sizeof(ResourceTestingSolution) - SIGNATURE_SIZE, digest, sizeof(digest));
-                                        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey[0] ^= BROADCAST_RESOURCE_TESTING_SOLUTION;
-                                        sign(miningSubseeds[i], miningPublicKeys[i], digest, broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.signature);
-                                        
-                                        for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
-                                        {
-                                            push(&peers[j], &broadcastedSolutions[i].header, true);
-                                        }
-                                    }
+                                    publishSolutions();
 
                                     saveSolutions();
                                 }
@@ -9457,80 +9587,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     }
                                 }
 
-                                EFI_INPUT_KEY key;
-                                if (!st->ConIn->ReadKeyStroke(st->ConIn, &key))
-                                {
-                                    switch (key.ScanCode)
-                                    {
-                                    case 0x0B:
-                                    {
-                                        log(L"[F4] Close all connections | [Pause] Toggle logging | [ESC] Shut down.");
-                                    }
-                                    break;
-
-                                    case 0x0C:
-                                    {
-                                        unsigned int numberOfFaultyComputors = 0;
-                                        for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
-                                        {
-                                            if (faultyComputorFlags[i >> 6] & (1ULL << (i & 63)))
-                                            {
-                                                numberOfFaultyComputors++;
-                                            }
-                                        }
-                                        setNumber(message, numberOfFaultyComputors, TRUE);
-                                        appendText(message, L" faulty computors.");
-                                        log(message);
-
-                                        setText(message, L"Tick time was set to ");
-                                        appendNumber(message, etalonTick.year / 10, FALSE);
-                                        appendNumber(message, etalonTick.year % 10, FALSE);
-                                        appendText(message, L".");
-                                        appendNumber(message, etalonTick.month / 10, FALSE);
-                                        appendNumber(message, etalonTick.month % 10, FALSE);
-                                        appendText(message, L".");
-                                        appendNumber(message, etalonTick.day / 10, FALSE);
-                                        appendNumber(message, etalonTick.day % 10, FALSE);
-                                        appendText(message, L" ");
-                                        appendNumber(message, etalonTick.hour / 10, FALSE);
-                                        appendNumber(message, etalonTick.hour % 10, FALSE);
-                                        appendText(message, L":");
-                                        appendNumber(message, etalonTick.minute / 10, FALSE);
-                                        appendNumber(message, etalonTick.minute % 10, FALSE);
-                                        appendText(message, L":");
-                                        appendNumber(message, etalonTick.second / 10, FALSE);
-                                        appendNumber(message, etalonTick.second % 10, FALSE);
-                                        appendText(message, L".");
-                                        appendNumber(message, etalonTick.millisecond / 100, FALSE);
-                                        appendNumber(message, etalonTick.millisecond % 100 / 10, FALSE);
-                                        appendNumber(message, etalonTick.millisecond % 10, FALSE);
-                                        appendText(message, L".");
-                                        log(message);
-                                    }
-                                    break;
-
-                                    case 0x0E:
-                                    {
-                                        for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
-                                        {
-                                            closePeer(&peers[i]);
-                                        }
-                                    }
-                                    break;
-
-                                    case 0x17:
-                                    {
-                                        state = 1;
-                                    }
-                                    break;
-
-                                    case 0x48:
-                                    {
-                                        disableLogging = !disableLogging;
-                                    }
-                                    break;
-                                    }
-                                }
+                                processKeyPresses();
                             }
 
                             bs->CloseProtocol(peerChildHandle, &tcp4ProtocolGuid, ih, NULL);
