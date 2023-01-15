@@ -12,8 +12,8 @@ static unsigned char miningSeeds[][55 + 1] = {
 };
 #define MIN_SCORE 0
 
-static unsigned char computorsToSetMaxRevenueTo[][70 + 1] = {
-    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+static unsigned char computorsToSetMaxRevenueTo[][60 + 1] = {
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 };
 
 static const unsigned char knownPublicPeers[][4] = {
@@ -25,9 +25,9 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 81
-#define VERSION_C 1
+#define VERSION_C 2
 
-#define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
+#define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
 static unsigned short SYSTEM_FILE_NAME[] = L"system";
 static unsigned short SOLUTION_FILE_NAME[] = L"solution.039";
@@ -5117,19 +5117,23 @@ static void getPublicKey(const unsigned char* privateKey, unsigned char* publicK
     encode(P, publicKey);                              // Encode public key
 }
 
-static BOOLEAN getPublicKeyFromIdentity(const unsigned char* identity, unsigned char* publicKey)
+static bool getPublicKeyFromIdentity(const unsigned char* identity, unsigned char* publicKey)
 {
-    for (int i = 0; i < 32; i++)
+    for (int i = 0; i < 4; i++)
     {
-        if (identity[i << 1] < 'A' || identity[i << 1] > 'P'
-            || identity[(i << 1) + 1] < 'A' || identity[(i << 1) + 1] > 'P')
+        *((unsigned long long*)&publicKey[i << 3]) = 0;
+        for (int j = 14; j-- > 0; )
         {
-            return FALSE;
+            if (identity[i * 14 + j] < 'A' || identity[i * 14 + j] > 'Z')
+            {
+                return false;
+            }
+
+            *((unsigned long long*)&publicKey[i << 3]) = *((unsigned long long*)&publicKey[i << 3]) * 26 + (identity[i * 14 + j] - 'A');
         }
-        publicKey[i] = ((identity[i << 1] - 'A') << 4) | (identity[(i << 1) + 1] - 'A');
     }
 
-    return TRUE;
+    return true;
 }
 
 static BOOLEAN getSharedKey(const unsigned char* privateKey, const unsigned char* publicKey, unsigned char* sharedKey)
@@ -9592,6 +9596,15 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
                                         {
                                             push(&peers[i], &requestedQuorumTick.header, true);
+                                        }
+
+                                        if (tickData[system.tick + 1 - system.initialTick].epoch != system.epoch)
+                                        {
+                                            requestedTickData.requestTickData.requestedTickData.tick = system.tick + 1;
+                                            for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
+                                            {
+                                                push(&peers[i], &requestedTickData.header, true);
+                                            }
                                         }
                                     }
                                 }
