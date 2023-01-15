@@ -25,7 +25,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 81
-#define VERSION_C 2
+#define VERSION_C 3
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -5171,19 +5171,24 @@ static BOOLEAN getSharedKey(const unsigned char* privateKey, const unsigned char
 
 static void getIdentity(unsigned char* publicKey, CHAR16* identity)
 {
-    for (int i = 0; i < 32; i++)
+    for (int i = 0; i < 4; i++)
     {
-        identity[i << 1] = (publicKey[i] >> 4) + L'A';
-        identity[(i << 1) + 1] = (publicKey[i] & 0xF) + L'A';
+        unsigned long long publicKeyFragment = *((unsigned long long*)&publicKey[i << 3]);
+        for (int j = 0; j < 14; j++)
+        {
+            identity[i * 14 + j] = publicKeyFragment % 26 + L'A';
+            publicKeyFragment /= 26;
+        }
     }
-    unsigned char identityBytesChecksum[3];
-    KangarooTwelve(publicKey, 32, identityBytesChecksum, sizeof(identityBytesChecksum));
-    for (int i = 0; i < sizeof(identityBytesChecksum); i++)
+    unsigned int identityBytesChecksum;
+    KangarooTwelve(publicKey, 32, (unsigned char*)&identityBytesChecksum, 3);
+    identityBytesChecksum &= 0x3FFFF;
+    for (int i = 0; i < 4; i++)
     {
-        identity[64 + (i << 1)] = (identityBytesChecksum[i] >> 4) + L'A';
-        identity[65 + (i << 1)] = (identityBytesChecksum[i] & 0xF) + L'A';
+        identity[56 + i] = identityBytesChecksum % 26 + L'A';
+        identityBytesChecksum /= 26;
     }
-    identity[70] = 0;
+    identity[60] = 0;
 }
 
 static void sign(const unsigned char* subseed, const unsigned char* publicKey, const unsigned char* messageDigest, unsigned char* signature)
@@ -8132,6 +8137,15 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
             if (!EQUAL(*((__m256i*)computingSeeds[i]), ZERO))
             {
                 getIdentity(computingPublicKeys[i], message);
+                appendText(message, L" = ");
+                long long amount = 0;
+                const int spectrumIndex = ::spectrumIndex(computingPublicKeys[i]);
+                if (spectrumIndex >= 0)
+                {
+                    amount = spectrum[spectrumIndex].incomingAmount - spectrum[spectrumIndex].outgoingAmount;
+                }
+                appendNumber(message, amount, TRUE);
+                appendText(message, L" qus.");
                 log(message);
             }
         }
@@ -8141,6 +8155,15 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
             if (!EQUAL(*((__m256i*)miningSeeds[i]), ZERO))
             {
                 getIdentity(miningPublicKeys[i], message);
+                appendText(message, L" = ");
+                long long amount = 0;
+                const int spectrumIndex = ::spectrumIndex(miningPublicKeys[i]);
+                if (spectrumIndex >= 0)
+                {
+                    amount = spectrum[spectrumIndex].incomingAmount - spectrum[spectrumIndex].outgoingAmount;
+                }
+                appendNumber(message, amount, TRUE);
+                appendText(message, L" qus.");
                 log(message);
             }
         }
