@@ -25,7 +25,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 81
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EEDMBLDKFLBNKDPFHDHOOOFLHBDCHNCJMODFMLCLGAPMLDCOAMDDCEKMBBBKHEGGLIAFFK"
 
@@ -8268,7 +8268,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             etalonTick.tick = 0;
                             __m256i etalonTickEssenceDigest;
                             bs->SetMem(triggerSignature, sizeof(triggerSignature), 0);
-                            unsigned long long clockTick = 0, systemDataSavingTick = 0, loggingTick = 0, peerRefreshingTick = 0, resourceTestingSolutionPublicationTick = 0;
+                            unsigned long long clockTick = 0, systemDataSavingTick = 0, loggingTick = 0, peerRefreshingTick = 0, resourceTestingSolutionPublicationTick = 0, tickRequestingTick = 0;
                             while (!state)
                             {
                                 const unsigned long long curTimeTick = __rdtsc();
@@ -9570,6 +9570,30 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     publishSolutions();
 
                                     saveSolutions();
+                                }
+
+                                if (curTimeTick - tickRequestingTick >= TARGET_TICK_DURATION * frequency)
+                                {
+                                    tickRequestingTick = curTimeTick;
+
+                                    if (futureTickTotalNumberOfComputors > NUMBER_OF_COMPUTORS - QUORUM)
+                                    {
+                                        requestedQuorumTick.requestQuorumTick.quorumTick.tick = system.tick;
+                                        bs->SetMem(&requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags, sizeof(requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags), 0);
+                                        const unsigned int baseOffset = (system.tick - system.initialTick) * NUMBER_OF_COMPUTORS;
+                                        for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                                        {
+                                            const Tick* tick = &ticks[baseOffset + i];
+                                            if (tick->epoch == system.epoch)
+                                            {
+                                                requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags[i >> 2] |= ((EQUAL(*((__m256i*)tick->varStruct.nextTickData.zero), ZERO)) ? 1 : 2) << ((i & 3) << 1);
+                                            }
+                                        }
+                                        for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
+                                        {
+                                            push(&peers[i], &requestedQuorumTick.header, true);
+                                        }
+                                    }
                                 }
 
                                 for (unsigned int i = 0; i < numberOfProcessors - NUMBER_OF_COMPUTING_PROCESSORS; i++)
