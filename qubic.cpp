@@ -24,13 +24,13 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 83
+#define VERSION_B 84
 #define VERSION_C 0
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
 static unsigned short SYSTEM_FILE_NAME[] = L"system";
-static unsigned short SOLUTION_FILE_NAME[] = L"solution.040";
+static unsigned short SOLUTION_FILE_NAME[] = L"solution.041";
 static unsigned short SPECTRUM_FILE_NAME[] = L"spectrum.???";
 
 #include <intrin.h>
@@ -5279,6 +5279,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 
 #define BUFFER_SIZE (1048576 * 4)
 #define TARGET_TICK_DURATION 10
+#define TICK_REQUESTING_PERIOD 5
 #define DEJAVU_SWAP_LIMIT 28000000
 #define DISSEMINATION_MULTIPLIER 4
 #define FIRST_TICK_TRANSACTION_OFFSET sizeof(unsigned long long)
@@ -7331,7 +7332,7 @@ static BOOLEAN initialize()
                 {
                     bs->SetMem(&system, sizeof(system), 0);
 
-                    system.epoch = 40;
+                    system.epoch = 41;
                     system.epochBeginningHour = 12;
                     system.epochBeginningDay = 13;
                     system.epochBeginningMonth = 4;
@@ -7339,9 +7340,9 @@ static BOOLEAN initialize()
                 }
 
                 system.version = VERSION_B;
-                if (system.epoch == 40)
+                if (system.epoch == 41)
                 {
-                    system.initialTick = system.tick = 4480000;
+                    system.initialTick = system.tick = 4500000;
                 }
                 else
                 {
@@ -7450,14 +7451,14 @@ static BOOLEAN initialize()
 
         unsigned char randomSeed[32];
         bs->SetMem(randomSeed, 32, 0);
-        randomSeed[0] = 17;
+        randomSeed[0] = 19;
         randomSeed[1] = 87;
         randomSeed[2] = 115;
         randomSeed[3] = 131;
         randomSeed[4] = 132;
         randomSeed[5] = 86;
-        randomSeed[6] = 16;
-        randomSeed[7] = 111;
+        randomSeed[6] = 13;
+        randomSeed[7] = 101;
         random(randomSeed, randomSeed, (unsigned char*)miningData, sizeof(miningData));
 
         if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SOLUTION_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, EFI_FILE_ARCHIVE))
@@ -8044,7 +8045,8 @@ static void logInfo()
         }
     }
     setNumber(message, numberOfPendingTransactions, TRUE);
-    appendText(message, L" pending transactions.");
+    appendText(message, L" pending transactions. The tick leader is ");
+    appendText(message, ticks[(system.tick - system.initialTick) * NUMBER_OF_COMPUTORS + system.tick % NUMBER_OF_COMPUTORS].epoch == system.epoch ? L"ON-line." : L"OFF-line.");
     log(message);
 }
 
@@ -9667,35 +9669,32 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     saveSolutions();
                                 }
 
-                                if (curTimeTick - tickRequestingTick >= TARGET_TICK_DURATION * frequency)
+                                if (curTimeTick - tickRequestingTick >= TICK_REQUESTING_PERIOD * frequency)
                                 {
                                     tickRequestingTick = curTimeTick;
 
-                                    if (futureTickTotalNumberOfComputors > NUMBER_OF_COMPUTORS - QUORUM)
+                                    requestedQuorumTick.requestQuorumTick.quorumTick.tick = system.tick;
+                                    bs->SetMem(&requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags, sizeof(requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags), 0);
+                                    const unsigned int baseOffset = (system.tick - system.initialTick) * NUMBER_OF_COMPUTORS;
+                                    for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
                                     {
-                                        requestedQuorumTick.requestQuorumTick.quorumTick.tick = system.tick;
-                                        bs->SetMem(&requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags, sizeof(requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags), 0);
-                                        const unsigned int baseOffset = (system.tick - system.initialTick) * NUMBER_OF_COMPUTORS;
-                                        for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                                        const Tick* tick = &ticks[baseOffset + i];
+                                        if (tick->epoch == system.epoch)
                                         {
-                                            const Tick* tick = &ticks[baseOffset + i];
-                                            if (tick->epoch == system.epoch)
-                                            {
-                                                requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags[i >> 2] |= ((EQUAL(*((__m256i*)tick->varStruct.nextTick.zero), ZERO)) ? 1 : 2) << ((i & 3) << 1);
-                                            }
+                                            requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags[i >> 2] |= ((EQUAL(*((__m256i*)tick->varStruct.nextTick.zero), ZERO)) ? 1 : 2) << ((i & 3) << 1);
                                         }
+                                    }
+                                    for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
+                                    {
+                                        push(&peers[i], &requestedQuorumTick.header, true);
+                                    }
+
+                                    if (tickData[system.tick + 1 - system.initialTick].epoch != system.epoch)
+                                    {
+                                        requestedTickData.requestTickData.requestedTickData.tick = system.tick + 1;
                                         for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
                                         {
-                                            push(&peers[i], &requestedQuorumTick.header, true);
-                                        }
-
-                                        if (tickData[system.tick + 1 - system.initialTick].epoch != system.epoch)
-                                        {
-                                            requestedTickData.requestTickData.requestedTickData.tick = system.tick + 1;
-                                            for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
-                                            {
-                                                push(&peers[i], &requestedTickData.header, true);
-                                            }
+                                            push(&peers[i], &requestedTickData.header, true);
                                         }
                                     }
                                 }
