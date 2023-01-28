@@ -25,7 +25,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 84
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -5652,6 +5652,14 @@ typedef struct
     unsigned short numberOfMisalignedVotes;
 } CurrentTickInfo;
 
+#define REQUEST_TICK_TRANSACTIONS 29
+
+typedef struct
+{
+    unsigned int tick;
+    unsigned char transactionFlags[NUMBER_OF_TRANSACTIONS_PER_TICK / 8];
+} RequestedTickTransactions;
+
 static volatile int state = 0;
 
 static unsigned char computingSubseeds[sizeof(computingSeeds) / sizeof(computingSeeds[0])][32], computingPrivateKeys[sizeof(computingSeeds) / sizeof(computingSeeds[0])][32], computingPublicKeys[sizeof(computingSeeds) / sizeof(computingSeeds[0])][32];
@@ -5713,6 +5721,7 @@ static bool etalonTickMustBeCreated = false;
 static unsigned char triggerSignature[SIGNATURE_SIZE];
 static volatile char tickTransactionsLock = 0;
 static unsigned char* tickTransactions = NULL;
+static unsigned long long tickTransactionOffsets[MAX_NUMBER_OF_TICKS_PER_EPOCH][NUMBER_OF_TRANSACTIONS_PER_TICK];
 static unsigned long long nextTickTransactionOffset = FIRST_TICK_TRANSACTION_OFFSET;
 
 static __m256i tickEssenceDigests[NUMBER_OF_COMPUTORS];
@@ -5829,6 +5838,12 @@ static struct
     RequestResponseHeader header;
     CurrentTickInfo currentTickInfo;
 } respondedCurrentTickInfo;
+
+static struct
+{
+    RequestResponseHeader header;
+    RequestedTickTransactions requestedTickTransactions;
+} requestedTickTransactions;
 
 static bool disableLogging = false;
 
@@ -7160,6 +7175,9 @@ static BOOLEAN initialize()
     respondedCurrentTickInfo.header.size = sizeof(respondedCurrentTickInfo);
     respondedCurrentTickInfo.header.protocol = VERSION_B;
     respondedCurrentTickInfo.header.type = RESPOND_CURRENT_TICK_INFO;
+    requestedTickTransactions.header.size = sizeof(requestedTickTransactions);
+    requestedTickTransactions.header.protocol = VERSION_B;
+    requestedTickTransactions.header.type = REQUEST_TICK_TRANSACTIONS;
 
     EFI_STATUS status;
 
@@ -7283,6 +7301,7 @@ static BOOLEAN initialize()
             return FALSE;
         }
         bs->SetMem(tickData, ((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * sizeof(TickData), 0);
+        bs->SetMem(tickTransactionOffsets, sizeof(tickTransactionOffsets), 0);
         for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
         {
             entityPendingTransactions[i].tick = 0;
@@ -7342,7 +7361,7 @@ static BOOLEAN initialize()
                 system.version = VERSION_B;
                 if (system.epoch == 41)
                 {
-                    system.initialTick = system.tick = 4500000;
+                    system.initialTick = system.tick = 4500010;
                 }
                 else
                 {
@@ -8421,7 +8440,32 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                             {
                                                                 bs->CopyMem(&nextTickData, &tickData[system.tick + 1 - system.initialTick], sizeof(TickData));
                                                                 KangarooTwelve((unsigned char*)&nextTickData, sizeof(TickData), etalonTick.varStruct.nextTick.digestOfTransactions, 32);
-                                                                if (!EQUAL(*((__m256i*)etalonTick.varStruct.nextTick.digestOfTransactions), targetNextTickDataDigest))
+                                                                if (EQUAL(*((__m256i*)etalonTick.varStruct.nextTick.digestOfTransactions), targetNextTickDataDigest))
+                                                                {
+                                                                    for (unsigned int i = 0; i < NUMBER_OF_TRANSACTIONS_PER_TICK; i++)
+                                                                    {
+                                                                        if (!EQUAL(*((__m256i*)nextTickData.transactionDigests[i]), ZERO))
+                                                                        {
+                                                                            if (!tickTransactionOffsets[system.tick + 1 - system.initialTick][i])
+                                                                            {
+                                                                                etalonTickMustBeCreated = true;
+
+                                                                                break;
+                                                                            }
+
+                                                                            unsigned char digest[32];
+                                                                            Transaction* transaction = (Transaction*)&tickTransactions[tickTransactionOffsets[system.tick + 1 - system.initialTick][i]];
+                                                                            KangarooTwelve((unsigned char*)transaction, sizeof(Transaction) + transaction->inputSize + SIGNATURE_SIZE, digest, sizeof(digest));
+                                                                            if (!EQUAL(*((__m256i*)digest), *((__m256i*)nextTickData.transactionDigests[i])))
+                                                                            {
+                                                                                etalonTickMustBeCreated = true;
+
+                                                                                break;
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                                else
                                                                 {
                                                                     etalonTickMustBeCreated = true;
                                                                 }
@@ -8434,6 +8478,28 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                         {
                                                             bs->CopyMem(&nextTickData, &tickData[system.tick + 1 - system.initialTick], sizeof(TickData));
                                                             KangarooTwelve((unsigned char*)&nextTickData, sizeof(TickData), etalonTick.varStruct.nextTick.digestOfTransactions, 32);
+                                                            for (unsigned int i = 0; i < NUMBER_OF_TRANSACTIONS_PER_TICK; i++)
+                                                            {
+                                                                if (!EQUAL(*((__m256i*)nextTickData.transactionDigests[i]), ZERO))
+                                                                {
+                                                                    if (!tickTransactionOffsets[system.tick + 1 - system.initialTick][i])
+                                                                    {
+                                                                        etalonTickMustBeCreated = true;
+
+                                                                        break;
+                                                                    }
+
+                                                                    unsigned char digest[32];
+                                                                    Transaction* transaction = (Transaction*)&tickTransactions[tickTransactionOffsets[system.tick + 1 - system.initialTick][i]];
+                                                                    KangarooTwelve((unsigned char*)transaction, sizeof(Transaction) + transaction->inputSize + SIGNATURE_SIZE, digest, sizeof(digest));
+                                                                    if (!EQUAL(*((__m256i*)digest), *((__m256i*)nextTickData.transactionDigests[i])))
+                                                                    {
+                                                                        etalonTickMustBeCreated = true;
+
+                                                                        break;
+                                                                    }
+                                                                }
+                                                            }
                                                         }
                                                         else
                                                         {
@@ -8821,8 +8887,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                                 {
                                                                                     push(&peers[j], &broadcastedFutureTickData.header, true);
                                                                                 }
-
-                                                                                bs->CopyMem(&tickData[broadcastedFutureTickData.broadcastFutureTickData.tickData.tick - system.initialTick], &broadcastedFutureTickData.broadcastFutureTickData.tickData, sizeof(TickData));
                                                                             }
 
                                                                             break;
@@ -9083,7 +9147,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     if (receivedDataSize >= sizeof(RequestResponseHeader))
                                                     {
                                                         RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                        if (requestResponseHeader->protocol < VERSION_B || requestResponseHeader->protocol > VERSION_B + 1)
+                                                        if (requestResponseHeader->protocol < VERSION_B - 1 || requestResponseHeader->protocol > VERSION_B + 1)
                                                         {
                                                             closePeer(&peers[i]);
                                                         }
@@ -9442,6 +9506,12 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     push(&peers[i], &respondedCurrentTickInfo.header, true);
 
                                                                     _InterlockedIncrement64(&numberOfProcessedRequests);
+                                                                }
+                                                                break;
+
+                                                                case REQUEST_TICK_TRANSACTIONS:
+                                                                {
+                                                                    // TODO
                                                                 }
                                                                 break;
 
