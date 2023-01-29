@@ -25,7 +25,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 84
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -5312,6 +5312,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define SPECTRUM_FRAGMENT_LENGTH 256
 #define SPECTRUM_FRAGMENT_DEPTH (SPECTRUM_DEPTH - 8)
 #define SYSTEM_DATA_SAVING_PERIOD 300
+#define TICK_TRANSACTIONS_PUBLICATION_OFFSET 2 // Must be 2+
 #define TIME_ACCURACY (5 * 60)
 #define VOLUME_LABEL L"Qubic"
 
@@ -5706,6 +5707,7 @@ static unsigned long long faultyComputorFlags[(NUMBER_OF_COMPUTORS + 63) / 64];
 static unsigned short prevTickMillisecond;
 static unsigned char prevTickSecond, prevTickMinute, prevTickHour, prevTickDay, prevTickMonth, prevTickYear;
 static unsigned int tickNumberOfComputors = 0, tickTotalNumberOfComputors = 0, futureTickTotalNumberOfComputors = 0;
+static unsigned int numberOfNextTickTransactions = 0, numberOfKnownNextTickTransactions = 0;
 static unsigned long long latestRevenuePublicationTick = 0;
 static unsigned short numberOfOwnComputorIndices = 0;
 static short ownComputorIndices[NUMBER_OF_COMPUTORS / 3];
@@ -5734,7 +5736,9 @@ static volatile char spectrumLock = 0;
 static Entity* spectrum = NULL;
 static unsigned int numberOfEntities = 0;
 static volatile char entityPendingTransactionsLock = 0;
-static Transaction* entityPendingTransactions = NULL;
+static unsigned char* entityPendingTransactions = NULL;
+static unsigned int entityPendingTransactionIndices[SPECTRUM_CAPACITY];
+static unsigned int numberOfEntityPendingTransactionIndices;
 static unsigned long long spectrumUpdatingBeginningTick = 0;
 static unsigned long long spectrumDigestCalculationBeginningTick = 0;
 static volatile unsigned char spectrumDigestLevel = 0;
@@ -6644,9 +6648,9 @@ static void requestProcessor(void* ProcedureArgument)
                         {
                             ACQUIRE(entityPendingTransactionsLock);
 
-                            if (entityPendingTransactions[spectrumIndex].tick < request->tick)
+                            if (((Transaction*)&entityPendingTransactions[spectrumIndex * MAX_TRANSACTION_SIZE])->tick < request->tick)
                             {
-                                bs->CopyMem(&entityPendingTransactions[spectrumIndex], request, sizeof(Transaction) + request->inputSize + SIGNATURE_SIZE);
+                                bs->CopyMem(&entityPendingTransactions[spectrumIndex * MAX_TRANSACTION_SIZE], request, sizeof(Transaction) + request->inputSize + SIGNATURE_SIZE);
                             }
 
                             RELEASE(entityPendingTransactionsLock);
@@ -7304,7 +7308,7 @@ static BOOLEAN initialize()
         bs->SetMem(tickTransactionOffsets, sizeof(tickTransactionOffsets), 0);
         for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
         {
-            entityPendingTransactions[i].tick = 0;
+            ((Transaction*)&entityPendingTransactions[i * MAX_TRANSACTION_SIZE])->tick = 0;
         }
 
         if ((status = bs->AllocatePool(EfiRuntimeServicesData, SPECTRUM_CAPACITY * sizeof(Entity), (void**)&initSpectrum))
@@ -8058,12 +8062,16 @@ static void logInfo()
     unsigned int numberOfPendingTransactions = 0;
     for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
     {
-        if (entityPendingTransactions[i].tick >= system.tick)
+        if (((Transaction*)&entityPendingTransactions[i * MAX_TRANSACTION_SIZE])->tick > system.tick)
         {
             numberOfPendingTransactions++;
         }
     }
-    setNumber(message, numberOfPendingTransactions, TRUE);
+    setNumber(message, numberOfKnownNextTickTransactions, TRUE);
+    appendText(message, L"/");
+    appendNumber(message, numberOfNextTickTransactions, TRUE);
+    appendText(message, L" next tick transactions are known. ");
+    appendNumber(message, numberOfPendingTransactions, TRUE);
     appendText(message, L" pending transactions. The tick leader is ");
     appendText(message, ticks[(system.tick - system.initialTick) * NUMBER_OF_COMPUTORS + system.tick % NUMBER_OF_COMPUTORS].epoch == system.epoch ? L"ON-line." : L"OFF-line.");
     log(message);
@@ -8420,6 +8428,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             {
                                                 etalonTickMustBeCreated = false;
 
+                                                numberOfNextTickTransactions = 0;
+                                                numberOfKnownNextTickTransactions = 0;
+
                                                 if (EQUAL(*((__m256i*)triggerSignature), ZERO))
                                                 {
                                                     *((__m256i*)etalonTick.varStruct.nextTick.zero) = ZERO;
@@ -8446,21 +8457,17 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     {
                                                                         if (!EQUAL(*((__m256i*)nextTickData.transactionDigests[i]), ZERO))
                                                                         {
-                                                                            if (!tickTransactionOffsets[system.tick + 1 - system.initialTick][i])
+                                                                            numberOfNextTickTransactions++;
+
+                                                                            if (tickTransactionOffsets[system.tick + 1 - system.initialTick][i])
                                                                             {
-                                                                                etalonTickMustBeCreated = true;
-
-                                                                                break;
-                                                                            }
-
-                                                                            unsigned char digest[32];
-                                                                            Transaction* transaction = (Transaction*)&tickTransactions[tickTransactionOffsets[system.tick + 1 - system.initialTick][i]];
-                                                                            KangarooTwelve((unsigned char*)transaction, sizeof(Transaction) + transaction->inputSize + SIGNATURE_SIZE, digest, sizeof(digest));
-                                                                            if (!EQUAL(*((__m256i*)digest), *((__m256i*)nextTickData.transactionDigests[i])))
-                                                                            {
-                                                                                etalonTickMustBeCreated = true;
-
-                                                                                break;
+                                                                                unsigned char digest[32];
+                                                                                Transaction* transaction = (Transaction*)&tickTransactions[tickTransactionOffsets[system.tick + 1 - system.initialTick][i]];
+                                                                                KangarooTwelve((unsigned char*)transaction, sizeof(Transaction) + transaction->inputSize + SIGNATURE_SIZE, digest, sizeof(digest));
+                                                                                if (EQUAL(*((__m256i*)digest), *((__m256i*)nextTickData.transactionDigests[i])))
+                                                                                {
+                                                                                    numberOfKnownNextTickTransactions++;
+                                                                                }
                                                                             }
                                                                         }
                                                                     }
@@ -8482,21 +8489,17 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                             {
                                                                 if (!EQUAL(*((__m256i*)nextTickData.transactionDigests[i]), ZERO))
                                                                 {
-                                                                    if (!tickTransactionOffsets[system.tick + 1 - system.initialTick][i])
+                                                                    numberOfNextTickTransactions++;
+
+                                                                    if (tickTransactionOffsets[system.tick + 1 - system.initialTick][i])
                                                                     {
-                                                                        etalonTickMustBeCreated = true;
-
-                                                                        break;
-                                                                    }
-
-                                                                    unsigned char digest[32];
-                                                                    Transaction* transaction = (Transaction*)&tickTransactions[tickTransactionOffsets[system.tick + 1 - system.initialTick][i]];
-                                                                    KangarooTwelve((unsigned char*)transaction, sizeof(Transaction) + transaction->inputSize + SIGNATURE_SIZE, digest, sizeof(digest));
-                                                                    if (!EQUAL(*((__m256i*)digest), *((__m256i*)nextTickData.transactionDigests[i])))
-                                                                    {
-                                                                        etalonTickMustBeCreated = true;
-
-                                                                        break;
+                                                                        unsigned char digest[32];
+                                                                        Transaction* transaction = (Transaction*)&tickTransactions[tickTransactionOffsets[system.tick + 1 - system.initialTick][i]];
+                                                                        KangarooTwelve((unsigned char*)transaction, sizeof(Transaction) + transaction->inputSize + SIGNATURE_SIZE, digest, sizeof(digest));
+                                                                        if (EQUAL(*((__m256i*)digest), *((__m256i*)nextTickData.transactionDigests[i])))
+                                                                        {
+                                                                            numberOfKnownNextTickTransactions++;
+                                                                        }
                                                                     }
                                                                 }
                                                             }
@@ -8510,6 +8513,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 else
                                                 {
                                                     bs->CopyMem(etalonTick.varStruct.trigger.signature, triggerSignature, SIGNATURE_SIZE);
+                                                }
+
+                                                if (numberOfKnownNextTickTransactions != numberOfNextTickTransactions)
+                                                {
+                                                    etalonTickMustBeCreated = true;
                                                 }
 
                                                 if (!etalonTickMustBeCreated)
@@ -8852,7 +8860,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                 {
                                                                     for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
                                                                     {
-                                                                        if ((system.tick + 2) % NUMBER_OF_COMPUTORS == ownComputorIndices[i])
+                                                                        if ((system.tick + TICK_TRANSACTIONS_PUBLICATION_OFFSET) % NUMBER_OF_COMPUTORS == ownComputorIndices[i])
                                                                         {
                                                                             EFI_TIME newTime;
                                                                             if (status = rs->GetTime(&newTime, NULL))
@@ -8873,7 +8881,32 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                                 broadcastedFutureTickData.broadcastFutureTickData.tickData.month = newTime.Month;
                                                                                 broadcastedFutureTickData.broadcastFutureTickData.tickData.year = newTime.Year - 2000;
 
-                                                                                for (unsigned int j = 0; j < NUMBER_OF_TRANSACTIONS_PER_TICK; j++)
+                                                                                for (numberOfEntityPendingTransactionIndices = 0; numberOfEntityPendingTransactionIndices < SPECTRUM_CAPACITY; numberOfEntityPendingTransactionIndices++)
+                                                                                {
+                                                                                    entityPendingTransactionIndices[numberOfEntityPendingTransactionIndices] = numberOfEntityPendingTransactionIndices;
+                                                                                }
+                                                                                unsigned int j = 0;
+                                                                                while (j < NUMBER_OF_TRANSACTIONS_PER_TICK && numberOfEntityPendingTransactionIndices)
+                                                                                {
+                                                                                    unsigned int random;
+                                                                                    _rdrand32_step(&random);
+                                                                                    const unsigned short index = random % numberOfEntityPendingTransactionIndices;
+
+                                                                                    if (((Transaction*)&entityPendingTransactions[index * MAX_TRANSACTION_SIZE])->tick == system.tick + TICK_TRANSACTIONS_PUBLICATION_OFFSET)
+                                                                                    {
+                                                                                        const unsigned int transactionSize = sizeof(Transaction) + ((Transaction*)&entityPendingTransactions[index * MAX_TRANSACTION_SIZE])->inputSize + SIGNATURE_SIZE;
+                                                                                        if (nextTickTransactionOffset + transactionSize <= FIRST_TICK_TRANSACTION_OFFSET + (((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * NUMBER_OF_TRANSACTIONS_PER_TICK * MAX_TRANSACTION_SIZE))
+                                                                                        {
+                                                                                            tickTransactionOffsets[((Transaction*)&entityPendingTransactions[index * MAX_TRANSACTION_SIZE])->tick - system.initialTick][j] = nextTickTransactionOffset;
+                                                                                            bs->CopyMem(&tickTransactions[nextTickTransactionOffset], &entityPendingTransactions[index * MAX_TRANSACTION_SIZE], transactionSize);
+                                                                                            KangarooTwelve(&tickTransactions[nextTickTransactionOffset], transactionSize, broadcastedFutureTickData.broadcastFutureTickData.tickData.transactionDigests[j], sizeof(broadcastedFutureTickData.broadcastFutureTickData.tickData.transactionDigests[j]));
+                                                                                            nextTickTransactionOffset += transactionSize;
+                                                                                        }
+                                                                                    }
+
+                                                                                    entityPendingTransactionIndices[index] = entityPendingTransactionIndices[--numberOfEntityPendingTransactionIndices];
+                                                                                }
+                                                                                for (; j < NUMBER_OF_TRANSACTIONS_PER_TICK; j++)
                                                                                 {
                                                                                     *((__m256i*)broadcastedFutureTickData.broadcastFutureTickData.tickData.transactionDigests[j]) = ZERO;
                                                                                 }
