@@ -25,7 +25,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 85
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -5738,7 +5738,6 @@ static unsigned int numberOfEntities = 0;
 static volatile char entityPendingTransactionsLock = 0;
 static unsigned char* entityPendingTransactions = NULL;
 static unsigned int entityPendingTransactionIndices[SPECTRUM_CAPACITY];
-static unsigned int numberOfEntityPendingTransactionIndices;
 static unsigned long long spectrumUpdatingBeginningTick = 0;
 static unsigned long long spectrumDigestCalculationBeginningTick = 0;
 static volatile unsigned char spectrumDigestLevel = 0;
@@ -8871,7 +8870,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                             {
                                                                                 broadcastedFutureTickData.broadcastFutureTickData.tickData.computorIndex = ownComputorIndices[i] ^ BROADCAST_FUTURE_TICK_DATA;
                                                                                 broadcastedFutureTickData.broadcastFutureTickData.tickData.epoch = system.epoch;
-                                                                                broadcastedFutureTickData.broadcastFutureTickData.tickData.tick = system.tick + 2;
+                                                                                broadcastedFutureTickData.broadcastFutureTickData.tickData.tick = system.tick + TICK_TRANSACTIONS_PUBLICATION_OFFSET;
 
                                                                                 broadcastedFutureTickData.broadcastFutureTickData.tickData.millisecond = 0;
                                                                                 broadcastedFutureTickData.broadcastFutureTickData.tickData.second = newTime.Second;
@@ -8881,6 +8880,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                                 broadcastedFutureTickData.broadcastFutureTickData.tickData.month = newTime.Month;
                                                                                 broadcastedFutureTickData.broadcastFutureTickData.tickData.year = newTime.Year - 2000;
 
+                                                                                unsigned int numberOfEntityPendingTransactionIndices;
                                                                                 for (numberOfEntityPendingTransactionIndices = 0; numberOfEntityPendingTransactionIndices < SPECTRUM_CAPACITY; numberOfEntityPendingTransactionIndices++)
                                                                                 {
                                                                                     entityPendingTransactionIndices[numberOfEntityPendingTransactionIndices] = numberOfEntityPendingTransactionIndices;
@@ -8892,14 +8892,18 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                                     _rdrand32_step(&random);
                                                                                     const unsigned short index = random % numberOfEntityPendingTransactionIndices;
 
-                                                                                    if (((Transaction*)&entityPendingTransactions[index * MAX_TRANSACTION_SIZE])->tick == system.tick + TICK_TRANSACTIONS_PUBLICATION_OFFSET)
+                                                                                    const Transaction* pendingTransaction = ((Transaction*)&entityPendingTransactions[index * MAX_TRANSACTION_SIZE]);
+                                                                                    if (pendingTransaction->tick == system.tick + TICK_TRANSACTIONS_PUBLICATION_OFFSET)
                                                                                     {
-                                                                                        const unsigned int transactionSize = sizeof(Transaction) + ((Transaction*)&entityPendingTransactions[index * MAX_TRANSACTION_SIZE])->inputSize + SIGNATURE_SIZE;
+                                                                                        /**/log(L"Report case A!");
+                                                                                        const unsigned int transactionSize = sizeof(Transaction) + pendingTransaction->inputSize + SIGNATURE_SIZE;
                                                                                         if (nextTickTransactionOffset + transactionSize <= FIRST_TICK_TRANSACTION_OFFSET + (((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * NUMBER_OF_TRANSACTIONS_PER_TICK * MAX_TRANSACTION_SIZE))
                                                                                         {
-                                                                                            tickTransactionOffsets[((Transaction*)&entityPendingTransactions[index * MAX_TRANSACTION_SIZE])->tick - system.initialTick][j] = nextTickTransactionOffset;
+                                                                                            /**/log(L"Report case B!");
+                                                                                            tickTransactionOffsets[pendingTransaction->tick - system.initialTick][j] = nextTickTransactionOffset;
                                                                                             bs->CopyMem(&tickTransactions[nextTickTransactionOffset], &entityPendingTransactions[index * MAX_TRANSACTION_SIZE], transactionSize);
                                                                                             KangarooTwelve(&tickTransactions[nextTickTransactionOffset], transactionSize, broadcastedFutureTickData.broadcastFutureTickData.tickData.transactionDigests[j], sizeof(broadcastedFutureTickData.broadcastFutureTickData.tickData.transactionDigests[j]));
+                                                                                            j++;
                                                                                             nextTickTransactionOffset += transactionSize;
                                                                                         }
                                                                                     }
