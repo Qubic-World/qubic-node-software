@@ -24,8 +24,8 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 85
-#define VERSION_C 1
+#define VERSION_B 86
+#define VERSION_C 0
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -5848,6 +5848,12 @@ static struct
     RequestedTickTransactions requestedTickTransactions;
 } requestedTickTransactions;
 
+static struct
+{
+    RequestResponseHeader header;
+    unsigned char transactionBuffer[MAX_TRANSACTION_SIZE];
+} respondedTickTransaction;
+
 static bool disableLogging = false;
 
 static void appendText(CHAR16* dst, const CHAR16* src)
@@ -6044,70 +6050,76 @@ iteration:
 
 static void increaseEnergy(unsigned char* publicKey, long long amount, unsigned int tick)
 {
-    // TODO: numberOfEntities!
-
-    unsigned int index = (*((unsigned int*)publicKey)) & (SPECTRUM_CAPACITY - 1);
-
-    ACQUIRE(spectrumLock);
-
-iteration:
-    if (EQUAL(*((__m256i*)spectrum[index].publicKey), *((__m256i*)publicKey)))
+    if (amount > 0)
     {
-        spectrum[index].incomingAmount += amount;
-        spectrum[index].numberOfIncomingTransfers++;
-        spectrum[index].latestIncomingTransferTick = tick;
-    }
-    else
-    {
-        if (EQUAL(*((__m256i*)spectrum[index].publicKey), ZERO))
+        // TODO: numberOfEntities!
+
+        unsigned int index = (*((unsigned int*)publicKey)) & (SPECTRUM_CAPACITY - 1);
+
+        ACQUIRE(spectrumLock);
+
+    iteration:
+        if (EQUAL(*((__m256i*)spectrum[index].publicKey), *((__m256i*)publicKey)))
         {
-            *((__m256i*)spectrum[index].publicKey) = *((__m256i*)publicKey);
-            spectrum[index].incomingAmount = amount;
-            spectrum[index].numberOfIncomingTransfers = 1;
+            spectrum[index].incomingAmount += amount;
+            spectrum[index].numberOfIncomingTransfers++;
             spectrum[index].latestIncomingTransferTick = tick;
         }
         else
         {
-            index = (index + 1) & (SPECTRUM_CAPACITY - 1);
+            if (EQUAL(*((__m256i*)spectrum[index].publicKey), ZERO))
+            {
+                *((__m256i*)spectrum[index].publicKey) = *((__m256i*)publicKey);
+                spectrum[index].incomingAmount = amount;
+                spectrum[index].numberOfIncomingTransfers = 1;
+                spectrum[index].latestIncomingTransferTick = tick;
+            }
+            else
+            {
+                index = (index + 1) & (SPECTRUM_CAPACITY - 1);
 
-            goto iteration;
+                goto iteration;
+            }
         }
-    }
 
-    RELEASE(spectrumLock);
+        RELEASE(spectrumLock);
+    }
 }
 
 static bool decreaseEnergy(unsigned char* publicKey, long long amount, unsigned int tick)
 {
-    unsigned int index = (*((unsigned int*)publicKey)) & (SPECTRUM_CAPACITY - 1);
-
-    ACQUIRE(spectrumLock);
-
-iteration:
-    if (EQUAL(*((__m256i*)spectrum[index].publicKey), *((__m256i*)publicKey)))
+    if (amount > 0)
     {
-        if (spectrum[index].incomingAmount - spectrum[index].outgoingAmount >= amount)
+        unsigned int index = (*((unsigned int*)publicKey)) & (SPECTRUM_CAPACITY - 1);
+
+        ACQUIRE(spectrumLock);
+
+    iteration:
+        if (EQUAL(*((__m256i*)spectrum[index].publicKey), *((__m256i*)publicKey)))
         {
-            spectrum[index].outgoingAmount += amount;
-            spectrum[index].numberOfOutgoingTransfers++;
-            spectrum[index].latestOutgoingTransferTick = tick;
+            if (spectrum[index].incomingAmount - spectrum[index].outgoingAmount >= amount)
+            {
+                spectrum[index].outgoingAmount += amount;
+                spectrum[index].numberOfOutgoingTransfers++;
+                spectrum[index].latestOutgoingTransferTick = tick;
 
-            RELEASE(spectrumLock);
+                RELEASE(spectrumLock);
 
-            return true;
+                return true;
+            }
         }
-    }
-    else
-    {
-        if (!EQUAL(*((__m256i*)spectrum[index].publicKey), ZERO))
+        else
         {
-            index = (index + 1) & (SPECTRUM_CAPACITY - 1);
+            if (!EQUAL(*((__m256i*)spectrum[index].publicKey), ZERO))
+            {
+                index = (index + 1) & (SPECTRUM_CAPACITY - 1);
 
-            goto iteration;
+                goto iteration;
+            }
         }
-    }
 
-    RELEASE(spectrumLock);
+        RELEASE(spectrumLock);
+    }
 
     return false;
 }
@@ -6654,6 +6666,32 @@ static void requestProcessor(void* ProcedureArgument)
 
                             RELEASE(entityPendingTransactionsLock);
                         }
+
+                        if (request->tick == system.tick + 1
+                            && tickData[request->tick - system.initialTick].epoch == system.epoch)
+                        {
+                            const unsigned int transactionSize = sizeof(Transaction) + request->inputSize + SIGNATURE_SIZE;
+                            KangarooTwelve((unsigned char*)request, transactionSize, digest, sizeof(digest));
+                            for (unsigned int i = 0; i < NUMBER_OF_TRANSACTIONS_PER_TICK; i++)
+                            {
+                                if (EQUAL(*((__m256i*)digest), *((__m256i*)tickData[request->tick - system.initialTick].transactionDigests[i])))
+                                {
+                                    ACQUIRE(tickTransactionsLock);
+                                    if (!tickTransactionOffsets[request->tick - system.initialTick][i])
+                                    {
+                                        if (nextTickTransactionOffset + transactionSize <= FIRST_TICK_TRANSACTION_OFFSET + (((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * NUMBER_OF_TRANSACTIONS_PER_TICK * MAX_TRANSACTION_SIZE))
+                                        {
+                                            tickTransactionOffsets[request->tick - system.initialTick][i] = nextTickTransactionOffset;
+                                            bs->CopyMem(&tickTransactions[nextTickTransactionOffset], request, transactionSize);
+                                            nextTickTransactionOffset += transactionSize;
+                                        }
+                                    }
+                                    RELEASE(tickTransactionsLock);
+
+                                    break;
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -7181,6 +7219,8 @@ static BOOLEAN initialize()
     requestedTickTransactions.header.size = sizeof(requestedTickTransactions);
     requestedTickTransactions.header.protocol = VERSION_B;
     requestedTickTransactions.header.type = REQUEST_TICK_TRANSACTIONS;
+    respondedTickTransaction.header.protocol = VERSION_B;
+    respondedTickTransaction.header.type = BROADCAST_TRANSACTION;
 
     EFI_STATUS status;
 
@@ -7364,7 +7404,7 @@ static BOOLEAN initialize()
                 system.version = VERSION_B;
                 if (system.epoch == 42)
                 {
-                    system.initialTick = system.tick = 4600000;
+                    system.initialTick = system.tick = 4600500;
                 }
                 else
                 {
@@ -7722,10 +7762,7 @@ static void terminateEpoch()
                 adminRevenue -= broadcastedTerminator.broadcastTerminator.terminator.revenues[i];
             }
         }
-        if (adminRevenue > 0)
-        {
-            increaseEnergy(adminPublicKey, adminRevenue, system.tick);
-        }
+        increaseEnergy(adminPublicKey, adminRevenue, system.tick);
 
         system.epoch++;
         system.initialTick = system.tick;
@@ -8127,6 +8164,18 @@ static void processKeyPresses()
             appendNumber(message, etalonTick.millisecond % 10, FALSE);
             appendText(message, L".");
             log(message);
+
+            unsigned int earliestTick = 1000000000;
+            for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
+            {
+                if (((Transaction*)&entityPendingTransactions[i * MAX_TRANSACTION_SIZE])->tick > system.tick && ((Transaction*)&entityPendingTransactions[i * MAX_TRANSACTION_SIZE])->tick < earliestTick)
+                {
+                    earliestTick = ((Transaction*)&entityPendingTransactions[i * MAX_TRANSACTION_SIZE])->tick;
+                }
+            }
+            setText(message, L"Earliest tick with pending transactions = ");
+            appendNumber(message, earliestTick, TRUE);
+            log(message);
         }
         break;
 
@@ -8429,6 +8478,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                 numberOfNextTickTransactions = 0;
                                                 numberOfKnownNextTickTransactions = 0;
+                                                bs->SetMem(requestedTickTransactions.requestedTickTransactions.transactionFlags, sizeof(requestedTickTransactions.requestedTickTransactions.transactionFlags), 0);
 
                                                 if (EQUAL(*((__m256i*)triggerSignature), ZERO))
                                                 {
@@ -8458,6 +8508,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                         {
                                                                             numberOfNextTickTransactions++;
 
+                                                                            ACQUIRE(tickTransactionsLock);
                                                                             if (tickTransactionOffsets[system.tick + 1 - system.initialTick][i])
                                                                             {
                                                                                 unsigned char digest[32];
@@ -8466,8 +8517,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                                 if (EQUAL(*((__m256i*)digest), *((__m256i*)nextTickData.transactionDigests[i])))
                                                                                 {
                                                                                     numberOfKnownNextTickTransactions++;
+                                                                                    requestedTickTransactions.requestedTickTransactions.transactionFlags[i >> 3] |= (1 << (i & 7));
                                                                                 }
                                                                             }
+                                                                            RELEASE(tickTransactionsLock);
                                                                         }
                                                                     }
                                                                 }
@@ -8490,6 +8543,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                 {
                                                                     numberOfNextTickTransactions++;
 
+                                                                    ACQUIRE(tickTransactionsLock);
                                                                     if (tickTransactionOffsets[system.tick + 1 - system.initialTick][i])
                                                                     {
                                                                         unsigned char digest[32];
@@ -8498,8 +8552,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                         if (EQUAL(*((__m256i*)digest), *((__m256i*)nextTickData.transactionDigests[i])))
                                                                         {
                                                                             numberOfKnownNextTickTransactions++;
+                                                                            requestedTickTransactions.requestedTickTransactions.transactionFlags[i >> 3] |= (1 << (i & 7));
                                                                         }
                                                                     }
+                                                                    RELEASE(tickTransactionsLock);
                                                                 }
                                                             }
                                                         }
@@ -8890,16 +8946,14 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                                 {
                                                                                     unsigned int random;
                                                                                     _rdrand32_step(&random);
-                                                                                    const unsigned short index = random % numberOfEntityPendingTransactionIndices;
+                                                                                    const unsigned int index = random % numberOfEntityPendingTransactionIndices;
 
                                                                                     const Transaction* pendingTransaction = ((Transaction*)&entityPendingTransactions[index * MAX_TRANSACTION_SIZE]);
                                                                                     if (pendingTransaction->tick == system.tick + TICK_TRANSACTIONS_PUBLICATION_OFFSET)
                                                                                     {
-                                                                                        /**/log(L"Report case A!");
                                                                                         const unsigned int transactionSize = sizeof(Transaction) + pendingTransaction->inputSize + SIGNATURE_SIZE;
                                                                                         if (nextTickTransactionOffset + transactionSize <= FIRST_TICK_TRANSACTION_OFFSET + (((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * NUMBER_OF_TRANSACTIONS_PER_TICK * MAX_TRANSACTION_SIZE))
                                                                                         {
-                                                                                            /**/log(L"Report case B!");
                                                                                             tickTransactionOffsets[pendingTransaction->tick - system.initialTick][j] = nextTickTransactionOffset;
                                                                                             bs->CopyMem(&tickTransactions[nextTickTransactionOffset], &entityPendingTransactions[index * MAX_TRANSACTION_SIZE], transactionSize);
                                                                                             KangarooTwelve(&tickTransactions[nextTickTransactionOffset], transactionSize, broadcastedFutureTickData.broadcastFutureTickData.tickData.transactionDigests[j], sizeof(broadcastedFutureTickData.broadcastFutureTickData.tickData.transactionDigests[j]));
@@ -9548,7 +9602,36 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                                 case REQUEST_TICK_TRANSACTIONS:
                                                                 {
-                                                                    // TODO
+                                                                    RequestedTickTransactions* request = (RequestedTickTransactions*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader));
+                                                                    if (request->tick >= system.initialTick && request->tick < system.initialTick + MAX_NUMBER_OF_TICKS_PER_EPOCH)
+                                                                    {
+                                                                        unsigned short tickTransactionIndices[NUMBER_OF_TRANSACTIONS_PER_TICK];
+                                                                        unsigned short numberOfTickTransactions;
+                                                                        for (numberOfTickTransactions = 0; numberOfTickTransactions < NUMBER_OF_TRANSACTIONS_PER_TICK; numberOfTickTransactions++)
+                                                                        {
+                                                                            tickTransactionIndices[numberOfTickTransactions] = numberOfTickTransactions;
+                                                                        }
+                                                                        while (numberOfTickTransactions)
+                                                                        {
+                                                                            unsigned short random;
+                                                                            _rdrand16_step(&random);
+                                                                            const unsigned short index = random % numberOfTickTransactions;
+
+                                                                            if (!(request->transactionFlags[index >> 3] & (1 << (index & 7))))
+                                                                            {
+                                                                                if (tickTransactionOffsets[request->tick - system.initialTick][index])
+                                                                                {
+                                                                                    const Transaction* transaction = (Transaction*)&tickTransactions[tickTransactionOffsets[request->tick - system.initialTick][index]];
+                                                                                    const unsigned int transactionSize = sizeof(Transaction) + transaction->inputSize + SIGNATURE_SIZE;
+                                                                                    respondedTickTransaction.header.size = sizeof(respondedTickTransaction.header) + transactionSize;
+                                                                                    bs->CopyMem(&respondedTickTransaction.transactionBuffer, (void*)transaction, transactionSize);
+                                                                                    push(&peers[i], &respondedTickTransaction.header, true);
+                                                                                }
+                                                                            }
+
+                                                                            tickTransactionIndices[index] = tickTransactionIndices[--numberOfTickTransactions];
+                                                                        }
+                                                                    }
                                                                 }
                                                                 break;
 
@@ -9802,6 +9885,15 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
                                         {
                                             push(&peers[i], &requestedTickData.header, true);
+                                        }
+                                    }
+
+                                    if (numberOfKnownNextTickTransactions != numberOfNextTickTransactions)
+                                    {
+                                        requestedTickTransactions.requestedTickTransactions.tick = system.tick + 1;
+                                        for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
+                                        {
+                                            push(&peers[i], &requestedTickTransactions.header, true);
                                         }
                                     }
                                 }
