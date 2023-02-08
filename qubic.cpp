@@ -24,13 +24,13 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 86
-#define VERSION_C 1
+#define VERSION_B 87
+#define VERSION_C 0
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
 static unsigned short SYSTEM_FILE_NAME[] = L"system";
-static unsigned short SOLUTION_FILE_NAME[] = L"solution.042";
+static unsigned short SOLUTION_FILE_NAME[] = L"solution.043";
 static unsigned short SPECTRUM_FILE_NAME[] = L"spectrum.???";
 
 #include <intrin.h>
@@ -5306,7 +5306,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 90
 #define REVENUE_PUBLICATION_PERIOD 300
 #define SIGNATURE_SIZE 64
-#define SOLUTION_THRESHOLD 29
+#define SOLUTION_THRESHOLD 28
 #define SPECTRUM_CAPACITY 0x1000000ULL // Must be 2^N
 #define SPECTRUM_DEPTH 24 // Is derived from SPECTRUM_CAPACITY (=N)
 #define SPECTRUM_FRAGMENT_LENGTH 256
@@ -5660,6 +5660,8 @@ typedef struct
     unsigned int tick;
     unsigned char transactionFlags[NUMBER_OF_TRANSACTIONS_PER_TICK / 8];
 } RequestedTickTransactions;
+
+#define RESPOND_TICK_TRANSACTION 30
 
 static volatile int state = 0;
 
@@ -6645,6 +6647,7 @@ static void requestProcessor(void* ProcedureArgument)
             {
                 Transaction* request = (Transaction*)((char*)processor->cache + sizeof(RequestResponseHeader));
                 if (request->amount >= 0 && request->amount <= MAX_AMOUNT
+                    && !request->inputType
                     && request->inputSize <= MAX_INPUT_SIZE
                     && requestHeader->size == sizeof(RequestResponseHeader) + sizeof(Transaction) + request->inputSize + SIGNATURE_SIZE)
                 {
@@ -7220,7 +7223,7 @@ static BOOLEAN initialize()
     requestedTickTransactions.header.protocol = VERSION_B;
     requestedTickTransactions.header.type = REQUEST_TICK_TRANSACTIONS;
     respondedTickTransaction.header.protocol = VERSION_B;
-    respondedTickTransaction.header.type = BROADCAST_TRANSACTION;
+    respondedTickTransaction.header.type = RESPOND_TICK_TRANSACTION;
 
     EFI_STATUS status;
 
@@ -7394,7 +7397,7 @@ static BOOLEAN initialize()
                 {
                     bs->SetMem(&system, sizeof(system), 0);
 
-                    system.epoch = 42;
+                    system.epoch = 43;
                     system.epochBeginningHour = 12;
                     system.epochBeginningDay = 13;
                     system.epochBeginningMonth = 4;
@@ -7402,9 +7405,9 @@ static BOOLEAN initialize()
                 }
 
                 system.version = VERSION_B;
-                if (system.epoch == 42)
+                if (system.epoch == 43)
                 {
-                    system.initialTick = system.tick = 4600500;
+                    system.initialTick = system.tick = 4700000;
                 }
                 else
                 {
@@ -7516,7 +7519,7 @@ static BOOLEAN initialize()
         randomSeed[0] = 159;
         randomSeed[1] = 87;
         randomSeed[2] = 115;
-        randomSeed[3] = 131;
+        randomSeed[3] = 132;
         randomSeed[4] = 132;
         randomSeed[5] = 86;
         randomSeed[6] = 13;
@@ -8185,6 +8188,15 @@ static void processKeyPresses()
             {
                 closePeer(&peers[i]);
             }
+        }
+        break;
+
+        case 0x10:
+        {
+            SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 4] = L'0';
+            SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 3] = L'0';
+            SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 2] = L'0';
+            saveSpectrum();
         }
         break;
 
@@ -9338,7 +9350,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     if (receivedDataSize >= sizeof(RequestResponseHeader))
                                                     {
                                                         RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                        if (requestResponseHeader->protocol < VERSION_B - 1 || requestResponseHeader->protocol > VERSION_B + 1)
+                                                        if (requestResponseHeader->protocol < VERSION_B || requestResponseHeader->protocol > VERSION_B + 1)
                                                         {
                                                             closePeer(&peers[i]);
                                                         }
@@ -9730,6 +9742,47 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                             }
 
                                                                             tickTransactionIndices[index] = tickTransactionIndices[--numberOfTickTransactions];
+                                                                        }
+                                                                    }
+                                                                }
+                                                                break;
+
+                                                                case RESPOND_TICK_TRANSACTION:
+                                                                {
+                                                                    Transaction* request = (Transaction*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader));
+                                                                    if (request->amount >= 0 && request->amount <= MAX_AMOUNT
+                                                                        && !request->inputType
+                                                                        && request->inputSize <= MAX_INPUT_SIZE)
+                                                                    {
+                                                                        const unsigned int transactionSize = sizeof(Transaction) + request->inputSize + SIGNATURE_SIZE;
+                                                                        unsigned char digest[32];
+                                                                        KangarooTwelve((unsigned char*)request, transactionSize - SIGNATURE_SIZE, digest, sizeof(digest));
+                                                                        if (verify(request->sourcePublicKey, digest, (((const unsigned char*)request) + sizeof(Transaction) + request->inputSize)))
+                                                                        {
+                                                                            if (request->tick == system.tick + 1
+                                                                                && tickData[request->tick - system.initialTick].epoch == system.epoch)
+                                                                            {
+                                                                                KangarooTwelve((unsigned char*)request, transactionSize, digest, sizeof(digest));
+                                                                                for (unsigned int i = 0; i < NUMBER_OF_TRANSACTIONS_PER_TICK; i++)
+                                                                                {
+                                                                                    if (EQUAL(*((__m256i*)digest), *((__m256i*)tickData[request->tick - system.initialTick].transactionDigests[i])))
+                                                                                    {
+                                                                                        ACQUIRE(tickTransactionsLock);
+                                                                                        if (!tickTransactionOffsets[request->tick - system.initialTick][i])
+                                                                                        {
+                                                                                            if (nextTickTransactionOffset + transactionSize <= FIRST_TICK_TRANSACTION_OFFSET + (((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * NUMBER_OF_TRANSACTIONS_PER_TICK * MAX_TRANSACTION_SIZE))
+                                                                                            {
+                                                                                                tickTransactionOffsets[request->tick - system.initialTick][i] = nextTickTransactionOffset;
+                                                                                                bs->CopyMem(&tickTransactions[nextTickTransactionOffset], request, transactionSize);
+                                                                                                nextTickTransactionOffset += transactionSize;
+                                                                                            }
+                                                                                        }
+                                                                                        RELEASE(tickTransactionsLock);
+
+                                                                                        break;
+                                                                                    }
+                                                                                }
+                                                                            }
                                                                         }
                                                                     }
                                                                 }
