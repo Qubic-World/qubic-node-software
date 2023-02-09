@@ -24,7 +24,7 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 88
+#define VERSION_B 89
 #define VERSION_C 0
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
@@ -5740,7 +5740,6 @@ static unsigned int numberOfEntities = 0;
 static volatile char entityPendingTransactionsLock = 0;
 static unsigned char* entityPendingTransactions = NULL;
 static unsigned int entityPendingTransactionIndices[SPECTRUM_CAPACITY];
-static unsigned long long spectrumUpdatingBeginningTick = 0;
 static unsigned long long spectrumDigestCalculationBeginningTick = 0;
 static volatile unsigned char spectrumDigestLevel = 0;
 static volatile short spectrumDigestLevelCompleteness = 0;
@@ -6030,15 +6029,21 @@ static int spectrumIndex(unsigned char* publicKey)
 {
     unsigned int index = (*((unsigned int*)publicKey)) & (SPECTRUM_CAPACITY - 1);
 
+    ACQUIRE(spectrumLock);
+
 iteration:
     if (EQUAL(*((__m256i*)spectrum[index].publicKey), *((__m256i*)publicKey)))
     {
+        RELEASE(spectrumLock);
+
         return index;
     }
     else
     {
         if (EQUAL(*((__m256i*)spectrum[index].publicKey), ZERO))
         {
+            RELEASE(spectrumLock);
+
             return -1;
         }
         else
@@ -6118,6 +6123,29 @@ static bool decreaseEnergy(unsigned char* publicKey, long long amount, unsigned 
 
                 goto iteration;
             }
+        }
+
+        RELEASE(spectrumLock);
+    }
+
+    return false;
+}
+
+static bool decreaseEnergy(const int index, long long amount, unsigned int tick)
+{
+    if (amount > 0)
+    {
+        ACQUIRE(spectrumLock);
+
+        if (spectrum[index].incomingAmount - spectrum[index].outgoingAmount >= amount)
+        {
+            spectrum[index].outgoingAmount += amount;
+            spectrum[index].numberOfOutgoingTransfers++;
+            spectrum[index].latestOutgoingTransferTick = tick;
+
+            RELEASE(spectrumLock);
+
+            return true;
         }
 
         RELEASE(spectrumLock);
@@ -7426,7 +7454,7 @@ static BOOLEAN initialize()
                 system.version = VERSION_B;
                 if (system.epoch == 43)
                 {
-                    system.initialTick = system.tick = 4701000;
+                    system.initialTick = system.tick = 4800000;
                 }
                 else
                 {
@@ -8484,7 +8512,53 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             {
                                                 latestOwnTick = system.tick;
 
-                                                // TODO: Process transactions
+                                                const unsigned long long spectrumUpdatingBeginningTick = __rdtsc();
+                                                if (curTickData.epoch)
+                                                {
+                                                    bs->SetMem(entityPendingTransactionIndices, sizeof(entityPendingTransactionIndices), 0);
+
+                                                    for (unsigned int transactionIndex = 0; transactionIndex < NUMBER_OF_TRANSACTIONS_PER_TICK; transactionIndex++)
+                                                    {
+                                                        if (!EQUAL(*((__m256i*)curTickData.transactionDigests[transactionIndex]), ZERO))
+                                                        {
+                                                            if (tickTransactionOffsets[system.tick - system.initialTick][transactionIndex])
+                                                            {
+                                                                Transaction* transaction = (Transaction*)&tickTransactions[tickTransactionOffsets[system.tick - system.initialTick][transactionIndex]];
+                                                                const int spectrumIndex = ::spectrumIndex(transaction->sourcePublicKey);
+                                                                if (spectrumIndex >= 0)
+                                                                {
+                                                                    if (entityPendingTransactionIndices[spectrumIndex])
+                                                                    {
+                                                                        while (true)
+                                                                        {
+                                                                            log(L"CRITICAL SITUATION!!!");
+                                                                        }
+                                                                    }
+                                                                    else
+                                                                    {
+                                                                        entityPendingTransactionIndices[spectrumIndex] = 1;
+
+                                                                        if (decreaseEnergy(spectrumIndex, transaction->amount, system.tick))
+                                                                        {
+                                                                            increaseEnergy(transaction->destinationPublicKey, transaction->amount, system.tick);
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                            else
+                                                            {
+                                                                while (true)
+                                                                {
+                                                                    log(L"CRITICAL SITUATION!!!");
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                setText(message, L"Spectrum UPDATING takes ");
+                                                appendNumber(message, (__rdtsc() - spectrumUpdatingBeginningTick) * 1000000 / frequency, TRUE);
+                                                appendText(message, L" microseconds.");
+                                                log(message);
 
                                                 spectrumDigestCalculationBeginningTick = __rdtsc();
                                                 spectrumDigestLevel = 1;
@@ -9369,7 +9443,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     if (receivedDataSize >= sizeof(RequestResponseHeader))
                                                     {
                                                         RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                        if (requestResponseHeader->protocol < VERSION_B - 1 || requestResponseHeader->protocol > VERSION_B + 1)
+                                                        if (requestResponseHeader->protocol < VERSION_B - 2 || requestResponseHeader->protocol > VERSION_B + 1)
                                                         {
                                                             closePeer(&peers[i]);
                                                         }
