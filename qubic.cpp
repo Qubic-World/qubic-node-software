@@ -25,7 +25,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 89
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -2331,82 +2331,25 @@ static void KangarooTwelve_F_Absorb(KangarooTwelve_F* instance, unsigned char* d
 
 static void KangarooTwelve(unsigned char* input, unsigned int inputByteLen, unsigned char* output, unsigned int outputByteLen)
 {
-    KangarooTwelve_F queueNode;
-    KangarooTwelve_F finalNode;
-    unsigned int blockNumber, queueAbsorbedLen;
-
-    bs->SetMem(&finalNode, sizeof(KangarooTwelve_F), 0);
-    const unsigned int len = inputByteLen ^ ((K12_chunkSize ^ inputByteLen) & -(K12_chunkSize < inputByteLen));
-    KangarooTwelve_F_Absorb(&finalNode, input, len);
-    input += len;
-    inputByteLen -= len;
-    if (len == K12_chunkSize && inputByteLen)
+    if (!inputByteLen)
     {
-        blockNumber = 1;
-        queueAbsorbedLen = 0;
-        finalNode.state[finalNode.byteIOIndex] ^= 0x03;
-        if (++finalNode.byteIOIndex == K12_rateInBytes)
-        {
-            KeccakP1600_Permute_12rounds(finalNode.state);
-            finalNode.byteIOIndex = 0;
-        }
-        else
-        {
-            finalNode.byteIOIndex = (finalNode.byteIOIndex + 7) & ~7;
-        }
-
-        while (inputByteLen > 0)
-        {
-            const unsigned int len = K12_chunkSize ^ ((inputByteLen ^ K12_chunkSize) & -(inputByteLen < K12_chunkSize));
-            bs->SetMem(&queueNode, sizeof(KangarooTwelve_F), 0);
-            KangarooTwelve_F_Absorb(&queueNode, input, len);
-            input += len;
-            inputByteLen -= len;
-            if (len == K12_chunkSize)
-            {
-                ++blockNumber;
-                queueNode.state[queueNode.byteIOIndex] ^= K12_suffixLeaf;
-                queueNode.state[K12_rateInBytes - 1] ^= 0x80;
-                KeccakP1600_Permute_12rounds(queueNode.state);
-                queueNode.byteIOIndex = K12_capacityInBytes;
-                KangarooTwelve_F_Absorb(&finalNode, queueNode.state, K12_capacityInBytes);
-            }
-            else
-            {
-                queueAbsorbedLen = len;
-            }
-        }
-
-        if (queueAbsorbedLen)
-        {
-            if (++queueNode.byteIOIndex == K12_rateInBytes)
-            {
-                KeccakP1600_Permute_12rounds(queueNode.state);
-                queueNode.byteIOIndex = 0;
-            }
-            if (++queueAbsorbedLen == K12_chunkSize)
-            {
-                ++blockNumber;
-                queueAbsorbedLen = 0;
-                queueNode.state[queueNode.byteIOIndex] ^= K12_suffixLeaf;
-                queueNode.state[K12_rateInBytes - 1] ^= 0x80;
-                KeccakP1600_Permute_12rounds(queueNode.state);
-                queueNode.byteIOIndex = K12_capacityInBytes;
-                KangarooTwelve_F_Absorb(&finalNode, queueNode.state, K12_capacityInBytes);
-            }
-        }
-        else
-        {
-            bs->SetMem(queueNode.state, sizeof(queueNode.state), 0);
-            queueNode.byteIOIndex = 1;
-            queueAbsorbedLen = 1;
-        }
+        bs->SetMem(output, outputByteLen, 0);
     }
     else
     {
-        if (len == K12_chunkSize)
+        KangarooTwelve_F queueNode;
+        KangarooTwelve_F finalNode;
+        unsigned int blockNumber, queueAbsorbedLen;
+
+        bs->SetMem(&finalNode, sizeof(KangarooTwelve_F), 0);
+        const unsigned int len = inputByteLen ^ ((K12_chunkSize ^ inputByteLen) & -(K12_chunkSize < inputByteLen));
+        KangarooTwelve_F_Absorb(&finalNode, input, len);
+        input += len;
+        inputByteLen -= len;
+        if (len == K12_chunkSize && inputByteLen)
         {
             blockNumber = 1;
+            queueAbsorbedLen = 0;
             finalNode.state[finalNode.byteIOIndex] ^= 0x03;
             if (++finalNode.byteIOIndex == K12_rateInBytes)
             {
@@ -2418,53 +2361,117 @@ static void KangarooTwelve(unsigned char* input, unsigned int inputByteLen, unsi
                 finalNode.byteIOIndex = (finalNode.byteIOIndex + 7) & ~7;
             }
 
-            bs->SetMem(queueNode.state, sizeof(queueNode.state), 0);
-            queueNode.byteIOIndex = 1;
-            queueAbsorbedLen = 1;
-        }
-        else
-        {
-            blockNumber = 0;
-            if (++finalNode.byteIOIndex == K12_rateInBytes)
+            while (inputByteLen > 0)
             {
-                KeccakP1600_Permute_12rounds(finalNode.state);
-                finalNode.state[0] ^= 0x07;
+                const unsigned int len = K12_chunkSize ^ ((inputByteLen ^ K12_chunkSize) & -(inputByteLen < K12_chunkSize));
+                bs->SetMem(&queueNode, sizeof(KangarooTwelve_F), 0);
+                KangarooTwelve_F_Absorb(&queueNode, input, len);
+                input += len;
+                inputByteLen -= len;
+                if (len == K12_chunkSize)
+                {
+                    ++blockNumber;
+                    queueNode.state[queueNode.byteIOIndex] ^= K12_suffixLeaf;
+                    queueNode.state[K12_rateInBytes - 1] ^= 0x80;
+                    KeccakP1600_Permute_12rounds(queueNode.state);
+                    queueNode.byteIOIndex = K12_capacityInBytes;
+                    KangarooTwelve_F_Absorb(&finalNode, queueNode.state, K12_capacityInBytes);
+                }
+                else
+                {
+                    queueAbsorbedLen = len;
+                }
+            }
+
+            if (queueAbsorbedLen)
+            {
+                if (++queueNode.byteIOIndex == K12_rateInBytes)
+                {
+                    KeccakP1600_Permute_12rounds(queueNode.state);
+                    queueNode.byteIOIndex = 0;
+                }
+                if (++queueAbsorbedLen == K12_chunkSize)
+                {
+                    ++blockNumber;
+                    queueAbsorbedLen = 0;
+                    queueNode.state[queueNode.byteIOIndex] ^= K12_suffixLeaf;
+                    queueNode.state[K12_rateInBytes - 1] ^= 0x80;
+                    KeccakP1600_Permute_12rounds(queueNode.state);
+                    queueNode.byteIOIndex = K12_capacityInBytes;
+                    KangarooTwelve_F_Absorb(&finalNode, queueNode.state, K12_capacityInBytes);
+                }
             }
             else
             {
-                finalNode.state[finalNode.byteIOIndex] ^= 0x07;
+                bs->SetMem(queueNode.state, sizeof(queueNode.state), 0);
+                queueNode.byteIOIndex = 1;
+                queueAbsorbedLen = 1;
             }
         }
-    }
+        else
+        {
+            if (len == K12_chunkSize)
+            {
+                blockNumber = 1;
+                finalNode.state[finalNode.byteIOIndex] ^= 0x03;
+                if (++finalNode.byteIOIndex == K12_rateInBytes)
+                {
+                    KeccakP1600_Permute_12rounds(finalNode.state);
+                    finalNode.byteIOIndex = 0;
+                }
+                else
+                {
+                    finalNode.byteIOIndex = (finalNode.byteIOIndex + 7) & ~7;
+                }
 
-    if (blockNumber)
-    {
-        if (queueAbsorbedLen)
-        {
-            blockNumber++;
-            queueNode.state[queueNode.byteIOIndex] ^= K12_suffixLeaf;
-            queueNode.state[K12_rateInBytes - 1] ^= 0x80;
-            KeccakP1600_Permute_12rounds(queueNode.state);
-            KangarooTwelve_F_Absorb(&finalNode, queueNode.state, K12_capacityInBytes);
+                bs->SetMem(queueNode.state, sizeof(queueNode.state), 0);
+                queueNode.byteIOIndex = 1;
+                queueAbsorbedLen = 1;
+            }
+            else
+            {
+                blockNumber = 0;
+                if (++finalNode.byteIOIndex == K12_rateInBytes)
+                {
+                    KeccakP1600_Permute_12rounds(finalNode.state);
+                    finalNode.state[0] ^= 0x07;
+                }
+                else
+                {
+                    finalNode.state[finalNode.byteIOIndex] ^= 0x07;
+                }
+            }
         }
-        unsigned int n = 0;
-        for (unsigned long long v = --blockNumber; v && (n < sizeof(unsigned long long)); ++n, v >>= 8)
+
+        if (blockNumber)
         {
+            if (queueAbsorbedLen)
+            {
+                blockNumber++;
+                queueNode.state[queueNode.byteIOIndex] ^= K12_suffixLeaf;
+                queueNode.state[K12_rateInBytes - 1] ^= 0x80;
+                KeccakP1600_Permute_12rounds(queueNode.state);
+                KangarooTwelve_F_Absorb(&finalNode, queueNode.state, K12_capacityInBytes);
+            }
+            unsigned int n = 0;
+            for (unsigned long long v = --blockNumber; v && (n < sizeof(unsigned long long)); ++n, v >>= 8)
+            {
+            }
+            unsigned char encbuf[sizeof(unsigned long long) + 1 + 2];
+            for (unsigned int i = 1; i <= n; ++i)
+            {
+                encbuf[i - 1] = (unsigned char)(blockNumber >> (8 * (n - i)));
+            }
+            encbuf[n] = (unsigned char)n;
+            encbuf[++n] = 0xFF;
+            encbuf[++n] = 0xFF;
+            KangarooTwelve_F_Absorb(&finalNode, encbuf, ++n);
+            finalNode.state[finalNode.byteIOIndex] ^= 0x06;
         }
-        unsigned char encbuf[sizeof(unsigned long long) + 1 + 2];
-        for (unsigned int i = 1; i <= n; ++i)
-        {
-            encbuf[i - 1] = (unsigned char)(blockNumber >> (8 * (n - i)));
-        }
-        encbuf[n] = (unsigned char)n;
-        encbuf[++n] = 0xFF;
-        encbuf[++n] = 0xFF;
-        KangarooTwelve_F_Absorb(&finalNode, encbuf, ++n);
-        finalNode.state[finalNode.byteIOIndex] ^= 0x06;
+        finalNode.state[K12_rateInBytes - 1] ^= 0x80;
+        KeccakP1600_Permute_12rounds(finalNode.state);
+        bs->CopyMem(output, finalNode.state, outputByteLen);
     }
-    finalNode.state[K12_rateInBytes - 1] ^= 0x80;
-    KeccakP1600_Permute_12rounds(finalNode.state);
-    bs->CopyMem(output, finalNode.state, outputByteLen);
 }
 
 static void KangarooTwelve64To32(unsigned char* input, unsigned char* output)
@@ -7454,7 +7461,7 @@ static BOOLEAN initialize()
                 system.version = VERSION_B;
                 if (system.epoch == 43)
                 {
-                    system.initialTick = system.tick = 4800000;
+                    system.initialTick = system.tick = 4910000;
                 }
                 else
                 {
@@ -9153,14 +9160,14 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                                     _rdrand32_step(&random);
                                                                                     const unsigned int index = random % numberOfEntityPendingTransactionIndices;
 
-                                                                                    const Transaction* pendingTransaction = ((Transaction*)&entityPendingTransactions[index * MAX_TRANSACTION_SIZE]);
+                                                                                    const Transaction* pendingTransaction = ((Transaction*)&entityPendingTransactions[entityPendingTransactionIndices[index] * MAX_TRANSACTION_SIZE]);
                                                                                     if (pendingTransaction->tick == system.tick + TICK_TRANSACTIONS_PUBLICATION_OFFSET)
                                                                                     {
                                                                                         const unsigned int transactionSize = sizeof(Transaction) + pendingTransaction->inputSize + SIGNATURE_SIZE;
                                                                                         if (nextTickTransactionOffset + transactionSize <= FIRST_TICK_TRANSACTION_OFFSET + (((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * NUMBER_OF_TRANSACTIONS_PER_TICK * MAX_TRANSACTION_SIZE))
                                                                                         {
                                                                                             tickTransactionOffsets[pendingTransaction->tick - system.initialTick][j] = nextTickTransactionOffset;
-                                                                                            bs->CopyMem(&tickTransactions[nextTickTransactionOffset], &entityPendingTransactions[index * MAX_TRANSACTION_SIZE], transactionSize);
+                                                                                            bs->CopyMem(&tickTransactions[nextTickTransactionOffset], (void*)pendingTransaction, transactionSize);
                                                                                             KangarooTwelve(&tickTransactions[nextTickTransactionOffset], transactionSize, broadcastedFutureTickData.broadcastFutureTickData.tickData.transactionDigests[j], sizeof(broadcastedFutureTickData.broadcastFutureTickData.tickData.transactionDigests[j]));
                                                                                             j++;
                                                                                             nextTickTransactionOffset += transactionSize;
