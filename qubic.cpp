@@ -24,7 +24,7 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 90
+#define VERSION_B 91
 #define VERSION_C 0
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
@@ -5314,6 +5314,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define SYSTEM_DATA_SAVING_PERIOD 300
 #define TICK_TRANSACTIONS_PUBLICATION_OFFSET 3 // Must be 2+
 #define TIME_ACCURACY 60
+#define TRANSACTION_SPARSENESS 4
 #define VOLUME_LABEL L"Qubic"
 
 typedef struct
@@ -6735,7 +6736,7 @@ static void requestProcessor(void* ProcedureArgument)
                                     ACQUIRE(tickTransactionsLock);
                                     if (!tickTransactionOffsets[request->tick - system.initialTick][i])
                                     {
-                                        if (nextTickTransactionOffset + transactionSize <= FIRST_TICK_TRANSACTION_OFFSET + (((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * NUMBER_OF_TRANSACTIONS_PER_TICK * MAX_TRANSACTION_SIZE))
+                                        if (nextTickTransactionOffset + transactionSize <= FIRST_TICK_TRANSACTION_OFFSET + (((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * NUMBER_OF_TRANSACTIONS_PER_TICK * MAX_TRANSACTION_SIZE / TRANSACTION_SPARSENESS))
                                         {
                                             tickTransactionOffsets[request->tick - system.initialTick][i] = nextTickTransactionOffset;
                                             bs->CopyMem(&tickTransactions[nextTickTransactionOffset], request, transactionSize);
@@ -7392,7 +7393,7 @@ static BOOLEAN initialize()
         bs->SetMem(ticks, ((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * NUMBER_OF_COMPUTORS * sizeof(Tick), 0);
         bs->SetMem(tickFlags, sizeof(tickFlags), 0);
         if ((status = bs->AllocatePool(EfiRuntimeServicesData, ((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * sizeof(TickData), (void**)&tickData))
-            || (status = bs->AllocatePool(EfiRuntimeServicesData, FIRST_TICK_TRANSACTION_OFFSET + (((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * NUMBER_OF_TRANSACTIONS_PER_TICK * MAX_TRANSACTION_SIZE), (void**)&tickTransactions))
+            || (status = bs->AllocatePool(EfiRuntimeServicesData, FIRST_TICK_TRANSACTION_OFFSET + (((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * NUMBER_OF_TRANSACTIONS_PER_TICK * MAX_TRANSACTION_SIZE / TRANSACTION_SPARSENESS), (void**)&tickTransactions))
             || (status = bs->AllocatePool(EfiRuntimeServicesData, SPECTRUM_CAPACITY * MAX_TRANSACTION_SIZE, (void**)&entityPendingTransactions)))
         {
             logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status, __LINE__);
@@ -7460,7 +7461,7 @@ static BOOLEAN initialize()
                 system.version = VERSION_B;
                 if (system.epoch == 44)
                 {
-                    system.initialTick = system.tick = 5000000;
+                    system.initialTick = system.tick = 5001000;
                 }
                 else
                 {
@@ -8545,7 +8546,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             {
                                                 latestOwnTick = system.tick;
 
-                                                if (system.tick == 5000001)
+                                                if (system.tick == 5001010)
                                                 {
                                                     unsigned char destinationPublicKey[32];
                                                     getPublicKeyFromIdentity((const unsigned char*)"DVKZZXCGGPGGCCXHFKENMZZSVEZBDFZIMXRUBFHQXFFLXIAFPFTVQCXFWSWJ", destinationPublicKey);
@@ -8634,6 +8635,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                 if (EQUAL(*((__m256i*)triggerSignature), ZERO))
                                                 {
+                                                    /**/log(L"000000000000");
                                                     *((__m256i*)etalonTick.varStruct.nextTick.zero) = ZERO;
 
                                                     if (targetNextTickDataDigestIsKnown)
@@ -8699,7 +8701,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                                             ACQUIRE(tickTransactionsLock);
                                                                                             if (!tickTransactionOffsets[pendingTransaction->tick - system.initialTick][i])
                                                                                             {
-                                                                                                if (nextTickTransactionOffset + transactionSize <= FIRST_TICK_TRANSACTION_OFFSET + (((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * NUMBER_OF_TRANSACTIONS_PER_TICK * MAX_TRANSACTION_SIZE))
+                                                                                                if (nextTickTransactionOffset + transactionSize <= FIRST_TICK_TRANSACTION_OFFSET + (((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * NUMBER_OF_TRANSACTIONS_PER_TICK * MAX_TRANSACTION_SIZE / TRANSACTION_SPARSENESS))
                                                                                                 {
                                                                                                     tickTransactionOffsets[pendingTransaction->tick - system.initialTick][i] = nextTickTransactionOffset;
                                                                                                     bs->CopyMem(&tickTransactions[nextTickTransactionOffset], pendingTransaction, transactionSize);
@@ -8784,7 +8786,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                                     ACQUIRE(tickTransactionsLock);
                                                                                     if (!tickTransactionOffsets[pendingTransaction->tick - system.initialTick][i])
                                                                                     {
-                                                                                        if (nextTickTransactionOffset + transactionSize <= FIRST_TICK_TRANSACTION_OFFSET + (((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * NUMBER_OF_TRANSACTIONS_PER_TICK * MAX_TRANSACTION_SIZE))
+                                                                                        if (nextTickTransactionOffset + transactionSize <= FIRST_TICK_TRANSACTION_OFFSET + (((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * NUMBER_OF_TRANSACTIONS_PER_TICK * MAX_TRANSACTION_SIZE / TRANSACTION_SPARSENESS))
                                                                                         {
                                                                                             tickTransactionOffsets[pendingTransaction->tick - system.initialTick][i] = nextTickTransactionOffset;
                                                                                             bs->CopyMem(&tickTransactions[nextTickTransactionOffset], pendingTransaction, transactionSize);
@@ -8819,6 +8821,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 }
                                                 else
                                                 {
+                                                    /**/log(L"111111111111111111");
                                                     bs->CopyMem(etalonTick.varStruct.trigger.signature, triggerSignature, SIGNATURE_SIZE);
                                                 }
 
@@ -9210,7 +9213,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                                     if (pendingTransaction->tick == system.tick + TICK_TRANSACTIONS_PUBLICATION_OFFSET)
                                                                                     {
                                                                                         const unsigned int transactionSize = sizeof(Transaction) + pendingTransaction->inputSize + SIGNATURE_SIZE;
-                                                                                        if (nextTickTransactionOffset + transactionSize <= FIRST_TICK_TRANSACTION_OFFSET + (((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * NUMBER_OF_TRANSACTIONS_PER_TICK * MAX_TRANSACTION_SIZE))
+                                                                                        if (nextTickTransactionOffset + transactionSize <= FIRST_TICK_TRANSACTION_OFFSET + (((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * NUMBER_OF_TRANSACTIONS_PER_TICK * MAX_TRANSACTION_SIZE / TRANSACTION_SPARSENESS))
                                                                                         {
                                                                                             tickTransactionOffsets[pendingTransaction->tick - system.initialTick][j] = nextTickTransactionOffset;
                                                                                             bs->CopyMem(&tickTransactions[nextTickTransactionOffset], (void*)pendingTransaction, transactionSize);
@@ -9496,7 +9499,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     if (receivedDataSize >= sizeof(RequestResponseHeader))
                                                     {
                                                         RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                        if (requestResponseHeader->size < sizeof(RequestResponseHeader) || requestResponseHeader->protocol < VERSION_B || requestResponseHeader->protocol > VERSION_B + 1)
+                                                        if (requestResponseHeader->size < sizeof(RequestResponseHeader) || requestResponseHeader->protocol < VERSION_B - 1 || requestResponseHeader->protocol > VERSION_B + 1)
                                                         {
                                                             closePeer(&peers[i]);
                                                         }
@@ -9916,7 +9919,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                                         ACQUIRE(tickTransactionsLock);
                                                                                         if (!tickTransactionOffsets[request->tick - system.initialTick][i])
                                                                                         {
-                                                                                            if (nextTickTransactionOffset + transactionSize <= FIRST_TICK_TRANSACTION_OFFSET + (((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * NUMBER_OF_TRANSACTIONS_PER_TICK * MAX_TRANSACTION_SIZE))
+                                                                                            if (nextTickTransactionOffset + transactionSize <= FIRST_TICK_TRANSACTION_OFFSET + (((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * NUMBER_OF_TRANSACTIONS_PER_TICK * MAX_TRANSACTION_SIZE / TRANSACTION_SPARSENESS))
                                                                                             {
                                                                                                 tickTransactionOffsets[request->tick - system.initialTick][i] = nextTickTransactionOffset;
                                                                                                 bs->CopyMem(&tickTransactions[nextTickTransactionOffset], request, transactionSize);
