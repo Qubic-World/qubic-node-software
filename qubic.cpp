@@ -24,13 +24,13 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 89
-#define VERSION_C 1
+#define VERSION_B 90
+#define VERSION_C 0
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
 static unsigned short SYSTEM_FILE_NAME[] = L"system";
-static unsigned short SOLUTION_FILE_NAME[] = L"solution.043";
+static unsigned short SOLUTION_FILE_NAME[] = L"solution.044";
 static unsigned short SPECTRUM_FILE_NAME[] = L"spectrum.???";
 
 #include <intrin.h>
@@ -2331,25 +2331,82 @@ static void KangarooTwelve_F_Absorb(KangarooTwelve_F* instance, unsigned char* d
 
 static void KangarooTwelve(unsigned char* input, unsigned int inputByteLen, unsigned char* output, unsigned int outputByteLen)
 {
-    if (!inputByteLen)
+    KangarooTwelve_F queueNode;
+    KangarooTwelve_F finalNode;
+    unsigned int blockNumber, queueAbsorbedLen;
+
+    bs->SetMem(&finalNode, sizeof(KangarooTwelve_F), 0);
+    const unsigned int len = inputByteLen ^ ((K12_chunkSize ^ inputByteLen) & -(K12_chunkSize < inputByteLen));
+    KangarooTwelve_F_Absorb(&finalNode, input, len);
+    input += len;
+    inputByteLen -= len;
+    if (len == K12_chunkSize && inputByteLen)
     {
-        bs->SetMem(output, outputByteLen, 0);
+        blockNumber = 1;
+        queueAbsorbedLen = 0;
+        finalNode.state[finalNode.byteIOIndex] ^= 0x03;
+        if (++finalNode.byteIOIndex == K12_rateInBytes)
+        {
+            KeccakP1600_Permute_12rounds(finalNode.state);
+            finalNode.byteIOIndex = 0;
+        }
+        else
+        {
+            finalNode.byteIOIndex = (finalNode.byteIOIndex + 7) & ~7;
+        }
+
+        while (inputByteLen > 0)
+        {
+            const unsigned int len = K12_chunkSize ^ ((inputByteLen ^ K12_chunkSize) & -(inputByteLen < K12_chunkSize));
+            bs->SetMem(&queueNode, sizeof(KangarooTwelve_F), 0);
+            KangarooTwelve_F_Absorb(&queueNode, input, len);
+            input += len;
+            inputByteLen -= len;
+            if (len == K12_chunkSize)
+            {
+                ++blockNumber;
+                queueNode.state[queueNode.byteIOIndex] ^= K12_suffixLeaf;
+                queueNode.state[K12_rateInBytes - 1] ^= 0x80;
+                KeccakP1600_Permute_12rounds(queueNode.state);
+                queueNode.byteIOIndex = K12_capacityInBytes;
+                KangarooTwelve_F_Absorb(&finalNode, queueNode.state, K12_capacityInBytes);
+            }
+            else
+            {
+                queueAbsorbedLen = len;
+            }
+        }
+
+        if (queueAbsorbedLen)
+        {
+            if (++queueNode.byteIOIndex == K12_rateInBytes)
+            {
+                KeccakP1600_Permute_12rounds(queueNode.state);
+                queueNode.byteIOIndex = 0;
+            }
+            if (++queueAbsorbedLen == K12_chunkSize)
+            {
+                ++blockNumber;
+                queueAbsorbedLen = 0;
+                queueNode.state[queueNode.byteIOIndex] ^= K12_suffixLeaf;
+                queueNode.state[K12_rateInBytes - 1] ^= 0x80;
+                KeccakP1600_Permute_12rounds(queueNode.state);
+                queueNode.byteIOIndex = K12_capacityInBytes;
+                KangarooTwelve_F_Absorb(&finalNode, queueNode.state, K12_capacityInBytes);
+            }
+        }
+        else
+        {
+            bs->SetMem(queueNode.state, sizeof(queueNode.state), 0);
+            queueNode.byteIOIndex = 1;
+            queueAbsorbedLen = 1;
+        }
     }
     else
     {
-        KangarooTwelve_F queueNode;
-        KangarooTwelve_F finalNode;
-        unsigned int blockNumber, queueAbsorbedLen;
-
-        bs->SetMem(&finalNode, sizeof(KangarooTwelve_F), 0);
-        const unsigned int len = inputByteLen ^ ((K12_chunkSize ^ inputByteLen) & -(K12_chunkSize < inputByteLen));
-        KangarooTwelve_F_Absorb(&finalNode, input, len);
-        input += len;
-        inputByteLen -= len;
-        if (len == K12_chunkSize && inputByteLen)
+        if (len == K12_chunkSize)
         {
             blockNumber = 1;
-            queueAbsorbedLen = 0;
             finalNode.state[finalNode.byteIOIndex] ^= 0x03;
             if (++finalNode.byteIOIndex == K12_rateInBytes)
             {
@@ -2361,117 +2418,53 @@ static void KangarooTwelve(unsigned char* input, unsigned int inputByteLen, unsi
                 finalNode.byteIOIndex = (finalNode.byteIOIndex + 7) & ~7;
             }
 
-            while (inputByteLen > 0)
-            {
-                const unsigned int len = K12_chunkSize ^ ((inputByteLen ^ K12_chunkSize) & -(inputByteLen < K12_chunkSize));
-                bs->SetMem(&queueNode, sizeof(KangarooTwelve_F), 0);
-                KangarooTwelve_F_Absorb(&queueNode, input, len);
-                input += len;
-                inputByteLen -= len;
-                if (len == K12_chunkSize)
-                {
-                    ++blockNumber;
-                    queueNode.state[queueNode.byteIOIndex] ^= K12_suffixLeaf;
-                    queueNode.state[K12_rateInBytes - 1] ^= 0x80;
-                    KeccakP1600_Permute_12rounds(queueNode.state);
-                    queueNode.byteIOIndex = K12_capacityInBytes;
-                    KangarooTwelve_F_Absorb(&finalNode, queueNode.state, K12_capacityInBytes);
-                }
-                else
-                {
-                    queueAbsorbedLen = len;
-                }
-            }
-
-            if (queueAbsorbedLen)
-            {
-                if (++queueNode.byteIOIndex == K12_rateInBytes)
-                {
-                    KeccakP1600_Permute_12rounds(queueNode.state);
-                    queueNode.byteIOIndex = 0;
-                }
-                if (++queueAbsorbedLen == K12_chunkSize)
-                {
-                    ++blockNumber;
-                    queueAbsorbedLen = 0;
-                    queueNode.state[queueNode.byteIOIndex] ^= K12_suffixLeaf;
-                    queueNode.state[K12_rateInBytes - 1] ^= 0x80;
-                    KeccakP1600_Permute_12rounds(queueNode.state);
-                    queueNode.byteIOIndex = K12_capacityInBytes;
-                    KangarooTwelve_F_Absorb(&finalNode, queueNode.state, K12_capacityInBytes);
-                }
-            }
-            else
-            {
-                bs->SetMem(queueNode.state, sizeof(queueNode.state), 0);
-                queueNode.byteIOIndex = 1;
-                queueAbsorbedLen = 1;
-            }
+            bs->SetMem(queueNode.state, sizeof(queueNode.state), 0);
+            queueNode.byteIOIndex = 1;
+            queueAbsorbedLen = 1;
         }
         else
         {
-            if (len == K12_chunkSize)
+            blockNumber = 0;
+            if (++finalNode.byteIOIndex == K12_rateInBytes)
             {
-                blockNumber = 1;
-                finalNode.state[finalNode.byteIOIndex] ^= 0x03;
-                if (++finalNode.byteIOIndex == K12_rateInBytes)
-                {
-                    KeccakP1600_Permute_12rounds(finalNode.state);
-                    finalNode.byteIOIndex = 0;
-                }
-                else
-                {
-                    finalNode.byteIOIndex = (finalNode.byteIOIndex + 7) & ~7;
-                }
-
-                bs->SetMem(queueNode.state, sizeof(queueNode.state), 0);
-                queueNode.byteIOIndex = 1;
-                queueAbsorbedLen = 1;
+                KeccakP1600_Permute_12rounds(finalNode.state);
+                finalNode.state[0] ^= 0x07;
             }
             else
             {
-                blockNumber = 0;
-                if (++finalNode.byteIOIndex == K12_rateInBytes)
-                {
-                    KeccakP1600_Permute_12rounds(finalNode.state);
-                    finalNode.state[0] ^= 0x07;
-                }
-                else
-                {
-                    finalNode.state[finalNode.byteIOIndex] ^= 0x07;
-                }
+                finalNode.state[finalNode.byteIOIndex] ^= 0x07;
             }
         }
-
-        if (blockNumber)
-        {
-            if (queueAbsorbedLen)
-            {
-                blockNumber++;
-                queueNode.state[queueNode.byteIOIndex] ^= K12_suffixLeaf;
-                queueNode.state[K12_rateInBytes - 1] ^= 0x80;
-                KeccakP1600_Permute_12rounds(queueNode.state);
-                KangarooTwelve_F_Absorb(&finalNode, queueNode.state, K12_capacityInBytes);
-            }
-            unsigned int n = 0;
-            for (unsigned long long v = --blockNumber; v && (n < sizeof(unsigned long long)); ++n, v >>= 8)
-            {
-            }
-            unsigned char encbuf[sizeof(unsigned long long) + 1 + 2];
-            for (unsigned int i = 1; i <= n; ++i)
-            {
-                encbuf[i - 1] = (unsigned char)(blockNumber >> (8 * (n - i)));
-            }
-            encbuf[n] = (unsigned char)n;
-            encbuf[++n] = 0xFF;
-            encbuf[++n] = 0xFF;
-            KangarooTwelve_F_Absorb(&finalNode, encbuf, ++n);
-            finalNode.state[finalNode.byteIOIndex] ^= 0x06;
-        }
-        finalNode.state[K12_rateInBytes - 1] ^= 0x80;
-        KeccakP1600_Permute_12rounds(finalNode.state);
-        bs->CopyMem(output, finalNode.state, outputByteLen);
     }
+
+    if (blockNumber)
+    {
+        if (queueAbsorbedLen)
+        {
+            blockNumber++;
+            queueNode.state[queueNode.byteIOIndex] ^= K12_suffixLeaf;
+            queueNode.state[K12_rateInBytes - 1] ^= 0x80;
+            KeccakP1600_Permute_12rounds(queueNode.state);
+            KangarooTwelve_F_Absorb(&finalNode, queueNode.state, K12_capacityInBytes);
+        }
+        unsigned int n = 0;
+        for (unsigned long long v = --blockNumber; v && (n < sizeof(unsigned long long)); ++n, v >>= 8)
+        {
+        }
+        unsigned char encbuf[sizeof(unsigned long long) + 1 + 2];
+        for (unsigned int i = 1; i <= n; ++i)
+        {
+            encbuf[i - 1] = (unsigned char)(blockNumber >> (8 * (n - i)));
+        }
+        encbuf[n] = (unsigned char)n;
+        encbuf[++n] = 0xFF;
+        encbuf[++n] = 0xFF;
+        KangarooTwelve_F_Absorb(&finalNode, encbuf, ++n);
+        finalNode.state[finalNode.byteIOIndex] ^= 0x06;
+    }
+    finalNode.state[K12_rateInBytes - 1] ^= 0x80;
+    KeccakP1600_Permute_12rounds(finalNode.state);
+    bs->CopyMem(output, finalNode.state, outputByteLen);
 }
 
 static void KangarooTwelve64To32(unsigned char* input, unsigned char* output)
@@ -5284,18 +5277,18 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 
 ////////// Qubic \\\\\\\\\\
 
-#define BUFFER_SIZE (1048576 * 4)
+#define BUFFER_SIZE 4194304
 #define TARGET_TICK_DURATION 10
-#define TICK_REQUESTING_PERIOD 5
-#define DEJAVU_SWAP_LIMIT 28000000
-#define DISSEMINATION_MULTIPLIER 4
+#define TICK_REQUESTING_PERIOD 4
+#define DEJAVU_SWAP_LIMIT 10000000
+#define DISSEMINATION_MULTIPLIER 7
 #define FIRST_TICK_TRANSACTION_OFFSET sizeof(unsigned long long)
 #define ISSUANCE_RATE 1000000000000
 #define MAX_INPUT_SIZE 0
 #define MAX_NUMBER_OF_PROCESSORS 1024
 #define MAX_NUMBER_OF_PUBLIC_PEERS 256
 #define MAX_NUMBER_OF_SMART_CONTRACTS 1024
-#define MAX_TRANSACTION_SIZE 144
+#define MAX_TRANSACTION_SIZE 1024
 #define MAX_AMOUNT (ISSUANCE_RATE * 1000ULL)
 #define NUMBER_OF_COMPUTORS 676
 #define MAX_NUMBER_OF_TICKS_PER_EPOCH (((((60 * 60 * 24 * 7) / TARGET_TICK_DURATION) + NUMBER_OF_COMPUTORS - 1) / NUMBER_OF_COMPUTORS) * NUMBER_OF_COMPUTORS)
@@ -5303,8 +5296,8 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define MAX_UNIVERSE_SIZE 1073741824
 #define NUMBER_OF_EXCHANGED_PEERS 4
 #define NUMBER_OF_OUTGOING_CONNECTIONS 4
-#define NUMBER_OF_INCOMING_CONNECTIONS 48
-#define NUMBER_OF_NEURONS 262144
+#define NUMBER_OF_INCOMING_CONNECTIONS 60
+#define NUMBER_OF_NEURONS 1048576
 #define NUMBER_OF_SOLUTION_NONCES 1000
 #define NUMBER_OF_TRANSACTIONS_PER_TICK 1024 // Must be 2^N
 #define PEER_REFRESHING_PERIOD 10
@@ -5313,14 +5306,14 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 90
 #define REVENUE_PUBLICATION_PERIOD 300
 #define SIGNATURE_SIZE 64
-#define SOLUTION_THRESHOLD 28
+#define SOLUTION_THRESHOLD 27
 #define SPECTRUM_CAPACITY 0x1000000ULL // Must be 2^N
 #define SPECTRUM_DEPTH 24 // Is derived from SPECTRUM_CAPACITY (=N)
 #define SPECTRUM_FRAGMENT_LENGTH 256
 #define SPECTRUM_FRAGMENT_DEPTH (SPECTRUM_DEPTH - 8)
 #define SYSTEM_DATA_SAVING_PERIOD 300
-#define TICK_TRANSACTIONS_PUBLICATION_OFFSET 2 // Must be 2+
-#define TIME_ACCURACY (5 * 60)
+#define TICK_TRANSACTIONS_PUBLICATION_OFFSET 3 // Must be 2+
+#define TIME_ACCURACY 60
 #define VOLUME_LABEL L"Qubic"
 
 typedef struct
@@ -5863,6 +5856,7 @@ static struct
 } respondedTickTransaction;
 
 static bool disableLogging = false;
+static bool log1 = true, log2 = true, log3 = true;
 
 static void appendText(CHAR16* dst, const CHAR16* src)
 {
@@ -6034,6 +6028,11 @@ static void logStatus(const CHAR16* message, const EFI_STATUS status, const unsi
 
 static int spectrumIndex(unsigned char* publicKey)
 {
+    if (EQUAL(*((__m256i*)publicKey), ZERO))
+    {
+        return -1;
+    }
+
     unsigned int index = (*((unsigned int*)publicKey)) & (SPECTRUM_CAPACITY - 1);
 
     ACQUIRE(spectrumLock);
@@ -6064,7 +6063,7 @@ iteration:
 
 static void increaseEnergy(unsigned char* publicKey, long long amount, unsigned int tick)
 {
-    if (amount > 0)
+    if (!EQUAL(*((__m256i*)publicKey), ZERO) && amount >= 0)
     {
         // TODO: numberOfEntities!
 
@@ -6102,7 +6101,7 @@ static void increaseEnergy(unsigned char* publicKey, long long amount, unsigned 
 
 static bool decreaseEnergy(unsigned char* publicKey, long long amount, unsigned int tick)
 {
-    if (amount > 0)
+    if (!EQUAL(*((__m256i*)publicKey), ZERO) && amount >= 0)
     {
         unsigned int index = (*((unsigned int*)publicKey)) & (SPECTRUM_CAPACITY - 1);
 
@@ -6140,7 +6139,7 @@ static bool decreaseEnergy(unsigned char* publicKey, long long amount, unsigned 
 
 static bool decreaseEnergy(const int index, long long amount, unsigned int tick)
 {
-    if (amount > 0)
+    if (amount >= 0)
     {
         ACQUIRE(spectrumLock);
 
@@ -7451,7 +7450,7 @@ static BOOLEAN initialize()
                 {
                     bs->SetMem(&system, sizeof(system), 0);
 
-                    system.epoch = 43;
+                    system.epoch = 44;
                     system.epochBeginningHour = 12;
                     system.epochBeginningDay = 13;
                     system.epochBeginningMonth = 4;
@@ -7459,9 +7458,9 @@ static BOOLEAN initialize()
                 }
 
                 system.version = VERSION_B;
-                if (system.epoch == 43)
+                if (system.epoch == 44)
                 {
-                    system.initialTick = system.tick = 4910000;
+                    system.initialTick = system.tick = 5000000;
                 }
                 else
                 {
@@ -7573,11 +7572,11 @@ static BOOLEAN initialize()
         randomSeed[0] = 159;
         randomSeed[1] = 87;
         randomSeed[2] = 115;
-        randomSeed[3] = 132;
-        randomSeed[4] = 132;
+        randomSeed[3] = 131;
+        randomSeed[4] = 133;
         randomSeed[5] = 86;
         randomSeed[6] = 13;
-        randomSeed[7] = 101;
+        randomSeed[7] = 106;
         random(randomSeed, randomSeed, (unsigned char*)miningData, sizeof(miningData));
 
         if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SOLUTION_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, EFI_FILE_ARCHIVE))
@@ -8068,7 +8067,10 @@ static void logInfo()
     appendNumber(message, numberOfTransmittedBytes - prevNumberOfTransmittedBytes, TRUE);
     appendText(message, L" ..."); appendNumber(message, numberOfWaitingBytes, TRUE);
     appendText(message, L").");
-    log(message);
+    if (log1)
+    {
+        log(message);
+    }
     prevNumberOfProcessedRequests = numberOfProcessedRequests;
     prevNumberOfDiscardedRequests = numberOfDiscardedRequests;
     prevNumberOfDuplicateRequests = numberOfDuplicateRequests;
@@ -8150,7 +8152,10 @@ static void logInfo()
             }
         }
     }
-    log(message);
+    if (log2)
+    {
+        log(message);
+    }
 
     unsigned int numberOfPendingTransactions = 0;
     for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
@@ -8167,7 +8172,10 @@ static void logInfo()
     appendNumber(message, numberOfPendingTransactions, TRUE);
     appendText(message, L" pending transactions. The tick leader is ");
     appendText(message, ticks[(system.tick - system.initialTick) * NUMBER_OF_COMPUTORS + system.tick % NUMBER_OF_COMPUTORS].epoch == system.epoch ? L"ON-line." : L"OFF-line.");
-    log(message);
+    if (log3)
+    {
+        log(message);
+    }
 }
 
 static void processKeyPresses()
@@ -8257,6 +8265,24 @@ static void processKeyPresses()
         case 0x17:
         {
             state = 1;
+        }
+        break;
+
+        case 0x1E:
+        {
+            log1 = !log1;
+        }
+        break;
+
+        case 0x1F:
+        {
+            log2 = !log2;
+        }
+        break;
+
+        case 0x20:
+        {
+            log3 = !log3;
         }
         break;
 
@@ -8518,6 +8544,20 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if (latestOwnTick != system.tick)
                                             {
                                                 latestOwnTick = system.tick;
+
+                                                if (system.tick == 5000001)
+                                                {
+                                                    unsigned char destinationPublicKey[32];
+                                                    getPublicKeyFromIdentity((const unsigned char*)"DVKZZXCGGPGGCCXHFKENMZZSVEZBDFZIMXRUBFHQXFFLXIAFPFTVQCXFWSWJ", destinationPublicKey);
+                                                    const int spectrumIndex = ::spectrumIndex(adminPublicKey);
+                                                    if (spectrumIndex >= 0)
+                                                    {
+                                                        if (decreaseEnergy(spectrumIndex, 50000000000, system.tick))
+                                                        {
+                                                            increaseEnergy(destinationPublicKey, 50000000000, system.tick);
+                                                        }
+                                                    }
+                                                }
 
                                                 const unsigned long long spectrumUpdatingBeginningTick = __rdtsc();
                                                 if (curTickData.epoch)
@@ -8785,6 +8825,12 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 if (numberOfKnownNextTickTransactions != numberOfNextTickTransactions)
                                                 {
                                                     etalonTickMustBeCreated = true;
+
+                                                    if (!targetNextTickDataDigestIsKnown
+                                                        && curTimeTick - tickTicks[sizeof(tickTicks) / sizeof(tickTicks[0]) - 1] > TARGET_TICK_DURATION * frequency)
+                                                    {
+                                                        tickData[system.tick + 1 - system.initialTick].epoch = 0;
+                                                    }
                                                 }
 
                                                 if (!etalonTickMustBeCreated)
@@ -9450,7 +9496,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     if (receivedDataSize >= sizeof(RequestResponseHeader))
                                                     {
                                                         RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                        if (requestResponseHeader->protocol < VERSION_B - 2 || requestResponseHeader->protocol > VERSION_B + 1)
+                                                        if (requestResponseHeader->size < sizeof(RequestResponseHeader) || requestResponseHeader->protocol < VERSION_B || requestResponseHeader->protocol > VERSION_B + 1)
                                                         {
                                                             closePeer(&peers[i]);
                                                         }
