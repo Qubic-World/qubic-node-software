@@ -25,7 +25,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 91
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -5284,12 +5284,12 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define DISSEMINATION_MULTIPLIER 7
 #define FIRST_TICK_TRANSACTION_OFFSET sizeof(unsigned long long)
 #define ISSUANCE_RATE 1000000000000
-#define MAX_INPUT_SIZE 0
+#define MAX_AMOUNT (ISSUANCE_RATE * 1000ULL)
+#define MAX_INPUT_SIZE (MAX_TRANSACTION_SIZE - (sizeof(Transaction) + SIGNATURE_SIZE))
 #define MAX_NUMBER_OF_PROCESSORS 1024
 #define MAX_NUMBER_OF_PUBLIC_PEERS 256
 #define MAX_NUMBER_OF_SMART_CONTRACTS 1024
-#define MAX_TRANSACTION_SIZE 1024
-#define MAX_AMOUNT (ISSUANCE_RATE * 1000ULL)
+#define MAX_TRANSACTION_SIZE 1024ULL
 #define NUMBER_OF_COMPUTORS 676
 #define MAX_NUMBER_OF_TICKS_PER_EPOCH (((((60 * 60 * 24 * 7) / TARGET_TICK_DURATION) + NUMBER_OF_COMPUTORS - 1) / NUMBER_OF_COMPUTORS) * NUMBER_OF_COMPUTORS)
 #define MAX_SMART_CONTRACT_STATE_SIZE 1073741824
@@ -5740,6 +5740,7 @@ static Entity* spectrum = NULL;
 static unsigned int numberOfEntities = 0;
 static volatile char entityPendingTransactionsLock = 0;
 static unsigned char* entityPendingTransactions = NULL;
+static unsigned char* entityPendingTransactionDigests = NULL;
 static unsigned int entityPendingTransactionIndices[SPECTRUM_CAPACITY];
 static unsigned long long spectrumDigestCalculationBeginningTick = 0;
 static volatile unsigned char spectrumDigestLevel = 0;
@@ -6701,12 +6702,11 @@ static void requestProcessor(void* ProcedureArgument)
             {
                 Transaction* request = (Transaction*)((char*)processor->cache + sizeof(RequestResponseHeader));
                 if (request->amount >= 0 && request->amount <= MAX_AMOUNT
-                    && !request->inputType
-                    && request->inputSize <= MAX_INPUT_SIZE
-                    && requestHeader->size == sizeof(RequestResponseHeader) + sizeof(Transaction) + request->inputSize + SIGNATURE_SIZE)
+                    && request->inputSize <= MAX_INPUT_SIZE)
                 {
+                    const unsigned int transactionSize = sizeof(Transaction) + request->inputSize + SIGNATURE_SIZE;
                     unsigned char digest[32];
-                    KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
+                    KangarooTwelve((unsigned char*)request, transactionSize - SIGNATURE_SIZE, digest, sizeof(digest));
                     if (verify(request->sourcePublicKey, digest, (((const unsigned char*)request) + sizeof(Transaction) + request->inputSize)))
                     {
                         responseSize = requestHeader->size;
@@ -6718,7 +6718,8 @@ static void requestProcessor(void* ProcedureArgument)
 
                             if (((Transaction*)&entityPendingTransactions[spectrumIndex * MAX_TRANSACTION_SIZE])->tick < request->tick)
                             {
-                                bs->CopyMem(&entityPendingTransactions[spectrumIndex * MAX_TRANSACTION_SIZE], request, sizeof(Transaction) + request->inputSize + SIGNATURE_SIZE);
+                                bs->CopyMem(&entityPendingTransactions[spectrumIndex * MAX_TRANSACTION_SIZE], request, transactionSize);
+                                KangarooTwelve(&entityPendingTransactions[spectrumIndex * MAX_TRANSACTION_SIZE], transactionSize, &entityPendingTransactionDigests[spectrumIndex * 32ULL], 32);
                             }
 
                             RELEASE(entityPendingTransactionsLock);
@@ -6727,7 +6728,6 @@ static void requestProcessor(void* ProcedureArgument)
                         if (request->tick == system.tick + 1
                             && tickData[request->tick - system.initialTick].epoch == system.epoch)
                         {
-                            const unsigned int transactionSize = sizeof(Transaction) + request->inputSize + SIGNATURE_SIZE;
                             KangarooTwelve((unsigned char*)request, transactionSize, digest, sizeof(digest));
                             for (unsigned int i = 0; i < NUMBER_OF_TRANSACTIONS_PER_TICK; i++)
                             {
@@ -7394,7 +7394,8 @@ static BOOLEAN initialize()
         bs->SetMem(tickFlags, sizeof(tickFlags), 0);
         if ((status = bs->AllocatePool(EfiRuntimeServicesData, ((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * sizeof(TickData), (void**)&tickData))
             || (status = bs->AllocatePool(EfiRuntimeServicesData, FIRST_TICK_TRANSACTION_OFFSET + (((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * NUMBER_OF_TRANSACTIONS_PER_TICK * MAX_TRANSACTION_SIZE / TRANSACTION_SPARSENESS), (void**)&tickTransactions))
-            || (status = bs->AllocatePool(EfiRuntimeServicesData, SPECTRUM_CAPACITY * MAX_TRANSACTION_SIZE, (void**)&entityPendingTransactions)))
+            || (status = bs->AllocatePool(EfiRuntimeServicesData, SPECTRUM_CAPACITY * MAX_TRANSACTION_SIZE, (void**)&entityPendingTransactions))
+            || (status = bs->AllocatePool(EfiRuntimeServicesData, SPECTRUM_CAPACITY * 32ULL, (void**)&entityPendingTransactionDigests)))
         {
             logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status, __LINE__);
 
@@ -7461,7 +7462,7 @@ static BOOLEAN initialize()
                 system.version = VERSION_B;
                 if (system.epoch == 44)
                 {
-                    system.initialTick = system.tick = 5001000;
+                    system.initialTick = system.tick = 5001005;
                 }
                 else
                 {
@@ -7703,6 +7704,10 @@ static void deinitialize()
         bs->FreePool(initSpectrum);
     }
 
+    if (entityPendingTransactionDigests)
+    {
+        bs->FreePool(entityPendingTransactionDigests);
+    }
     if (entityPendingTransactions)
     {
         bs->FreePool(entityPendingTransactions);
@@ -8242,6 +8247,22 @@ static void processKeyPresses()
             setText(message, L"Earliest tick with pending transactions = ");
             appendNumber(message, earliestTick, TRUE);
             log(message);
+
+            unsigned int numberOfEntities = 0;
+            unsigned long long totalAmount = 0;
+            for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
+            {
+                if (initSpectrum[i].incomingAmount - initSpectrum[i].outgoingAmount)
+                {
+                    numberOfEntities++;
+                    totalAmount += initSpectrum[i].incomingAmount - initSpectrum[i].outgoingAmount;
+                }
+            }
+            setNumber(message, totalAmount, TRUE);
+            appendText(message, L" qus in ");
+            appendNumber(message, numberOfEntities, TRUE);
+            appendText(message, L" entities.");
+            log(message);
         }
         break;
 
@@ -8635,7 +8656,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                 if (EQUAL(*((__m256i*)triggerSignature), ZERO))
                                                 {
-                                                    /**/log(L"000000000000");
                                                     *((__m256i*)etalonTick.varStruct.nextTick.zero) = ZERO;
 
                                                     if (targetNextTickDataDigestIsKnown)
@@ -8687,12 +8707,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                                     {
                                                                                         ACQUIRE(entityPendingTransactionsLock);
 
-                                                                                        unsigned char digest[32];
-                                                                                        const unsigned int transactionSize = sizeof(Transaction) + pendingTransaction->inputSize + SIGNATURE_SIZE;
-                                                                                        KangarooTwelve((unsigned char*)pendingTransaction, transactionSize, digest, sizeof(digest));
-                                                                                        if (EQUAL(*((__m256i*)digest), *((__m256i*)nextTickData.transactionDigests[i])))
+                                                                                        if (EQUAL(*((__m256i*)&entityPendingTransactionDigests[j * 32ULL]), *((__m256i*)nextTickData.transactionDigests[i])))
                                                                                         {
                                                                                             unsigned char transactionBuffer[MAX_TRANSACTION_SIZE];
+                                                                                            const unsigned int transactionSize = sizeof(Transaction) + pendingTransaction->inputSize + SIGNATURE_SIZE;
                                                                                             bs->CopyMem(transactionBuffer, (void*)pendingTransaction, transactionSize);
 
                                                                                             RELEASE(entityPendingTransactionsLock);
@@ -8772,12 +8790,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                             {
                                                                                 ACQUIRE(entityPendingTransactionsLock);
 
-                                                                                unsigned char digest[32];
-                                                                                const unsigned int transactionSize = sizeof(Transaction) + pendingTransaction->inputSize + SIGNATURE_SIZE;
-                                                                                KangarooTwelve((unsigned char*)pendingTransaction, transactionSize, digest, sizeof(digest));
-                                                                                if (EQUAL(*((__m256i*)digest), *((__m256i*)nextTickData.transactionDigests[i])))
+                                                                                if (EQUAL(*((__m256i*)&entityPendingTransactionDigests[j * 32ULL]), *((__m256i*)nextTickData.transactionDigests[i])))
                                                                                 {
                                                                                     unsigned char transactionBuffer[MAX_TRANSACTION_SIZE];
+                                                                                    const unsigned int transactionSize = sizeof(Transaction) + pendingTransaction->inputSize + SIGNATURE_SIZE;
                                                                                     bs->CopyMem(transactionBuffer, (void*)pendingTransaction, transactionSize);
 
                                                                                     RELEASE(entityPendingTransactionsLock);
@@ -8821,7 +8837,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 }
                                                 else
                                                 {
-                                                    /**/log(L"111111111111111111");
                                                     bs->CopyMem(etalonTick.varStruct.trigger.signature, triggerSignature, SIGNATURE_SIZE);
                                                 }
 
@@ -9217,7 +9232,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                                         {
                                                                                             tickTransactionOffsets[pendingTransaction->tick - system.initialTick][j] = nextTickTransactionOffset;
                                                                                             bs->CopyMem(&tickTransactions[nextTickTransactionOffset], (void*)pendingTransaction, transactionSize);
-                                                                                            KangarooTwelve(&tickTransactions[nextTickTransactionOffset], transactionSize, broadcastedFutureTickData.broadcastFutureTickData.tickData.transactionDigests[j], sizeof(broadcastedFutureTickData.broadcastFutureTickData.tickData.transactionDigests[j]));
+                                                                                            *((__m256i*)broadcastedFutureTickData.broadcastFutureTickData.tickData.transactionDigests[j]) = *((__m256i*)&entityPendingTransactionDigests[entityPendingTransactionIndices[index] * 32ULL]);
                                                                                             j++;
                                                                                             nextTickTransactionOffset += transactionSize;
                                                                                         }
@@ -9900,7 +9915,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                 {
                                                                     Transaction* request = (Transaction*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader));
                                                                     if (request->amount >= 0 && request->amount <= MAX_AMOUNT
-                                                                        && !request->inputType
                                                                         && request->inputSize <= MAX_INPUT_SIZE)
                                                                     {
                                                                         const unsigned int transactionSize = sizeof(Transaction) + request->inputSize + SIGNATURE_SIZE;
