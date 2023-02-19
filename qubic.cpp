@@ -25,7 +25,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 91
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -5664,6 +5664,23 @@ typedef struct
 
 #define RESPOND_TICK_TRANSACTION 30
 
+#define REQUEST_ENTITY 31
+
+typedef struct
+{
+    unsigned char publicKey[32];
+} RequestedEntity;
+
+#define RESPOND_ENTITY 32
+
+typedef struct
+{
+    Entity entity;
+    unsigned int tick;
+    int spectrumIndex;
+    unsigned char siblings[SPECTRUM_DEPTH][32];
+} RespondedEntity;
+
 static volatile int state = 0;
 
 static unsigned char computingSubseeds[sizeof(computingSeeds) / sizeof(computingSeeds[0])][32], computingPrivateKeys[sizeof(computingSeeds) / sizeof(computingSeeds[0])][32], computingPublicKeys[sizeof(computingSeeds) / sizeof(computingSeeds[0])][32];
@@ -5856,6 +5873,12 @@ static struct
     RequestResponseHeader header;
     unsigned char transactionBuffer[MAX_TRANSACTION_SIZE];
 } respondedTickTransaction;
+
+static struct
+{
+    RequestResponseHeader header;
+    RespondedEntity respondedEntity;
+} respondedEntity;
 
 static bool disableLogging = false;
 static bool log1 = true, log2 = true, log3 = true;
@@ -7278,6 +7301,9 @@ static BOOLEAN initialize()
     requestedTickTransactions.header.type = REQUEST_TICK_TRANSACTIONS;
     respondedTickTransaction.header.protocol = VERSION_B;
     respondedTickTransaction.header.type = RESPOND_TICK_TRANSACTION;
+    respondedEntity.header.size = sizeof(respondedEntity);
+    respondedEntity.header.protocol = VERSION_B;
+    respondedEntity.header.type = RESPOND_ENTITY;
 
     EFI_STATUS status;
 
@@ -9846,6 +9872,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                             break;
                                                                         }
                                                                     }
+
+                                                                    _InterlockedIncrement64(&numberOfProcessedRequests);
                                                                 }
                                                                 break;
 
@@ -9908,6 +9936,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                             tickTransactionIndices[index] = tickTransactionIndices[--numberOfTickTransactions];
                                                                         }
                                                                     }
+
+                                                                    _InterlockedIncrement64(&numberOfProcessedRequests);
                                                                 }
                                                                 break;
 
@@ -9948,6 +9978,48 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                             }
                                                                         }
                                                                     }
+
+                                                                    _InterlockedIncrement64(&numberOfProcessedRequests);
+                                                                }
+                                                                break;
+
+                                                                case REQUEST_ENTITY:
+                                                                {
+                                                                    if (!spectrumDigestLevel)
+                                                                    {
+                                                                        RequestedEntity* request = (RequestedEntity*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader));
+                                                                        *((__m256i*)respondedEntity.respondedEntity.entity.publicKey) = *((__m256i*)request->publicKey);
+                                                                        respondedEntity.respondedEntity.spectrumIndex = spectrumIndex(respondedEntity.respondedEntity.entity.publicKey);
+                                                                        respondedEntity.respondedEntity.tick = system.tick;
+                                                                        if (respondedEntity.respondedEntity.spectrumIndex < 0)
+                                                                        {
+                                                                            respondedEntity.respondedEntity.entity.incomingAmount = 0;
+                                                                            respondedEntity.respondedEntity.entity.outgoingAmount = 0;
+                                                                            respondedEntity.respondedEntity.entity.numberOfIncomingTransfers = 0;
+                                                                            respondedEntity.respondedEntity.entity.numberOfOutgoingTransfers = 0;
+                                                                            respondedEntity.respondedEntity.entity.latestIncomingTransferTick = 0;
+                                                                            respondedEntity.respondedEntity.entity.latestOutgoingTransferTick = 0;
+
+                                                                            bs->SetMem(respondedEntity.respondedEntity.siblings, sizeof(respondedEntity.respondedEntity.siblings), 0);
+                                                                        }
+                                                                        else
+                                                                        {
+                                                                            bs->CopyMem(&respondedEntity.respondedEntity.entity, &spectrum[respondedEntity.respondedEntity.spectrumIndex], sizeof(Entity));
+
+                                                                            int sibling = respondedEntity.respondedEntity.spectrumIndex;
+                                                                            unsigned int spectrumDigestInputOffset = 0;
+                                                                            for (unsigned int j = 0; j < SPECTRUM_DEPTH; j++)
+                                                                            {
+                                                                                *((__m256i*)respondedEntity.respondedEntity.siblings[j]) = spectrumDigests[spectrumDigestInputOffset + (sibling ^ 1)];
+                                                                                spectrumDigestInputOffset += (SPECTRUM_CAPACITY >> j);
+                                                                                sibling >>= 1;
+                                                                            }
+                                                                        }
+
+                                                                        push(&peers[i], &respondedEntity.header, true);
+                                                                    }
+
+                                                                    _InterlockedIncrement64(&numberOfProcessedRequests);
                                                                 }
                                                                 break;
 
