@@ -24,8 +24,8 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 91
-#define VERSION_C 2
+#define VERSION_B 92
+#define VERSION_C 0
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -5304,7 +5304,6 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define PORT 21841
 #define QUORUM (NUMBER_OF_COMPUTORS * 2 / 3 + 1)
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 90
-#define REVENUE_PUBLICATION_PERIOD 300
 #define SIGNATURE_SIZE 64
 #define SOLUTION_THRESHOLD 27
 #define SPECTRUM_CAPACITY 0x1000000ULL // Must be 2^N
@@ -5489,21 +5488,6 @@ typedef struct
     Tick tick;
 } BroadcastTick;
 
-#define BROADCAST_REVENUES 4
-
-typedef struct
-{
-    unsigned short computorIndex;
-    unsigned short epoch;
-    unsigned int revenues[NUMBER_OF_COMPUTORS];
-    unsigned char signature[SIGNATURE_SIZE];
-} Revenues;
-
-typedef struct
-{
-    Revenues revenues;
-} BroadcastRevenues;
-
 #define BROADCAST_FUTURE_TICK_DATA 8
 
 typedef struct
@@ -5518,6 +5502,7 @@ typedef struct
     unsigned char day;
     unsigned char month;
     unsigned char year;
+    unsigned int revenues[NUMBER_OF_COMPUTORS];
     unsigned char transactionDigests[NUMBER_OF_TRANSACTIONS_PER_TICK][32];
     unsigned char signature[SIGNATURE_SIZE];
 } TickData;
@@ -5528,22 +5513,6 @@ typedef struct
 } BroadcastFutureTickData;
 
 #define REQUEST_COMPUTORS 11
-
-#define BROADCAST_TERMINATOR 13
-
-typedef struct
-{
-    unsigned short numberOfNewComputors;
-    unsigned short epoch;
-    unsigned int tick;
-    unsigned int revenues[NUMBER_OF_COMPUTORS];
-    unsigned char signature[SIGNATURE_SIZE];
-} Terminator;
-
-typedef struct
-{
-    Terminator terminator;
-} BroadcastTerminator;
 
 #define REQUEST_QUORUM_TICK 14
 
@@ -5631,8 +5600,6 @@ typedef struct
     unsigned short inputSize;
 } Transaction;
 
-#define REQUEST_TERMINATOR 25
-
 #define BROADCAST_TICK_TRIGGER 26
 
 typedef struct
@@ -5694,11 +5661,6 @@ static struct
     BroadcastComputors broadcastComputors;
 } broadcastedComputors;
 
-static struct
-{
-    RequestResponseHeader header;
-    BroadcastTerminator broadcastTerminator;
-} broadcastedTerminator;
 static bool epochMustBeTerminated = false;
 
 static EFI_TIME time;
@@ -5728,12 +5690,9 @@ static unsigned short prevTickMillisecond;
 static unsigned char prevTickSecond, prevTickMinute, prevTickHour, prevTickDay, prevTickMonth, prevTickYear;
 static unsigned int tickNumberOfComputors = 0, tickTotalNumberOfComputors = 0, futureTickTotalNumberOfComputors = 0;
 static unsigned int numberOfNextTickTransactions = 0, numberOfKnownNextTickTransactions = 0;
-static unsigned long long latestRevenuePublicationTick = 0;
 static unsigned short numberOfOwnComputorIndices = 0;
 static short ownComputorIndices[NUMBER_OF_COMPUTORS / 3];
 static short ownComputorIndicesMapping[sizeof(computingSeeds) / sizeof(computingSeeds[0])];
-
-static Revenues revenues[NUMBER_OF_COMPUTORS];
 
 static Tick* ticks = NULL;
 static unsigned long long tickFlags[MAX_NUMBER_OF_TICKS_PER_EPOCH][(NUMBER_OF_COMPUTORS + 63) / 64];
@@ -5825,18 +5784,7 @@ static struct
 static struct
 {
     RequestResponseHeader header;
-    BroadcastRevenues broadcastRevenues;
-} broadcastedRevenues;
-
-static struct
-{
-    RequestResponseHeader header;
 } requestedComputors;
-
-static struct
-{
-    RequestResponseHeader header;
-} requestedTerminator;
 
 static struct
 {
@@ -6576,39 +6524,6 @@ static void requestProcessor(void* ProcedureArgument)
             }
             break;
 
-            case BROADCAST_REVENUES:
-            {
-                BroadcastRevenues* request = (BroadcastRevenues*)((char*)processor->cache + sizeof(RequestResponseHeader));
-                if (request->revenues.computorIndex < NUMBER_OF_COMPUTORS)
-                {
-                    unsigned int i;
-                    for (i = 0; i < NUMBER_OF_COMPUTORS; i++)
-                    {
-                        if (request->revenues.revenues[i] > ISSUANCE_RATE / NUMBER_OF_COMPUTORS)
-                        {
-                            break;
-                        }
-                    }
-                    if (i == NUMBER_OF_COMPUTORS)
-                    {
-                        if (request->revenues.epoch == broadcastedComputors.broadcastComputors.computors.epoch)
-                        {
-                            unsigned char digest[32];
-                            request->revenues.computorIndex ^= BROADCAST_REVENUES;
-                            KangarooTwelve((unsigned char*)&request->revenues, sizeof(Revenues) - SIGNATURE_SIZE, digest, sizeof(digest));
-                            request->revenues.computorIndex ^= BROADCAST_REVENUES;
-                            if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->revenues.computorIndex], digest, request->revenues.signature))
-                            {
-                                bs->CopyMem(&revenues[request->revenues.computorIndex], &request->revenues, sizeof(Revenues));
-
-                                responseSize = requestHeader->size;
-                            }
-                        }
-                    }
-                }
-            }
-            break;
-
             case BROADCAST_FUTURE_TICK_DATA:
             {
                 BroadcastFutureTickData* request = (BroadcastFutureTickData*)((char*)processor->cache + sizeof(RequestResponseHeader));
@@ -6623,20 +6538,24 @@ static void requestProcessor(void* ProcedureArgument)
                     && !request->tickData.millisecond
                     && ms(request->tickData.year, request->tickData.month, request->tickData.day, request->tickData.hour, request->tickData.minute, request->tickData.second, request->tickData.millisecond) <= ms(time.Year - 2000, time.Month, time.Day, time.Hour, time.Minute, time.Second, time.Nanosecond / 1000000) + TIME_ACCURACY * 1000)
                 {
-                    unsigned char digest[32];
-                    request->tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
-                    KangarooTwelve((unsigned char*)&request->tickData, sizeof(TickData) - SIGNATURE_SIZE, digest, sizeof(digest));
-                    request->tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
-                    if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->tickData.computorIndex], digest, request->tickData.signature))
+                    unsigned int i;
+                    for (i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                    {
+                        if (request->tickData.revenues[i] > ISSUANCE_RATE / NUMBER_OF_COMPUTORS)
+                        {
+                            break;
+                        }
+                    }
+                    if (i == NUMBER_OF_COMPUTORS)
                     {
                         bool ok = true;
-                        for (unsigned int i = 0; i < NUMBER_OF_TRANSACTIONS_PER_TICK && ok; i++)
+                        for (i = 0; i < NUMBER_OF_TRANSACTIONS_PER_TICK && ok; i++)
                         {
                             if (!EQUAL(*((__m256i*)request->tickData.transactionDigests[i]), ZERO))
                             {
                                 for (unsigned int j = 0; j < i; j++)
                                 {
-                                    if (EQUAL(*((__m256i*)request->tickData.transactionDigests[j]), *((__m256i*)request->tickData.transactionDigests[i])))
+                                    if (EQUAL(*((__m256i*)request->tickData.transactionDigests[i]) , *((__m256i*)request->tickData.transactionDigests[j])))
                                     {
                                         ok = false;
 
@@ -6647,74 +6566,53 @@ static void requestProcessor(void* ProcedureArgument)
                         }
                         if (ok)
                         {
-                            if (request->tickData.tick == system.tick + 1 && targetNextTickDataDigestIsKnown)
+                            unsigned char digest[32];
+                            request->tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
+                            KangarooTwelve((unsigned char*)&request->tickData, sizeof(TickData) - SIGNATURE_SIZE, digest, sizeof(digest));
+                            request->tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
+                            if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->tickData.computorIndex], digest, request->tickData.signature))
                             {
-                                if (!EQUAL(targetNextTickDataDigest, ZERO))
+                                if (request->tickData.tick == system.tick + 1 && targetNextTickDataDigestIsKnown)
                                 {
-                                    unsigned char digest[32];
-                                    KangarooTwelve((unsigned char*)&request->tickData, sizeof(TickData), digest, 32);
-                                    if (EQUAL(*((__m256i*)digest), targetNextTickDataDigest))
+                                    if (!EQUAL(targetNextTickDataDigest, ZERO))
                                     {
-                                        bs->CopyMem(&tickData[request->tickData.tick - system.initialTick], &request->tickData, sizeof(TickData));
-                                    }
-                                }
-                            }
-                            else
-                            {
-                                if (tickData[request->tickData.tick - system.initialTick].epoch == broadcastedComputors.broadcastComputors.computors.epoch)
-                                {
-                                    if (*((unsigned long long*) & request->tickData.millisecond) != *((unsigned long long*) & tickData[request->tickData.tick - system.initialTick].millisecond))
-                                    {
-                                        faultyComputorFlags[request->tickData.computorIndex >> 6] |= (1ULL << (request->tickData.computorIndex & 63));
-                                    }
-                                    else
-                                    {
-                                        for (unsigned int i = 0; i < NUMBER_OF_TRANSACTIONS_PER_TICK; i++)
+                                        unsigned char digest[32];
+                                        KangarooTwelve((unsigned char*)&request->tickData, sizeof(TickData), digest, 32);
+                                        if (EQUAL(*((__m256i*)digest), targetNextTickDataDigest))
                                         {
-                                            if (!EQUAL(*((__m256i*)request->tickData.transactionDigests[i]), *((__m256i*)tickData[request->tickData.tick - system.initialTick].transactionDigests[i])))
-                                            {
-                                                faultyComputorFlags[request->tickData.computorIndex >> 6] |= (1ULL << (request->tickData.computorIndex & 63));
-
-                                                break;
-                                            }
+                                            bs->CopyMem(&tickData[request->tickData.tick - system.initialTick], &request->tickData, sizeof(TickData));
                                         }
                                     }
                                 }
                                 else
                                 {
-                                    bs->CopyMem(&tickData[request->tickData.tick - system.initialTick], &request->tickData, sizeof(TickData));
+                                    if (tickData[request->tickData.tick - system.initialTick].epoch == broadcastedComputors.broadcastComputors.computors.epoch)
+                                    {
+                                        if (*((unsigned long long*) & request->tickData.millisecond) != *((unsigned long long*) & tickData[request->tickData.tick - system.initialTick].millisecond))
+                                        {
+                                            faultyComputorFlags[request->tickData.computorIndex >> 6] |= (1ULL << (request->tickData.computorIndex & 63));
+                                        }
+                                        else
+                                        {
+                                            for (unsigned int i = 0; i < NUMBER_OF_TRANSACTIONS_PER_TICK; i++)
+                                            {
+                                                if (!EQUAL(*((__m256i*)request->tickData.transactionDigests[i]), *((__m256i*)tickData[request->tickData.tick - system.initialTick].transactionDigests[i])))
+                                                {
+                                                    faultyComputorFlags[request->tickData.computorIndex >> 6] |= (1ULL << (request->tickData.computorIndex & 63));
+
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    else
+                                    {
+                                        bs->CopyMem(&tickData[request->tickData.tick - system.initialTick], &request->tickData, sizeof(TickData));
+                                    }
                                 }
+
+                                responseSize = requestHeader->size;
                             }
-
-                            responseSize = requestHeader->size;
-                        }
-                    }
-                }
-            }
-            break;
-
-            case BROADCAST_TERMINATOR:
-            {
-                BroadcastTerminator* request = (BroadcastTerminator*)((char*)processor->cache + sizeof(RequestResponseHeader));
-                if (request->terminator.numberOfNewComputors <= NUMBER_OF_COMPUTORS - QUORUM)
-                {
-                    unsigned int i;
-                    for (i = 0; i < NUMBER_OF_COMPUTORS; i++)
-                    {
-                        if (request->terminator.revenues[i] > ISSUANCE_RATE / NUMBER_OF_COMPUTORS)
-                        {
-                            break;
-                        }
-                    }
-                    if (i == NUMBER_OF_COMPUTORS)
-                    {
-                        unsigned char digest[32];
-                        KangarooTwelve((unsigned char*)request, sizeof(Terminator) - SIGNATURE_SIZE, digest, sizeof(digest));
-                        if (verify(adminPublicKey, digest, request->terminator.signature))
-                        {
-                            bs->CopyMem(&broadcastedTerminator.broadcastTerminator.terminator, &request->terminator, sizeof(Terminator));
-
-                            responseSize = requestHeader->size;
                         }
                     }
                 }
@@ -7258,11 +7156,6 @@ static BOOLEAN initialize()
     }
     bs->SetMem(&broadcastedComputors.broadcastComputors.computors.signature, sizeof(broadcastedComputors.broadcastComputors.computors.signature), 0);
 
-    broadcastedTerminator.header.size = sizeof(broadcastedTerminator.header) + sizeof(broadcastedTerminator.broadcastTerminator);
-    broadcastedTerminator.header.protocol = VERSION_B;
-    broadcastedTerminator.header.type = BROADCAST_COMPUTORS;
-    broadcastedTerminator.broadcastTerminator.terminator.epoch = 0;
-
     for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
     {
         broadcastedSolutions[i].header.size = sizeof(broadcastedSolutions[i]);
@@ -7275,15 +7168,9 @@ static BOOLEAN initialize()
     broadcastedFutureTickData.header.size = sizeof(broadcastedFutureTickData);
     broadcastedFutureTickData.header.protocol = VERSION_B;
     broadcastedFutureTickData.header.type = BROADCAST_FUTURE_TICK_DATA;
-    broadcastedRevenues.header.size = sizeof(broadcastedRevenues);
-    broadcastedRevenues.header.protocol = VERSION_B;
-    broadcastedRevenues.header.type = BROADCAST_REVENUES;
     requestedComputors.header.size = sizeof(requestedComputors);
     requestedComputors.header.protocol = VERSION_B;
     requestedComputors.header.type = REQUEST_COMPUTORS;
-    requestedTerminator.header.size = sizeof(requestedTerminator);
-    requestedTerminator.header.protocol = VERSION_B;
-    requestedTerminator.header.type = REQUEST_TERMINATOR;
     requestedQuorumTick.header.size = sizeof(requestedQuorumTick);
     requestedQuorumTick.header.protocol = VERSION_B;
     requestedQuorumTick.header.type = REQUEST_QUORUM_TICK;
@@ -7488,7 +7375,7 @@ static BOOLEAN initialize()
                 system.version = VERSION_B;
                 if (system.epoch == 44)
                 {
-                    system.initialTick = system.tick = 5001005;
+                    system.initialTick = system.tick = 5005000;
                 }
                 else
                 {
@@ -7589,11 +7476,6 @@ static BOOLEAN initialize()
         }
 
         system.tick = system.initialTick;
-
-        for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
-        {
-            revenues[i].epoch = 0;
-        }
 
         unsigned char randomSeed[32];
         bs->SetMem(randomSeed, 32, 0);
@@ -7797,85 +7679,85 @@ static void deinitialize()
     }
 }
 
-static unsigned int revenue(unsigned int computorIndex)
-{
-    unsigned int revenueAmounts[NUMBER_OF_COMPUTORS];
-    unsigned int numberOfRevenues = 0;
-    for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
-    {
-        if (revenues[i].epoch == system.epoch)
-        {
-            revenueAmounts[numberOfRevenues++] = revenues[i].revenues[computorIndex];
-        }
-    }
-    if (!numberOfRevenues)
-    {
-        return 0;
-    }
-    while (numberOfRevenues > QUORUM)
-    {
-        int i = 0;
-        for (unsigned int j = 1; j < numberOfRevenues; j++)
-        {
-            if (revenueAmounts[j] > revenueAmounts[i])
-            {
-                i = j;
-            }
-        }
-        revenueAmounts[i] = revenueAmounts[--numberOfRevenues];
-    }
-    int i = 0;
-    for (unsigned int j = 1; j < numberOfRevenues; j++)
-    {
-        if (revenueAmounts[j] > revenueAmounts[i])
-        {
-            i = j;
-        }
-    }
-
-    return revenueAmounts[i];
-}
-
 static void terminateEpoch()
 {
-    if (broadcastedTerminator.broadcastTerminator.terminator.epoch == system.epoch
-        && broadcastedTerminator.broadcastTerminator.terminator.tick == system.tick)
+    long long adminRevenue = ISSUANCE_RATE;
+    for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
     {
-        long long adminRevenue = ISSUANCE_RATE - ((unsigned long long)(ISSUANCE_RATE / NUMBER_OF_COMPUTORS)) * broadcastedTerminator.broadcastTerminator.terminator.numberOfNewComputors;
-        for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+        unsigned int latestRevenueTicks[NUMBER_OF_COMPUTORS];
+        bs->SetMem(latestRevenueTicks, sizeof(latestRevenueTicks), 0);
+
+        for (unsigned int tick = system.initialTick; tick < system.tick; tick++)
         {
-            if (broadcastedTerminator.broadcastTerminator.terminator.revenues[i])
+            if (tickData[tick - system.initialTick].epoch == system.epoch)
             {
-                increaseEnergy(broadcastedComputors.broadcastComputors.computors.publicKeys[i], broadcastedTerminator.broadcastTerminator.terminator.revenues[i], system.tick);
-                adminRevenue -= broadcastedTerminator.broadcastTerminator.terminator.revenues[i];
+                latestRevenueTicks[tick % NUMBER_OF_COMPUTORS] = tick;
             }
         }
-        increaseEnergy(adminPublicKey, adminRevenue, system.tick);
 
-        system.epoch++;
-        system.initialTick = system.tick;
-        bs->SetMem(system.tickCounters, sizeof(system.tickCounters), 0);
-        saveSystem();
-
-        SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 4] = system.epoch / 100 + L'0';
-        SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 3] = (system.epoch % 100) / 10 + L'0';
-        SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 2] = system.epoch % 10 + L'0';
-        saveSpectrum();
-
-        broadcastedComputors.broadcastComputors.computors.epoch = 0;
-        for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+        unsigned int revenueAmounts[NUMBER_OF_COMPUTORS];
+        unsigned int numberOfRevenueAmounts = 0;
+        for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
         {
-            _rdrand64_step((unsigned long long*) & broadcastedComputors.broadcastComputors.computors.publicKeys[i][0]);
-            _rdrand64_step((unsigned long long*) & broadcastedComputors.broadcastComputors.computors.publicKeys[i][8]);
-            _rdrand64_step((unsigned long long*) & broadcastedComputors.broadcastComputors.computors.publicKeys[i][16]);
-            _rdrand64_step((unsigned long long*) & broadcastedComputors.broadcastComputors.computors.publicKeys[i][24]);
+            if (latestRevenueTicks[j])
+            {
+                revenueAmounts[numberOfRevenueAmounts++] = tickData[latestRevenueTicks[j] - system.initialTick].revenues[i];
+            }
         }
-        bs->SetMem(&broadcastedComputors.broadcastComputors.computors.signature, sizeof(broadcastedComputors.broadcastComputors.computors.signature), 0);
-
-        numberOfOwnComputorIndices = 0;
-
-        epochMustBeTerminated = false;
+        if (numberOfRevenueAmounts)
+        {
+            while (numberOfRevenueAmounts > QUORUM)
+            {
+                int j = 0;
+                for (unsigned int k = 1; k < numberOfRevenueAmounts; k++)
+                {
+                    if (revenueAmounts[k] > revenueAmounts[j])
+                    {
+                        j = k;
+                    }
+                }
+                revenueAmounts[j] = revenueAmounts[--numberOfRevenueAmounts];
+            }
+            int j = 0;
+            for (unsigned int k = 1; k < numberOfRevenueAmounts; k++)
+            {
+                if (revenueAmounts[k] > revenueAmounts[j])
+                {
+                    j = k;
+                }
+            }
+            if (revenueAmounts[j])
+            {
+                increaseEnergy(broadcastedComputors.broadcastComputors.computors.publicKeys[i], revenueAmounts[j], system.tick);
+                adminRevenue -= revenueAmounts[j];
+            }
+        }
     }
+    increaseEnergy(adminPublicKey, adminRevenue, system.tick);
+
+    system.epoch++;
+    system.initialTick = system.tick;
+    bs->SetMem(system.tickCounters, sizeof(system.tickCounters), 0);
+    saveSystem();
+
+    SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 4] = system.epoch / 100 + L'0';
+    SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 3] = (system.epoch % 100) / 10 + L'0';
+    SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 2] = system.epoch % 10 + L'0';
+    saveSpectrum();
+
+    broadcastedComputors.broadcastComputors.computors.epoch = 0;
+    for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+    {
+        _rdrand64_step((unsigned long long*)&broadcastedComputors.broadcastComputors.computors.publicKeys[i][0]);
+        _rdrand64_step((unsigned long long*)&broadcastedComputors.broadcastComputors.computors.publicKeys[i][8]);
+        _rdrand64_step((unsigned long long*)&broadcastedComputors.broadcastComputors.computors.publicKeys[i][16]);
+        _rdrand64_step((unsigned long long*)&broadcastedComputors.broadcastComputors.computors.publicKeys[i][24]);
+    }
+    bs->SetMem(&broadcastedComputors.broadcastComputors.computors.signature, sizeof(broadcastedComputors.broadcastComputors.computors.signature), 0);
+
+    numberOfOwnComputorIndices = 0;
+
+    epochMustBeTerminated = false;
 }
 
 static void publishSolutions()
@@ -7964,67 +7846,6 @@ static void publishSolutions()
         for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
         {
             push(&peers[j], &broadcastedSolutions[i].header, true);
-        }
-    }
-}
-
-static void publishRevenue()
-{
-    broadcastedRevenues.broadcastRevenues.revenues.epoch = system.epoch;
-
-    for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
-    {
-        broadcastedRevenues.broadcastRevenues.revenues.computorIndex = ownComputorIndices[i];
-
-        unsigned int maxCounter = 0;
-        for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
-        {
-            if (system.tickCounters[j] > maxCounter)
-            {
-                unsigned int k;
-                for (k = 0; k < numberOfOwnComputorIndices; k++)
-                {
-                    if (ownComputorIndices[k] == j)
-                    {
-                        break;
-                    }
-                }
-                if (k == numberOfOwnComputorIndices)
-                {
-                    maxCounter = system.tickCounters[j];
-                }
-            }
-        }
-        if (maxCounter)
-        {
-            for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
-            {
-                broadcastedRevenues.broadcastRevenues.revenues.revenues[j] = /*(faultyComputorFlags[j >> 6] & (1ULL << (j & 63))) ? 0 :*/ ((system.tickCounters[j] >= maxCounter) ? (ISSUANCE_RATE / NUMBER_OF_COMPUTORS) : (system.tickCounters[j] * ((unsigned long long)(ISSUANCE_RATE / NUMBER_OF_COMPUTORS)) / maxCounter));
-                for (unsigned int k = 0; k < sizeof(computorsToSetMaxRevenueTo) / sizeof(computorsToSetMaxRevenueTo[0]); k++)
-                {
-                    if (EQUAL(*((__m256i*)broadcastedComputors.broadcastComputors.computors.publicKeys[j]), *((__m256i*)computorsToSetMaxRevenueTo[k])))
-                    {
-                        broadcastedRevenues.broadcastRevenues.revenues.revenues[j] = ISSUANCE_RATE / NUMBER_OF_COMPUTORS;
-
-                        break;
-                    }
-                }
-            }
-        }
-        else
-        {
-            bs->SetMem(broadcastedRevenues.broadcastRevenues.revenues.revenues, sizeof(broadcastedRevenues.broadcastRevenues.revenues.revenues), 0);
-        }
-
-        unsigned char digest[32];
-        broadcastedRevenues.broadcastRevenues.revenues.computorIndex ^= BROADCAST_REVENUES;
-        KangarooTwelve((unsigned char*)&broadcastedRevenues.broadcastRevenues.revenues, sizeof(Revenues) - SIGNATURE_SIZE, digest, sizeof(digest));
-        broadcastedRevenues.broadcastRevenues.revenues.computorIndex ^= BROADCAST_REVENUES;
-        sign(computingSubseeds[ownComputorIndicesMapping[i]], computingPublicKeys[ownComputorIndicesMapping[i]], digest, broadcastedRevenues.broadcastRevenues.revenues.signature);
-
-        for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
-        {
-            push(&peers[j], &broadcastedRevenues.header, true);
         }
     }
 }
@@ -8147,40 +7968,23 @@ static void logInfo()
     else
     {
         const CHAR16 alphabet[26][2] = { L"A", L"B", L"C", L"D", L"E", L"F", L"G", L"H", L"I", L"J", L"K", L"L", L"M", L"N", L"O", L"P", L"Q", L"R", L"S", L"T", L"U", L"V", L"W", L"X", L"Y", L"Z" };
-        unsigned long long totalRevenue = 0, maxRevenue = 0;
         for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
         {
-            totalRevenue += revenue(ownComputorIndices[i]);
-            maxRevenue += ISSUANCE_RATE / NUMBER_OF_COMPUTORS;
-
             appendText(message, alphabet[ownComputorIndices[i] / 26]);
             appendText(message, alphabet[ownComputorIndices[i] % 26]);
             appendText(message, i ? L"[" : L"[in ");
             appendNumber(message, ((ownComputorIndices[i] + NUMBER_OF_COMPUTORS) - system.tick % NUMBER_OF_COMPUTORS) % NUMBER_OF_COMPUTORS, FALSE);
-            appendText(message, i ? L"/" : L" ticks/");
-            appendNumber(message, /*numberOfBufferedTransfers[i]*/0, TRUE);
-            appendText(message, i ? L"]" : L" transactions]");
+            if (!i)
+            {
+                appendText(message, L" ticks]");
+            }
             if (i < (unsigned int)(numberOfOwnComputorIndices - 1))
             {
                 appendText(message, L"+");
             }
             else
             {
-                appendText(message, L" (revenue = ");
-                appendNumber(message, totalRevenue, TRUE);
-                appendText(message, L"/");
-                appendNumber(message, maxRevenue, TRUE);
-                unsigned int numberOfRevenueVotes = 0;
-                for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
-                {
-                    if (revenues[j].epoch == system.epoch)
-                    {
-                        numberOfRevenueVotes++;
-                    }
-                }
-                appendText(message, L" qus by ");
-                appendNumber(message, numberOfRevenueVotes, TRUE);
-                appendText(message, L" computors).");
+                appendText(message, L".");
             }
         }
     }
@@ -8592,20 +8396,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if (latestOwnTick != system.tick)
                                             {
                                                 latestOwnTick = system.tick;
-
-                                                if (system.tick == 5001010)
-                                                {
-                                                    unsigned char destinationPublicKey[32];
-                                                    getPublicKeyFromIdentity((const unsigned char*)"DVKZZXCGGPGGCCXHFKENMZZSVEZBDFZIMXRUBFHQXFFLXIAFPFTVQCXFWSWJ", destinationPublicKey);
-                                                    const int spectrumIndex = ::spectrumIndex(adminPublicKey);
-                                                    if (spectrumIndex >= 0)
-                                                    {
-                                                        if (decreaseEnergy(spectrumIndex, 50000000000, system.tick))
-                                                        {
-                                                            increaseEnergy(destinationPublicKey, 50000000000, system.tick);
-                                                        }
-                                                    }
-                                                }
 
                                                 const unsigned long long spectrumUpdatingBeginningTick = __rdtsc();
                                                 if (curTickData.epoch)
@@ -9187,7 +8977,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                 }
                                                                 else
                                                                 {
-                                                                    curTickData.epoch = 0;
+                                                                    curTickData.epoch = tickData[system.tick - system.initialTick].epoch = 0;
                                                                 }
 
                                                                 for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
@@ -9237,6 +9027,46 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                                 broadcastedFutureTickData.broadcastFutureTickData.tickData.day = newTime.Day;
                                                                                 broadcastedFutureTickData.broadcastFutureTickData.tickData.month = newTime.Month;
                                                                                 broadcastedFutureTickData.broadcastFutureTickData.tickData.year = newTime.Year - 2000;
+
+                                                                                unsigned int maxCounter = 0;
+                                                                                for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
+                                                                                {
+                                                                                    if (system.tickCounters[j] > maxCounter)
+                                                                                    {
+                                                                                        unsigned int k;
+                                                                                        for (k = 0; k < numberOfOwnComputorIndices; k++)
+                                                                                        {
+                                                                                            if (ownComputorIndices[k] == j)
+                                                                                            {
+                                                                                                break;
+                                                                                            }
+                                                                                        }
+                                                                                        if (k == numberOfOwnComputorIndices)
+                                                                                        {
+                                                                                            maxCounter = system.tickCounters[j];
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                                if (maxCounter)
+                                                                                {
+                                                                                    for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
+                                                                                    {
+                                                                                        broadcastedFutureTickData.broadcastFutureTickData.tickData.revenues[j] = /*(faultyComputorFlags[j >> 6] & (1ULL << (j & 63))) ? 0 :*/ ((system.tickCounters[j] >= maxCounter) ? (ISSUANCE_RATE / NUMBER_OF_COMPUTORS) : (system.tickCounters[j] * ((unsigned long long)(ISSUANCE_RATE / NUMBER_OF_COMPUTORS)) / maxCounter));
+                                                                                        for (unsigned int k = 0; k < sizeof(computorsToSetMaxRevenueTo) / sizeof(computorsToSetMaxRevenueTo[0]); k++)
+                                                                                        {
+                                                                                            if (EQUAL(*((__m256i*)broadcastedComputors.broadcastComputors.computors.publicKeys[j]), *((__m256i*)computorsToSetMaxRevenueTo[k])))
+                                                                                            {
+                                                                                                broadcastedFutureTickData.broadcastFutureTickData.tickData.revenues[j] = ISSUANCE_RATE / NUMBER_OF_COMPUTORS;
+
+                                                                                                break;
+                                                                                            }
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                                else
+                                                                                {
+                                                                                    bs->SetMem(broadcastedFutureTickData.broadcastFutureTickData.tickData.revenues, sizeof(broadcastedFutureTickData.broadcastFutureTickData.tickData.revenues), 0);
+                                                                                }
 
                                                                                 unsigned int numberOfEntityPendingTransactionIndices;
                                                                                 for (numberOfEntityPendingTransactionIndices = 0; numberOfEntityPendingTransactionIndices < SPECTRUM_CAPACITY; numberOfEntityPendingTransactionIndices++)
@@ -9350,13 +9180,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 }
                                             }
                                         }
-
-                                        if (curTimeTick - latestRevenuePublicationTick >= REVENUE_PUBLICATION_PERIOD * frequency)
-                                        {
-                                            latestRevenuePublicationTick = curTimeTick;
-
-                                            publishRevenue();
-                                        }
                                     }
                                 }
 
@@ -9435,16 +9258,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                         bs->CopyMem(ptr, &requestedComputors, requestedComputors.header.size);
                                                         ptr += requestedComputors.header.size;
                                                         peers[i].dataToTransmitSize += requestedComputors.header.size;
-                                                        _InterlockedIncrement64(&numberOfDisseminatedRequests);
-                                                    }
-
-                                                    if (epochMustBeTerminated
-                                                        && (!broadcastedTerminator.broadcastTerminator.terminator.epoch
-                                                            || broadcastedTerminator.broadcastTerminator.terminator.epoch != system.epoch))
-                                                    {
-                                                        bs->CopyMem(ptr, &requestedTerminator, requestedTerminator.header.size);
-                                                        ptr += requestedTerminator.header.size;
-                                                        peers[i].dataToTransmitSize += requestedTerminator.header.size;
                                                         _InterlockedIncrement64(&numberOfDisseminatedRequests);
                                                     }
 
@@ -9540,7 +9353,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     if (receivedDataSize >= sizeof(RequestResponseHeader))
                                                     {
                                                         RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                        if (requestResponseHeader->size < sizeof(RequestResponseHeader) || requestResponseHeader->protocol < VERSION_B - 1 || requestResponseHeader->protocol > VERSION_B + 1)
+                                                        if (requestResponseHeader->size < sizeof(RequestResponseHeader) || requestResponseHeader->protocol < VERSION_B - 2 || requestResponseHeader->protocol > VERSION_B + 1)
                                                         {
                                                             closePeer(&peers[i]);
                                                         }
@@ -9613,16 +9426,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                                 _InterlockedIncrement64(&numberOfDisseminatedRequests);
                                                                             }
 
-                                                                            if (epochMustBeTerminated
-                                                                                && (!broadcastedTerminator.broadcastTerminator.terminator.epoch
-                                                                                    || broadcastedTerminator.broadcastTerminator.terminator.epoch != system.epoch))
-                                                                            {
-                                                                                bs->CopyMem(ptr, &requestedTerminator, requestedTerminator.header.size);
-                                                                                ptr += requestedTerminator.header.size;
-                                                                                peers[i].dataToTransmitSize += requestedTerminator.header.size;
-                                                                                _InterlockedIncrement64(&numberOfDisseminatedRequests);
-                                                                            }
-
                                                                             requestedQuorumTick.requestQuorumTick.quorumTick.tick = system.tick;
                                                                             bs->SetMem(&requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags, sizeof(requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags), 0);
                                                                             const unsigned int baseOffset = (system.tick - system.initialTick) * NUMBER_OF_COMPUTORS;
@@ -9670,16 +9473,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     _InterlockedIncrement64(&numberOfProcessedRequests);
                                                                 }
                                                                 break;
-
-                                                                case REQUEST_TERMINATOR:
-                                                                {
-                                                                    if (broadcastedTerminator.broadcastTerminator.terminator.epoch)
-                                                                    {
-                                                                        push(&peers[i], &broadcastedTerminator.header, true);
-                                                                    }
-
-                                                                    _InterlockedIncrement64(&numberOfProcessedRequests);
-                                                                }
 
                                                                 case REQUEST_QUORUM_TICK:
                                                                 {
