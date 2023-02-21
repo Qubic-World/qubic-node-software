@@ -25,7 +25,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 92
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -5171,14 +5171,14 @@ static BOOLEAN getSharedKey(const unsigned char* privateKey, const unsigned char
     return TRUE;
 }
 
-static void getIdentity(unsigned char* publicKey, CHAR16* identity)
+static void getIdentity(unsigned char* publicKey, CHAR16* identity, bool isLowerCase)
 {
     for (int i = 0; i < 4; i++)
     {
         unsigned long long publicKeyFragment = *((unsigned long long*)&publicKey[i << 3]);
         for (int j = 0; j < 14; j++)
         {
-            identity[i * 14 + j] = publicKeyFragment % 26 + L'A';
+            identity[i * 14 + j] = publicKeyFragment % 26 + (isLowerCase ? L'a' : L'A');
             publicKeyFragment /= 26;
         }
     }
@@ -5187,7 +5187,7 @@ static void getIdentity(unsigned char* publicKey, CHAR16* identity)
     identityBytesChecksum &= 0x3FFFF;
     for (int i = 0; i < 4; i++)
     {
-        identity[56 + i] = identityBytesChecksum % 26 + L'A';
+        identity[56 + i] = identityBytesChecksum % 26 + (isLowerCase ? L'a' : L'A');
         identityBytesChecksum /= 26;
     }
     identity[60] = 0;
@@ -5263,16 +5263,6 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
     return EQUAL(*((__m256i*)A), *((__m256i*)signature));
 }
 
-static void getHash(unsigned char* digest, CHAR16* hash)
-{
-    for (int i = 0; i < 32; i++)
-    {
-        hash[i << 1] = (digest[i] >> 4) + L'a';
-        hash[(i << 1) + 1] = (digest[i] & 0xF) + L'a';
-    }
-    hash[64] = 0;
-}
-
 
 
 ////////// Qubic \\\\\\\\\\
@@ -5289,6 +5279,7 @@ static void getHash(unsigned char* digest, CHAR16* hash)
 #define MAX_NUMBER_OF_PROCESSORS 1024
 #define MAX_NUMBER_OF_PUBLIC_PEERS 256
 #define MAX_NUMBER_OF_SMART_CONTRACTS 1024
+#define MAX_NUMBER_OF_NEW_SMART_CONTRACTS_PER_EPOCH 10
 #define MAX_TRANSACTION_SIZE 1024ULL
 #define NUMBER_OF_COMPUTORS 676
 #define MAX_NUMBER_OF_TICKS_PER_EPOCH (((((60 * 60 * 24 * 7) / TARGET_TICK_DURATION) + NUMBER_OF_COMPUTORS - 1) / NUMBER_OF_COMPUTORS) * NUMBER_OF_COMPUTORS)
@@ -5568,7 +5559,6 @@ typedef struct
     unsigned int fragmentIndex;
     unsigned char siblings[SPECTRUM_FRAGMENT_DEPTH][32];
     unsigned char entityFlags[SPECTRUM_FRAGMENT_LENGTH / 8];
-    Entity* initialSpectrumFragments;
 } RespondInitialSpectrumFragment;
 
 #define REQUEST_MINER_PUBLIC_KEY 21
@@ -5714,6 +5704,7 @@ static __m256i* initSpectrumDigests = NULL;
 static volatile char spectrumLock = 0;
 static Entity* spectrum = NULL;
 static unsigned int numberOfEntities = 0;
+static unsigned int numberOfTransactions = 0;
 static volatile char entityPendingTransactionsLock = 0;
 static unsigned char* entityPendingTransactions = NULL;
 static unsigned char* entityPendingTransactionDigests = NULL;
@@ -5722,7 +5713,8 @@ static unsigned long long spectrumDigestCalculationBeginningTick = 0;
 static volatile unsigned char spectrumDigestLevel = 0;
 static volatile short spectrumDigestLevelCompleteness = 0;
 static __m256i* spectrumDigests = NULL;
-static unsigned long long initialSpectrumFragmentFlags[SPECTRUM_CAPACITY / SPECTRUM_FRAGMENT_LENGTH / sizeof(unsigned long long) / 8];
+static __m256i targetInitialSpectrumRoot = ZERO;
+static unsigned long long initialSpectrumFragmentFlags[(SPECTRUM_CAPACITY / SPECTRUM_FRAGMENT_LENGTH) / (sizeof(unsigned long long) * 8)];
 static unsigned int numberOfFilledInitialSpectrumFragments;
 
 static volatile char tickLocks[NUMBER_OF_COMPUTORS];
@@ -5819,6 +5811,7 @@ static struct
 static struct
 {
     RequestResponseHeader header;
+
     unsigned char transactionBuffer[MAX_TRANSACTION_SIZE];
 } respondedTickTransaction;
 
@@ -5827,6 +5820,22 @@ static struct
     RequestResponseHeader header;
     RespondedEntity respondedEntity;
 } respondedEntity;
+
+static struct
+{
+    RequestResponseHeader header;
+    RequestInitialSpectrumFragment requestInitialSpectrumFragment;
+} requestedInitialSpectrumFragment;
+
+static struct
+{
+    RequestResponseHeader header;
+
+    unsigned int fragmentIndex;
+    unsigned char siblings[SPECTRUM_FRAGMENT_DEPTH][32];
+    unsigned char entityFlags[SPECTRUM_FRAGMENT_LENGTH / 8];
+    Entity initialSpectrumFragments[SPECTRUM_FRAGMENT_LENGTH];
+} respondedInitialSpectrumFragment;
 
 static bool disableLogging = false;
 static bool log1 = true, log2 = true, log3 = true;
@@ -7191,6 +7200,11 @@ static BOOLEAN initialize()
     respondedEntity.header.size = sizeof(respondedEntity);
     respondedEntity.header.protocol = VERSION_B;
     respondedEntity.header.type = RESPOND_ENTITY;
+    requestedInitialSpectrumFragment.header.size = sizeof(requestedInitialSpectrumFragment);
+    requestedInitialSpectrumFragment.header.protocol = VERSION_B;
+    requestedInitialSpectrumFragment.header.type = REQUEST_INITIAL_SPECTRUM_FRAGMENT;
+    respondedInitialSpectrumFragment.header.protocol = VERSION_B;
+    respondedInitialSpectrumFragment.header.type = RESPOND_INITIAL_SPECTRUM_FRAGMENT;
 
     EFI_STATUS status;
 
@@ -7394,6 +7408,7 @@ static BOOLEAN initialize()
 
         bs->SetMem(faultyComputorFlags, sizeof(faultyComputorFlags), 0);
 
+        bs->SetMem(initSpectrum, SPECTRUM_CAPACITY * sizeof(Entity), 0);
         SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 4] = system.epoch / 100 + L'0';
         SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 3] = (system.epoch % 100) / 10 + L'0';
         SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 2] = system.epoch % 10 + L'0';
@@ -7414,7 +7429,7 @@ static BOOLEAN initialize()
 
                 return FALSE;
             }
-            if (size != SPECTRUM_CAPACITY * sizeof(Entity))
+            if (size && size != SPECTRUM_CAPACITY * sizeof(Entity))
             {
                 logStatus(L"EFI_FILE_PROTOCOL.Read() reads invalid number of bytes", size, __LINE__);
 
@@ -7449,10 +7464,10 @@ static BOOLEAN initialize()
             appendText(message, L" microseconds).");
             log(message);
 
-            CHAR16 hash[64 + 1];
+            CHAR16 digest[60 + 1];
             unsigned long long totalAmount = 0;
 
-            getHash((unsigned char*)&initSpectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1], hash);
+            getIdentity((unsigned char*)&initSpectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1], digest, true);
 
             for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
             {
@@ -7467,7 +7482,7 @@ static BOOLEAN initialize()
             appendText(message, L" qus in ");
             appendNumber(message, numberOfEntities, TRUE);
             appendText(message, L" entities (digest = ");
-            appendText(message, hash);
+            appendText(message, digest);
             appendText(message, L").");
             log(message);
 
@@ -8012,6 +8027,15 @@ static void logInfo()
     {
         log(message);
     }
+
+    if (numberOfFilledInitialSpectrumFragments < SPECTRUM_CAPACITY / SPECTRUM_FRAGMENT_LENGTH)
+    {
+        setNumber(message, numberOfFilledInitialSpectrumFragments, TRUE);
+        appendText(message, L"/");
+        appendNumber(message, SPECTRUM_CAPACITY / SPECTRUM_FRAGMENT_LENGTH, TRUE);
+        appendText(message, L" initial spectrum fragments are known.");
+        log(message);
+    }
 }
 
 static void processKeyPresses()
@@ -8078,6 +8102,8 @@ static void processKeyPresses()
             appendNumber(message, earliestTick, TRUE);
             log(message);
 
+            CHAR16 digest[60 + 1];
+            getIdentity((unsigned char*)&spectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1], digest, true);
             unsigned int numberOfEntities = 0;
             unsigned long long totalAmount = 0;
             for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
@@ -8091,7 +8117,11 @@ static void processKeyPresses()
             setNumber(message, totalAmount, TRUE);
             appendText(message, L" qus in ");
             appendNumber(message, numberOfEntities, TRUE);
-            appendText(message, L" entities.");
+            appendText(message, L" entities (digest = ");
+            appendText(message, digest);
+            appendText(message, L"); ");
+            appendNumber(message, numberOfTransactions, TRUE);
+            appendText(message, L" transactions this epoch.");
             log(message);
         }
         break;
@@ -8114,27 +8144,27 @@ static void processKeyPresses()
         }
         break;
 
-        case 0x17:
-        {
-            state = 1;
-        }
-        break;
-
-        case 0x1E:
+        case 0x11:
         {
             log1 = !log1;
         }
         break;
 
-        case 0x1F:
+        case 0x12:
         {
             log2 = !log2;
         }
         break;
 
-        case 0x20:
+        case 0x13:
         {
             log3 = !log3;
+        }
+        break;
+
+        case 0x17:
+        {
+            state = 1;
         }
         break;
 
@@ -8187,7 +8217,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
         {
             if (!EQUAL(*((__m256i*)computingSeeds[i]), ZERO))
             {
-                getIdentity(computingPublicKeys[i], message);
+                getIdentity(computingPublicKeys[i], message, false);
                 appendText(message, L" = ");
                 long long amount = 0;
                 const int spectrumIndex = ::spectrumIndex(computingPublicKeys[i]);
@@ -8205,7 +8235,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
         {
             if (!EQUAL(*((__m256i*)miningSeeds[i]), ZERO))
             {
-                getIdentity(miningPublicKeys[i], message);
+                getIdentity(miningPublicKeys[i], message, false);
                 appendText(message, L" = ");
                 long long amount = 0;
                 const int spectrumIndex = ::spectrumIndex(miningPublicKeys[i]);
@@ -8423,6 +8453,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     {
                                                                         entityPendingTransactionIndices[spectrumIndex] = 1;
 
+                                                                        numberOfTransactions++;
                                                                         if (decreaseEnergy(spectrumIndex, transaction->amount, system.tick))
                                                                         {
                                                                             increaseEnergy(transaction->destinationPublicKey, transaction->amount, system.tick);
