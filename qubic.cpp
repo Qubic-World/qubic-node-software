@@ -25,7 +25,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 92
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -7976,15 +7976,15 @@ static void logInfo()
             appendNumber(message, ((ownComputorIndices[i] + NUMBER_OF_COMPUTORS) - system.tick % NUMBER_OF_COMPUTORS) % NUMBER_OF_COMPUTORS, FALSE);
             if (!i)
             {
-                appendText(message, L" ticks]");
+                appendText(message, L" ticks");
             }
             if (i < (unsigned int)(numberOfOwnComputorIndices - 1))
             {
-                appendText(message, L"+");
+                appendText(message, L"]+");
             }
             else
             {
-                appendText(message, L".");
+                appendText(message, L"].");
             }
         }
     }
@@ -8082,10 +8082,10 @@ static void processKeyPresses()
             unsigned long long totalAmount = 0;
             for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
             {
-                if (initSpectrum[i].incomingAmount - initSpectrum[i].outgoingAmount)
+                if (spectrum[i].incomingAmount - spectrum[i].outgoingAmount)
                 {
                     numberOfEntities++;
-                    totalAmount += initSpectrum[i].incomingAmount - initSpectrum[i].outgoingAmount;
+                    totalAmount += spectrum[i].incomingAmount - spectrum[i].outgoingAmount;
                 }
             }
             setNumber(message, totalAmount, TRUE);
@@ -8873,6 +8873,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                         bs->SetMem(counters, sizeof(counters), 0);
 
                                                         unsigned int numberOfUniqueTickEssenceDigests = 0;
+                                                        unsigned int numberOfEmptyTickEssences = 0;
 
                                                         TickEssence tickEssence;
                                                         *((__m256i*)tickEssence.spectrumDigest) = *((__m256i*)etalonTick.saltedSpectrumDigest);
@@ -8930,6 +8931,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                             *((__m256i*)tickEssence.prevComputerDigest) = *((__m256i*)tick->prevComputerDigest);
                                                                             *((__m256i*)tickEssence.digestOfTransactions) = *((__m256i*)tick->digestOfTransactions);
                                                                             *((__m256i*)tickEssence.nextTickDigestOfTransactions) = EQUAL(*((__m256i*)tick->varStruct.nextTick.zero), ZERO) ? *((__m256i*)tick->varStruct.nextTick.digestOfTransactions) : ZERO;
+                                                                            if (EQUAL(*((__m256i*)tickEssence.nextTickDigestOfTransactions), ZERO))
+                                                                            {
+                                                                                numberOfEmptyTickEssences++;
+                                                                            }
                                                                             KangarooTwelve((unsigned char*)&tickEssence, sizeof(TickEssence), (unsigned char*)&tickEssenceDigests[i], 32);
                                                                             if (EQUAL(tickEssenceDigests[i], etalonTickEssenceDigest))
                                                                             {
@@ -9150,8 +9155,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     }
                                                                     else
                                                                     {
-                                                                        if (uniqueTickEssenceDigestCounters[mostPopularUniqueTickEssenceDigestIndex] + (NUMBER_OF_COMPUTORS - totalUniqueTickEssenceDigestCounter) < QUORUM
-                                                                            && EQUAL(*((__m256i*)triggerSignature), ZERO))
+                                                                        if (EQUAL(*((__m256i*)triggerSignature), ZERO)
+                                                                            && (numberOfEmptyTickEssences > NUMBER_OF_COMPUTORS - QUORUM || uniqueTickEssenceDigestCounters[mostPopularUniqueTickEssenceDigestIndex] + (NUMBER_OF_COMPUTORS - totalUniqueTickEssenceDigestCounter) < QUORUM))
                                                                         {
                                                                             for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
                                                                             {
