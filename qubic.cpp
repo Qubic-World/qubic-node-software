@@ -24,8 +24,8 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 93
-#define VERSION_C 0
+#define VERSION_B 94
+#define VERSION_C 1
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -7436,6 +7436,41 @@ static BOOLEAN initialize()
                 return FALSE;
             }
 
+            {
+                bs->CopyMem(spectrum, initSpectrum, SPECTRUM_CAPACITY * sizeof(Entity));
+
+                unsigned long long totalAmount = 0;
+
+                for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
+                {
+                    if (initSpectrum[i].incomingAmount - initSpectrum[i].outgoingAmount)
+                    {
+                        totalAmount += initSpectrum[i].incomingAmount - initSpectrum[i].outgoingAmount;
+                    }
+                }
+
+                int adminSpectrumIndex = spectrumIndex(adminPublicKey);
+                for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
+                {
+                    if (initSpectrum[i].incomingAmount - initSpectrum[i].outgoingAmount
+                        && i != adminSpectrumIndex)
+                    {
+                        initSpectrum[i].incomingAmount = initSpectrum[i].incomingAmount + (initSpectrum[i].incomingAmount * 10) / 58;
+                        initSpectrum[i].outgoingAmount = initSpectrum[i].outgoingAmount + (initSpectrum[i].outgoingAmount * 10) / 58;
+                    }
+                }
+
+                totalAmount = 0;
+                for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
+                {
+                    if (initSpectrum[i].incomingAmount - initSpectrum[i].outgoingAmount)
+                    {
+                        totalAmount += initSpectrum[i].incomingAmount - initSpectrum[i].outgoingAmount;
+                    }
+                }
+                initSpectrum[adminSpectrumIndex].incomingAmount += (45000000000000LL - totalAmount);
+            }
+
             bs->CopyMem(spectrum, initSpectrum, SPECTRUM_CAPACITY * sizeof(Entity));
 
             const unsigned long long beginningTick = __rdtsc();
@@ -9389,7 +9424,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     if (receivedDataSize >= sizeof(RequestResponseHeader))
                                                     {
                                                         RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                        if (requestResponseHeader->size < sizeof(RequestResponseHeader) || requestResponseHeader->protocol < VERSION_B || requestResponseHeader->protocol > VERSION_B + 1)
+                                                        if (requestResponseHeader->size < sizeof(RequestResponseHeader) || requestResponseHeader->protocol < VERSION_B - 1 || requestResponseHeader->protocol > VERSION_B + 1)
                                                         {
                                                             closePeer(&peers[i]);
                                                         }
