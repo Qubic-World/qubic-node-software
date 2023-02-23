@@ -1,6 +1,5 @@
 ////////// Private Settings \\\\\\\\\\
 
-#define NUMBER_OF_COMPUTING_PROCESSORS 1
 #define AVX512 0
 
 // Do NOT share the data of "Private Settings" section with anybody!!!
@@ -24,8 +23,8 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 94
-#define VERSION_C 1
+#define VERSION_B 95
+#define VERSION_C 0
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -5749,7 +5748,7 @@ static unsigned int numberOfPublicPeers = 0;
 static PublicPeer publicPeers[MAX_NUMBER_OF_PUBLIC_PEERS];
 static unsigned long long totalRatingOfPublicPeers = 0;
 
-static EFI_EVENT computorEvents[NUMBER_OF_COMPUTING_PROCESSORS];
+static EFI_EVENT computorEvents[/*NUMBER_OF_COMPUTING_PROCESSORS*/1];
 
 static unsigned long long miningData[65536];
 static unsigned int validationNeuronLinks[NUMBER_OF_NEURONS][2];
@@ -6474,7 +6473,7 @@ static void requestProcessor(void* ProcedureArgument)
                                     else
                                     {
                                         KangarooTwelve((unsigned char*)&request->tick.tick, sizeof(request->tick.tick), digest, sizeof(digest));
-                                        if (!verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->tick.tick % NUMBER_OF_COMPUTORS], digest, request->tick.varStruct.trigger.signature)
+                                        if (!verify(broadcastedComputors.broadcastComputors.computors.publicKeys[(request->tick.tick + 1) % NUMBER_OF_COMPUTORS], digest, request->tick.varStruct.trigger.signature)
                                             && !verify(adminPublicKey, digest, request->tick.varStruct.trigger.signature))
                                         {
                                             isFaulty = true;
@@ -6490,7 +6489,7 @@ static void requestProcessor(void* ProcedureArgument)
                                     else
                                     {
                                         KangarooTwelve((unsigned char*)&request->tick.tick, sizeof(request->tick.tick), digest, sizeof(digest));
-                                        if (!verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->tick.tick % NUMBER_OF_COMPUTORS], digest, request->tick.varStruct.trigger.signature)
+                                        if (!verify(broadcastedComputors.broadcastComputors.computors.publicKeys[(request->tick.tick + 1) % NUMBER_OF_COMPUTORS], digest, request->tick.varStruct.trigger.signature)
                                             && !verify(adminPublicKey, digest, request->tick.varStruct.trigger.signature))
                                         {
                                             isFaulty = true;
@@ -6504,7 +6503,7 @@ static void requestProcessor(void* ProcedureArgument)
                             if (!EQUAL(*((__m256i*)request->tick.varStruct.nextTick.zero), ZERO))
                             {
                                 KangarooTwelve((unsigned char*)&request->tick.tick, sizeof(request->tick.tick), digest, sizeof(digest));
-                                if (!verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->tick.tick % NUMBER_OF_COMPUTORS], digest, request->tick.varStruct.trigger.signature)
+                                if (!verify(broadcastedComputors.broadcastComputors.computors.publicKeys[(request->tick.tick + 1) % NUMBER_OF_COMPUTORS], digest, request->tick.varStruct.trigger.signature)
                                     && !verify(adminPublicKey, digest, request->tick.varStruct.trigger.signature))
                                 {
                                     isFaulty = true;
@@ -6864,13 +6863,16 @@ static void computorProcessor(void* ProcedureArgument)
 
         case 1:
         {
-            constexpr unsigned int worksetLength = SPECTRUM_CAPACITY / NUMBER_OF_COMPUTING_PROCESSORS;
-            for (unsigned int i = computingProcessorIndex * worksetLength; i < (computingProcessorIndex == (NUMBER_OF_COMPUTING_PROCESSORS - 1) ? SPECTRUM_CAPACITY : (computingProcessorIndex + 1) * worksetLength); i++)
+            constexpr unsigned int worksetLength = SPECTRUM_CAPACITY / /*NUMBER_OF_COMPUTING_PROCESSORS*/1;
+            for (unsigned int i = computingProcessorIndex * worksetLength; i < (computingProcessorIndex == (/*NUMBER_OF_COMPUTING_PROCESSORS*/1 - 1) ? SPECTRUM_CAPACITY : (computingProcessorIndex + 1) * worksetLength); i++)
             {
-                KangarooTwelve64To32((unsigned char*)&spectrum[i], (unsigned char*)&spectrumDigests[i]);
+                if (spectrum[i].latestIncomingTransferTick == system.tick || spectrum[i].latestOutgoingTransferTick == system.tick)
+                {
+                    KangarooTwelve64To32((unsigned char*)&spectrum[i], (unsigned char*)&spectrumDigests[i]);
+                }
             }
 
-            if (_InterlockedIncrement16(&spectrumDigestLevelCompleteness) == NUMBER_OF_COMPUTING_PROCESSORS)
+            if (_InterlockedIncrement16(&spectrumDigestLevelCompleteness) == /*NUMBER_OF_COMPUTING_PROCESSORS*/1)
             {
                 spectrumDigestLevelCompleteness = 0;
                 ::spectrumDigestLevel = 2;
@@ -6903,7 +6905,7 @@ static void computorProcessor(void* ProcedureArgument)
             const unsigned int numberOfLeafPairs = SPECTRUM_CAPACITY >> (spectrumDigestLevel - 1);
             if (computingProcessorIndex < numberOfLeafPairs)
             {
-                const unsigned int numberOfFragments = (numberOfLeafPairs >= NUMBER_OF_COMPUTING_PROCESSORS ? NUMBER_OF_COMPUTING_PROCESSORS : numberOfLeafPairs);
+                const unsigned int numberOfFragments = (numberOfLeafPairs >= /*NUMBER_OF_COMPUTING_PROCESSORS*/1 ? /*NUMBER_OF_COMPUTING_PROCESSORS*/1 : numberOfLeafPairs);
                 const unsigned int worksetLength = numberOfLeafPairs / numberOfFragments;
                 for (unsigned int i = computingProcessorIndex * worksetLength; i < (computingProcessorIndex == (numberOfFragments - 1) ? numberOfLeafPairs : (computingProcessorIndex + 1) * worksetLength); i++)
                 {
@@ -6914,7 +6916,7 @@ static void computorProcessor(void* ProcedureArgument)
             spectrumDigestInputOffset = spectrumDigestOutputOffset;
             spectrumDigestOutputOffset += numberOfLeafPairs;
 
-            if (_InterlockedIncrement16(&spectrumDigestLevelCompleteness) == NUMBER_OF_COMPUTING_PROCESSORS)
+            if (_InterlockedIncrement16(&spectrumDigestLevelCompleteness) == /*NUMBER_OF_COMPUTING_PROCESSORS*/1)
             {
                 spectrumDigestLevelCompleteness = 0;
                 ::spectrumDigestLevel++;
@@ -7389,7 +7391,7 @@ static BOOLEAN initialize()
                 system.version = VERSION_B;
                 if (system.epoch == 45)
                 {
-                    system.initialTick = system.tick = 5010000;
+                    system.initialTick = system.tick = 5020000;
                 }
                 else
                 {
@@ -7436,41 +7438,6 @@ static BOOLEAN initialize()
                 return FALSE;
             }
 
-            {
-                bs->CopyMem(spectrum, initSpectrum, SPECTRUM_CAPACITY * sizeof(Entity));
-
-                unsigned long long totalAmount = 0;
-
-                for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
-                {
-                    if (initSpectrum[i].incomingAmount - initSpectrum[i].outgoingAmount)
-                    {
-                        totalAmount += initSpectrum[i].incomingAmount - initSpectrum[i].outgoingAmount;
-                    }
-                }
-
-                int adminSpectrumIndex = spectrumIndex(adminPublicKey);
-                for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
-                {
-                    if (initSpectrum[i].incomingAmount - initSpectrum[i].outgoingAmount
-                        && i != adminSpectrumIndex)
-                    {
-                        initSpectrum[i].incomingAmount = initSpectrum[i].incomingAmount + (initSpectrum[i].incomingAmount * 10) / 58;
-                        initSpectrum[i].outgoingAmount = initSpectrum[i].outgoingAmount + (initSpectrum[i].outgoingAmount * 10) / 58;
-                    }
-                }
-
-                totalAmount = 0;
-                for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
-                {
-                    if (initSpectrum[i].incomingAmount - initSpectrum[i].outgoingAmount)
-                    {
-                        totalAmount += initSpectrum[i].incomingAmount - initSpectrum[i].outgoingAmount;
-                    }
-                }
-                initSpectrum[adminSpectrumIndex].incomingAmount += (45000000000000LL - totalAmount);
-            }
-
             bs->CopyMem(spectrum, initSpectrum, SPECTRUM_CAPACITY * sizeof(Entity));
 
             const unsigned long long beginningTick = __rdtsc();
@@ -7498,6 +7465,8 @@ static BOOLEAN initialize()
             appendNumber(message, (__rdtsc() - beginningTick) * 1000000 / frequency, TRUE);
             appendText(message, L" microseconds).");
             log(message);
+
+            bs->CopyMem(spectrumDigests, initSpectrumDigests, (SPECTRUM_CAPACITY * 2 - 1) * 32ULL);
 
             CHAR16 digest[60 + 1];
             unsigned long long totalAmount = 0;
@@ -7785,6 +7754,31 @@ static void terminateEpoch()
     }
     increaseEnergy(adminPublicKey, adminRevenue, system.tick);
 
+    ACQUIRE(spectrumLock);
+    bs->CopyMem(initSpectrum, spectrum, SPECTRUM_CAPACITY * sizeof(Entity));
+    bs->SetMem(spectrum, SPECTRUM_CAPACITY * sizeof(Entity), 0);
+    for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
+    {
+        if (initSpectrum[i].incomingAmount - initSpectrum[i].outgoingAmount)
+        {
+            unsigned int index = (*((unsigned int*)initSpectrum[i].publicKey)) & (SPECTRUM_CAPACITY - 1);
+
+        iteration:
+            if (EQUAL(*((__m256i*)spectrum[index].publicKey), ZERO))
+            {
+                bs->CopyMem(&spectrum[index], &initSpectrum[i], sizeof(Entity));
+            }
+            else
+            {
+                index = (index + 1) & (SPECTRUM_CAPACITY - 1);
+
+                goto iteration;
+            }
+        }
+    }
+    bs->CopyMem(initSpectrum, spectrum, SPECTRUM_CAPACITY * sizeof(Entity));
+    RELEASE(spectrumLock);
+
     system.epoch++;
     system.initialTick = system.tick;
     bs->SetMem(system.tickCounters, sizeof(system.tickCounters), 0);
@@ -7982,9 +7976,9 @@ static void logInfo()
     prevNumberOfTransmittedBytes = numberOfTransmittedBytes;
 
     setText(message, L"1+");
-    appendNumber(message, NUMBER_OF_COMPUTING_PROCESSORS, TRUE);
+    appendNumber(message, /*NUMBER_OF_COMPUTING_PROCESSORS*/1, TRUE);
     appendText(message, L"+");
-    appendNumber(message, numberOfProcessors - NUMBER_OF_COMPUTING_PROCESSORS, TRUE);
+    appendNumber(message, numberOfProcessors - /*NUMBER_OF_COMPUTING_PROCESSORS*/1, TRUE);
 
     appendText(message, L" | Tick = ");
     unsigned long long tickDuration = (tickTicks[sizeof(tickTicks) / sizeof(tickTicks[0]) - 1] - tickTicks[0]) / (sizeof(tickTicks) / sizeof(tickTicks[0]) - 1);
@@ -8056,8 +8050,8 @@ static void logInfo()
     appendNumber(message, numberOfNextTickTransactions, TRUE);
     appendText(message, L" next tick transactions are known. ");
     appendNumber(message, numberOfPendingTransactions, TRUE);
-    appendText(message, L" pending transactions. The tick leader is ");
-    appendText(message, ticks[(system.tick - system.initialTick) * NUMBER_OF_COMPUTORS + system.tick % NUMBER_OF_COMPUTORS].epoch == system.epoch ? L"ON-line." : L"OFF-line.");
+    appendText(message, L" pending transactions. The tick arbiter is ");
+    appendText(message, ticks[(system.tick - system.initialTick) * NUMBER_OF_COMPUTORS + (system.tick + 1) % NUMBER_OF_COMPUTORS].epoch == system.epoch ? L"ON-line." : L"OFF-line.");
     if (log3)
     {
         log(message);
@@ -8348,7 +8342,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
         }
         if (numberOfProcessors)
         {
-            if (numberOfProcessors < NUMBER_OF_COMPUTING_PROCESSORS + 1)
+            if (numberOfProcessors < /*NUMBER_OF_COMPUTING_PROCESSORS*/1 + 1)
             {
                 setText(message, L"[NUMBER_OF_COMPUTING_PROCESSORS] cannot be greater than ");
                 appendNumber(message, numberOfProcessors - 1, FALSE);
@@ -8363,9 +8357,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                 appendText(message, L" processors are being used.");
                 log(message);
 
-                for (unsigned int i = 0; i < numberOfProcessors - NUMBER_OF_COMPUTING_PROCESSORS; i++)
+                for (unsigned int i = 0; i < numberOfProcessors - /*NUMBER_OF_COMPUTING_PROCESSORS*/1; i++)
                 {
-                    if (status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, emptyCallback, NULL, &processors[NUMBER_OF_COMPUTING_PROCESSORS + i].event))
+                    if (status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, emptyCallback, NULL, &processors[/*NUMBER_OF_COMPUTING_PROCESSORS*/1 + i].event))
                     {
                         logStatus(L"EFI_BOOT_SERVICES.CreateEvent() fails", status, __LINE__);
 
@@ -8375,7 +8369,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                     }
                     else
                     {
-                        mpServicesProtocol->StartupThisAP(mpServicesProtocol, requestProcessor, processors[NUMBER_OF_COMPUTING_PROCESSORS + i].number, processors[NUMBER_OF_COMPUTING_PROCESSORS + i].event, 0, &processors[NUMBER_OF_COMPUTING_PROCESSORS + i], NULL);
+                        mpServicesProtocol->StartupThisAP(mpServicesProtocol, requestProcessor, processors[/*NUMBER_OF_COMPUTING_PROCESSORS*/1 + i].number, processors[/*NUMBER_OF_COMPUTING_PROCESSORS*/1 + i].event, 0, &processors[/*NUMBER_OF_COMPUTING_PROCESSORS*/1 + i], NULL);
                     }
                 }
                 if (numberOfProcessors)
@@ -8389,7 +8383,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                         const EFI_HANDLE peerChildHandle = getTcp4Protocol(NULL, PORT, &peerTcp4Protocol);
                         if (peerChildHandle)
                         {
-                            for (unsigned int i = 0; i < NUMBER_OF_COMPUTING_PROCESSORS; i++)
+                            for (unsigned int i = 0; i < /*NUMBER_OF_COMPUTING_PROCESSORS*/1; i++)
                             {
                                 if (status = bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, shutdownCallback, NULL, &computorEvents[i]))
                                 {
@@ -8515,7 +8509,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 spectrumDigestLevel = 1;
                                             }
 
-                                            if (spectrumDigestLevel == SPECTRUM_DEPTH + 2 && spectrumDigestLevelCompleteness == NUMBER_OF_COMPUTING_PROCESSORS)
+                                            if (spectrumDigestLevel == SPECTRUM_DEPTH + 2 && spectrumDigestLevelCompleteness == /*NUMBER_OF_COMPUTING_PROCESSORS*/1)
                                             {
                                                 spectrumDigestLevelCompleteness = 0;
                                                 spectrumDigestLevel = 0;
@@ -9226,7 +9220,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                         {
                                                                             for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
                                                                             {
-                                                                                if (system.tick % NUMBER_OF_COMPUTORS == ownComputorIndices[i])
+                                                                                if ((system.tick + 1) % NUMBER_OF_COMPUTORS == ownComputorIndices[i])
                                                                                 {
                                                                                     unsigned char digest[32];
                                                                                     KangarooTwelve((unsigned char*)&system.tick, sizeof(system.tick), digest, sizeof(digest));
@@ -9424,7 +9418,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     if (receivedDataSize >= sizeof(RequestResponseHeader))
                                                     {
                                                         RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                        if (requestResponseHeader->size < sizeof(RequestResponseHeader) || requestResponseHeader->protocol < VERSION_B - 1 || requestResponseHeader->protocol > VERSION_B + 1)
+                                                        if (requestResponseHeader->size < sizeof(RequestResponseHeader) || requestResponseHeader->protocol < VERSION_B - 2 || requestResponseHeader->protocol > VERSION_B + 1)
                                                         {
                                                             closePeer(&peers[i]);
                                                         }
@@ -9849,7 +9843,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                                 case REQUEST_ENTITY:
                                                                 {
-                                                                    if (!spectrumDigestLevel)
+                                                                    if (!spectrumDigestLevel && !epochMustBeTerminated)
                                                                     {
                                                                         RequestedEntity* request = (RequestedEntity*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader));
                                                                         *((__m256i*)respondedEntity.respondedEntity.entity.publicKey) = *((__m256i*)request->publicKey);
@@ -9900,9 +9894,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                         || (requestResponseHeader->type == BROADCAST_TICK && ((BroadcastTick*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader)))->tick.tick == system.tick)
                                                                         || (requestResponseHeader->type == BROADCAST_FUTURE_TICK_DATA && ((BroadcastFutureTickData*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader)))->tickData.tick == system.tick + 1))
                                                                     {
-                                                                        for (unsigned int j = 0; j < numberOfProcessors - NUMBER_OF_COMPUTING_PROCESSORS; j++)
+                                                                        for (unsigned int j = 0; j < numberOfProcessors - /*NUMBER_OF_COMPUTING_PROCESSORS*/1; j++)
                                                                         {
-                                                                            if (!_InterlockedCompareExchange8(&processors[NUMBER_OF_COMPUTING_PROCESSORS + j].inputState, 1, 0))
+                                                                            if (!_InterlockedCompareExchange8(&processors[/*NUMBER_OF_COMPUTING_PROCESSORS*/1 + j].inputState, 1, 0))
                                                                             {
                                                                                 dejavu0[saltedId >> 6] |= (1ULL << (saltedId & 63));
                                                                                 if (!(--dejavuSwapCounter))
@@ -9913,10 +9907,10 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                                     dejavuSwapCounter = DEJAVU_SWAP_LIMIT;
                                                                                 }
 
-                                                                                processors[NUMBER_OF_COMPUTING_PROCESSORS + j].requestPeer = &peers[i];
-                                                                                bs->CopyMem(processors[NUMBER_OF_COMPUTING_PROCESSORS + j].requestBuffer, peers[i].receiveBuffer, requestResponseHeader->size);
+                                                                                processors[/*NUMBER_OF_COMPUTING_PROCESSORS*/1 + j].requestPeer = &peers[i];
+                                                                                bs->CopyMem(processors[/*NUMBER_OF_COMPUTING_PROCESSORS*/1 + j].requestBuffer, peers[i].receiveBuffer, requestResponseHeader->size);
 
-                                                                                _InterlockedCompareExchange8(&processors[NUMBER_OF_COMPUTING_PROCESSORS + j].inputState, 2, 1);
+                                                                                _InterlockedCompareExchange8(&processors[/*NUMBER_OF_COMPUTING_PROCESSORS*/1 + j].inputState, 2, 1);
 
                                                                                 bs->CopyMem(peers[i].receiveBuffer, ((char*)peers[i].receiveBuffer) + requestResponseHeader->size, receivedDataSize -= requestResponseHeader->size);
                                                                                 peers[i].receiveData.FragmentTable[0].FragmentBuffer = ((char*)peers[i].receiveBuffer) + receivedDataSize;
@@ -10150,9 +10144,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     }
                                 }
 
-                                for (unsigned int i = 0; i < numberOfProcessors - NUMBER_OF_COMPUTING_PROCESSORS; i++)
+                                for (unsigned int i = 0; i < numberOfProcessors - /*NUMBER_OF_COMPUTING_PROCESSORS*/1; i++)
                                 {
-                                    Processor* processor = &processors[NUMBER_OF_COMPUTING_PROCESSORS + i];
+                                    Processor* processor = &processors[/*NUMBER_OF_COMPUTING_PROCESSORS*/1 + i];
                                     if (_InterlockedCompareExchange8(&processor->outputState, 3, 2) == 2)
                                     {
                                         RequestResponseHeader* responseHeader = (RequestResponseHeader*)processor->responseBuffer;
