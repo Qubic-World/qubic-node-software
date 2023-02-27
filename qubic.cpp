@@ -24,7 +24,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 95
-#define VERSION_C 2
+#define VERSION_C 3
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -96,15 +96,12 @@ static unsigned short SPECTRUM_FILE_NAME[] = L"spectrum.???";
 #define EFI_CONNECTION_RESET (105 | 0x8000000000000000)
 #define EFI_CONNECTION_REFUSED (106 | 0x8000000000000000)
 
-#define EFI_DEBUG_SUPPORT_PROTOCOL_GUID {0x2755590C, 0x6F3C, 0x42FA, {0x9E, 0xA4, 0xA3, 0xBA, 0x54, 0x3C, 0xDA, 0x25}}
 #define EFI_FILE_SYSTEM_INFO_ID {0x09576e93, 0x6d3f, 0x11d2, {0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b}}
 #define EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID {0x9042a9de, 0x23dc, 0x4a38, {0x96, 0xfb, 0x7a, 0xde, 0xd0, 0x80, 0x51, 0x6a}}
 #define EFI_MP_SERVICES_PROTOCOL_GUID {0x3fdda605, 0xa76e, 0x4f46, {0xad, 0x29, 0x12, 0xf4, 0x53, 0x1b, 0x3d, 0x08}}
 #define EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID {0x0964e5b22, 0x6459, 0x11d2, {0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b}}
 #define EFI_TCP4_PROTOCOL_GUID {0x65530BC7, 0xA359, 0x410f, {0xB0, 0x10, 0x5A, 0xAD, 0xC7, 0xEC, 0x2B, 0x62}}
 #define EFI_TCP4_SERVICE_BINDING_PROTOCOL_GUID {0x00720665, 0x67EB, 0x4a99, {0xBA, 0xF7, 0xD3, 0xC3, 0x3A, 0x1C, 0x7C, 0xC9}}
-#define EFI_UDP4_PROTOCOL_GUID {0x3ad9df29, 0x4501, 0x478d, {0xb1, 0xf8, 0x7f, 0x7f, 0xe7, 0x0e, 0x50, 0xf3}}
-#define EFI_UDP4_SERVICE_BINDING_PROTOCOL_GUID {0x83f01464, 0x99bd, 0x45e5, {0xb3, 0x83, 0xaf, 0x63, 0x05, 0xd8, 0xe9, 0xe6}}
 
 #define EFI_FILE_MODE_READ 0x0000000000000001
 #define EFI_FILE_MODE_WRITE 0x0000000000000002
@@ -181,19 +178,6 @@ typedef enum
 
 typedef enum
 {
-    IsaIa32 = 0x014C,
-    IsaX64 = 0x8664,
-    IsaIpf = 0x0200,
-    IsaEbc = 0x0EBC,
-    IsaArm = 0x1C2,
-    IsaAArch64 = 0xAA64,
-    IsaRISCV32 = 0x5032,
-    IsaRISCV64 = 0x5064,
-    IsaRISCV128 = 0x5128
-} EFI_INSTRUCTION_SET_ARCHITECTURE;
-
-typedef enum
-{
 	EFI_NATIVE_INTERFACE
 } EFI_INTERFACE_TYPE;
 
@@ -254,300 +238,6 @@ typedef enum
 	TimerPeriodic,
 	TimerRelative
 } EFI_TIMER_DELAY;
-
-typedef struct
-{
-    unsigned long long R0, R1, R2, R3, R4, R5, R6, R7;
-    unsigned long long Flags;
-    unsigned long long ControlFlags;
-    unsigned long long Ip;
-} EFI_SYSTEM_CONTEXT_EBC;
-
-typedef struct
-{
-    unsigned short Fcw;
-    unsigned short Fsw;
-    unsigned short Ftw;
-    unsigned short Opcode;
-    unsigned int Eip;
-    unsigned short Cs;
-    unsigned short Reserved1;
-    unsigned int DataOffset;
-    unsigned short Ds;
-    unsigned char Reserved2[10];
-    unsigned char St0Mm0[10], Reserved3[6];
-    unsigned char St1Mm1[10], Reserved4[6];
-    unsigned char St2Mm2[10], Reserved5[6];
-    unsigned char St3Mm3[10], Reserved6[6];
-    unsigned char St4Mm4[10], Reserved7[6];
-    unsigned char St5Mm5[10], Reserved8[6];
-    unsigned char St6Mm6[10], Reserved9[6];
-    unsigned char St7Mm7[10], Reserved10[6];
-    unsigned char Xmm0[16];
-    unsigned char Xmm1[16];
-    unsigned char Xmm2[16];
-    unsigned char Xmm3[16];
-    unsigned char Xmm4[16];
-    unsigned char Xmm5[16];
-    unsigned char Xmm6[16];
-    unsigned char Xmm7[16];
-    unsigned char Reserved11[14 * 16];
-} EFI_FX_SAVE_STATE_IA32;
-
-typedef struct
-{
-    unsigned int ExceptionData;
-    EFI_FX_SAVE_STATE_IA32 FxSaveState;
-    unsigned int Dr0, Dr1, Dr2, Dr3, Dr6, Dr7;
-    unsigned int Cr0, Cr1 /* Reserved */, Cr2, Cr3, Cr4;
-    unsigned int Eflags;
-    unsigned int Ldtr, Tr;
-    unsigned int Gdtr[2], Idtr[2];
-    unsigned int Eip;
-    unsigned int Gs, Fs, Es, Ds, Cs, Ss;
-    unsigned int Edi, Esi, Ebp, Esp, Ebx, Edx, Ecx, Eax;
-} EFI_SYSTEM_CONTEXT_IA32;
-
-typedef struct
-{
-    unsigned short Fcw;
-    unsigned short Fsw;
-    unsigned short Ftw;
-    unsigned short Opcode;
-    unsigned long long Rip;
-    unsigned long long DataOffset;
-    unsigned char Reserved1[8];
-    unsigned char St0Mm0[10], Reserved2[6];
-    unsigned char St1Mm1[10], Reserved3[6];
-    unsigned char St2Mm2[10], Reserved4[6];
-    unsigned char St3Mm3[10], Reserved5[6];
-    unsigned char St4Mm4[10], Reserved6[6];
-    unsigned char St5Mm5[10], Reserved7[6];
-    unsigned char St6Mm6[10], Reserved8[6];
-    unsigned char St7Mm7[10], Reserved9[6];
-    unsigned char Xmm0[16];
-    unsigned char Xmm1[16];
-    unsigned char Xmm2[16];
-    unsigned char Xmm3[16];
-    unsigned char Xmm4[16];
-    unsigned char Xmm5[16];
-    unsigned char Xmm6[16];
-    unsigned char Xmm7[16];
-    unsigned char Reserved11[14 * 16];
-} EFI_FX_SAVE_STATE_X64;
-
-typedef struct
-{
-    unsigned long long ExceptionData;
-    EFI_FX_SAVE_STATE_X64 FxSaveState;
-    unsigned long long Dr0, Dr1, Dr2, Dr3, Dr6, Dr7;
-    unsigned long long Cr0, Cr1 /* Reserved */, Cr2, Cr3, Cr4, Cr8;
-    unsigned long long Rflags;
-    unsigned long long Ldtr, Tr;
-    unsigned long long Gdtr[2], Idtr[2];
-    unsigned long long Rip;
-    unsigned long long Gs, Fs, Es, Ds, Cs, Ss;
-    unsigned long long Rdi, Rsi, Rbp, Rsp, Rbx, Rdx, Rcx, Rax;
-    unsigned long long R8, R9, R10, R11, R12, R13, R14, R15;
-} EFI_SYSTEM_CONTEXT_X64;
-
-typedef struct
-{
-    unsigned long long Reserved;
-
-    unsigned long long R1, R2, R3, R4, R5, R6, R7, R8, R9, R10,
-        R11, R12, R13, R14, R15, R16, R17, R18, R19, R20,
-        R21, R22, R23, R24, R25, R26, R27, R28, R29, R30,
-        R31;
-
-    unsigned long long F2[2], F3[2], F4[2], F5[2], F6[2],
-        F7[2], F8[2], F9[2], F10[2], F11[2],
-        F12[2], F13[2], F14[2], F15[2], F16[2],
-        F17[2], F18[2], F19[2], F20[2], F21[2],
-        F22[2], F23[2], F24[2], F25[2], F26[2],
-        F27[2], F28[2], F29[2], F30[2], F31[2];
-
-    unsigned long long Pr;
-
-    unsigned long long B0, B1, B2, B3, B4, B5, B6, B7;
-
-    // application registers
-    unsigned long long ArRsc, ArBsp, ArBspstore, ArRnat;
-    unsigned long long ArFcr;
-    unsigned long long ArEflag, ArCsd, ArSsd, ArCflg;
-    unsigned long long ArFsr, ArFir, ArFdr;
-    unsigned long long ArCcv;
-    unsigned long long ArUnat;
-    unsigned long long ArFpsr;
-    unsigned long long ArPfs, ArLc, ArEc;
-
-    // control registers
-    unsigned long long CrDcr, CrItm, CrIva, CrPta, CrIpsr, CrIsr;
-    unsigned long long CrIip, CrIfa, CrItir, CrIipa, CrIfs, CrIim;
-    unsigned long long CrIha;
-
-    // debug registers
-    unsigned long long Dbr0, Dbr1, Dbr2, Dbr3, Dbr4, Dbr5, Dbr6, Dbr7;
-    unsigned long long Ibr0, Ibr1, Ibr2, Ibr3, Ibr4, Ibr5, Ibr6, Ibr7;
-
-    // virtual registers
-    unsigned long long IntNat; // nat bits for R1-R31
-
-} EFI_SYSTEM_CONTEXT_IPF;
-
-typedef struct
-{
-    unsigned int R0;
-    unsigned int R1;
-    unsigned int R2;
-    unsigned int R3;
-    unsigned int R4;
-    unsigned int R5;
-    unsigned int R6;
-    unsigned int R7;
-    unsigned int R8;
-    unsigned int R9;
-    unsigned int R10;
-    unsigned int R11;
-    unsigned int R12;
-    unsigned int SP;
-    unsigned int LR;
-    unsigned int PC;
-    unsigned int CPSR;
-    unsigned int DFSR;
-    unsigned int DFAR;
-    unsigned int IFSR;
-} EFI_SYSTEM_CONTEXT_ARM;
-
-typedef struct
-{
-    // General Purpose Registers
-    unsigned long long X0;
-    unsigned long long X1;
-    unsigned long long X2;
-    unsigned long long X3;
-    unsigned long long X4;
-    unsigned long long X5;
-    unsigned long long X6;
-    unsigned long long X7;
-    unsigned long long X8;
-    unsigned long long X9;
-    unsigned long long X10;
-    unsigned long long X11;
-    unsigned long long X12;
-    unsigned long long X13;
-    unsigned long long X14;
-    unsigned long long X15;
-    unsigned long long X16;
-    unsigned long long X17;
-    unsigned long long X18;
-    unsigned long long X19;
-    unsigned long long X20;
-    unsigned long long X21;
-    unsigned long long X22;
-    unsigned long long X23;
-    unsigned long long X24;
-    unsigned long long X25;
-    unsigned long long X26;
-    unsigned long long X27;
-    unsigned long long X28;
-    unsigned long long FP; // x29 - Frame Pointer
-    unsigned long long LR; // x30 - Link Register
-    unsigned long long SP; // x31 - Stack Pointer
-    // FP/SIMD Registers
-    unsigned long long V0[2];
-    unsigned long long V1[2];
-    unsigned long long V2[2];
-    unsigned long long V3[2];
-    unsigned long long V4[2];
-    unsigned long long V5[2];
-    unsigned long long V6[2];
-    unsigned long long V7[2];
-    unsigned long long V8[2];
-    unsigned long long V9[2];
-    unsigned long long V10[2];
-    unsigned long long V11[2];
-    unsigned long long V12[2];
-    unsigned long long V13[2];
-    unsigned long long V14[2];
-    unsigned long long V15[2];
-    unsigned long long V16[2];
-    unsigned long long V17[2];
-    unsigned long long V18[2];
-    unsigned long long V19[2];
-    unsigned long long V20[2];
-    unsigned long long V21[2];
-    unsigned long long V22[2];
-    unsigned long long V23[2];
-    unsigned long long V24[2];
-    unsigned long long V25[2];
-    unsigned long long V26[2];
-    unsigned long long V27[2];
-    unsigned long long V28[2];
-    unsigned long long V29[2];
-    unsigned long long V30[2];
-    unsigned long long V31[2];
-    unsigned long long ELR; // Exception Link Register
-    unsigned long long SPSR; // Saved Processor Status Register
-    unsigned long long FPSR; // Floating Point Status Register
-    unsigned long long ESR; // Exception syndrome register
-    unsigned long long FAR; // Fault Address Register
-} EFI_SYSTEM_CONTEXT_AARCH64;
-
-typedef struct
-{
-    // Integer registers
-    unsigned int Zero, Ra, Sp, Gp, Tp, T0, T1, T2;
-    unsigned int S0FP, S1, A0, A1, A2, A3, A4, A5, A6, A7;
-    unsigned int S2, S3, S4, S5, S6, S7, S8, S9, S10, S11;
-    unsigned int T3, T4, T5, T6;
-    // Floating registers for F, D and Q Standard Extensions
-    __m128i Ft0, Ft1, Ft2, Ft3, Ft4, Ft5, Ft6, Ft7;
-    __m128i Fs0, Fs1, Fa0, Fa1, Fa2, Fa3, Fa4, Fa5, Fa6, Fa7;
-    __m128i Fs2, Fs3, Fs4, Fs5, Fs6, Fs7, Fs8, Fs9, Fs10, Fs11;
-    __m128i Ft8, Ft9, Ft10, Ft11;
-} EFI_SYSTEM_CONTEXT_RISCV32;
-
-typedef struct
-{
-    // Integer registers
-    unsigned long long Zero, Ra, Sp, Gp, Tp, T0, T1, T2;
-    unsigned long long S0FP, S1, A0, A1, A2, A3, A4, A5, A6, A7;
-    unsigned long long S2, S3, S4, S5, S6, S7, S8, S9, S10, S11;
-    unsigned long long T3, T4, T5, T6;
-    // Floating registers for F, D and Q Standard Extensions
-    __m128i Ft0, Ft1, Ft2, Ft3, Ft4, Ft5, Ft6, Ft7;
-    __m128i Fs0, Fs1, Fa0, Fa1, Fa2, Fa3, Fa4, Fa5, Fa6, Fa7;
-    __m128i Fs2, Fs3, Fs4, Fs5, Fs6, Fs7, Fs8, Fs9, Fs10, Fs11;
-    __m128i Ft8, Ft9, Ft10, Ft11;
-} EFI_SYSTEM_CONTEXT_RISCV64;
-
-typedef struct
-{
-    // Integer registers
-    __m128i Zero, Ra, Sp, Gp, Tp, T0, T1, T2;
-    __m128i S0FP, S1, A0, A1, A2, A3, A4, A5, A6, A7;
-    __m128i S2, S3, S4, S5, S6, S7, S8, S9, S10, S11;
-    __m128i T3, T4, T5, T6;
-    // Floating registers for F, D and Q Standard Extensions
-    __m128i Ft0, Ft1, Ft2, Ft3, Ft4, Ft5, Ft6, Ft7;
-    __m128i Fs0, Fs1, Fa0, Fa1, Fa2, Fa3, Fa4, Fa5, Fa6, Fa7;
-    __m128i Fs2, Fs3, Fs4, Fs5, Fs6, Fs7, Fs8, Fs9, Fs10, Fs11;
-    __m128i Ft8, Ft9, Ft10, Ft11;
-} EFI_SYSTEM_CONTEXT_RISCV128;
-
-typedef union
-{
-    EFI_SYSTEM_CONTEXT_EBC* SystemContextEbc;
-    EFI_SYSTEM_CONTEXT_IA32* SystemContextIa32;
-    EFI_SYSTEM_CONTEXT_X64* SystemContextX64;
-    EFI_SYSTEM_CONTEXT_IPF* SystemContextIpf;
-    EFI_SYSTEM_CONTEXT_ARM* SystemContextArm;
-    EFI_SYSTEM_CONTEXT_AARCH64* SystemContextAArch64;
-    EFI_SYSTEM_CONTEXT_RISCV32* SystemContextRiscV32;
-    EFI_SYSTEM_CONTEXT_RISCV64* SystemContextRiscV64;
-    EFI_SYSTEM_CONTEXT_RISCV128* SystemContextRiscv128;
-} EFI_SYSTEM_CONTEXT;
 
 typedef struct
 {
@@ -882,69 +572,6 @@ typedef struct
 
 typedef struct
 {
-    EFI_IPv4_ADDRESS SourceAddress;
-    unsigned short SourcePort;
-    EFI_IPv4_ADDRESS DestinationAddress;
-    unsigned short DestinationPort;
-} EFI_UDP4_SESSION_DATA;
-
-typedef struct
-{
-    unsigned int FragmentLength;
-    void* FragmentBuffer;
-} EFI_UDP4_FRAGMENT_DATA;
-
-typedef struct
-{
-    EFI_TIME TimeStamp;
-    EFI_EVENT RecycleSignal;
-    EFI_UDP4_SESSION_DATA UdpSession;
-    unsigned int DataLength;
-    unsigned int FragmentCount;
-    EFI_UDP4_FRAGMENT_DATA FragmentTable[1];
-} EFI_UDP4_RECEIVE_DATA;
-
-typedef struct
-{
-    EFI_UDP4_SESSION_DATA* UdpSessionData;
-    EFI_IPv4_ADDRESS* GatewayAddress;
-    unsigned int DataLength;
-    unsigned int FragmentCount;
-    EFI_UDP4_FRAGMENT_DATA FragmentTable[1];
-} EFI_UDP4_TRANSMIT_DATA;
-
-typedef struct
-{
-    EFI_EVENT Event;
-    EFI_STATUS Status;
-    union
-    {
-        EFI_UDP4_RECEIVE_DATA* RxData;
-        EFI_UDP4_TRANSMIT_DATA* TxData;
-    } Packet;
-} EFI_UDP4_COMPLETION_TOKEN;
-
-typedef struct
-{
-    BOOLEAN AcceptBroadcast;
-    BOOLEAN AcceptPromiscuous;
-    BOOLEAN AcceptAnyPort;
-    BOOLEAN AllowDuplicatePort;
-    unsigned char TypeOfService;
-    unsigned char TimeToLive;
-    BOOLEAN DoNotFragment;
-    unsigned int ReceiveTimeout;
-    unsigned int TransmitTimeout;
-    BOOLEAN UseDefaultAddress;
-    EFI_IPv4_ADDRESS StationAddress;
-    EFI_IPv4_ADDRESS SubnetMask;
-    unsigned short StationPort;
-    EFI_IPv4_ADDRESS RemoteAddress;
-    unsigned short RemotePort;
-} EFI_UDP4_CONFIG_DATA;
-
-typedef struct
-{
 	int MaxMode;
 	int Mode;
 	int Attribute;
@@ -967,7 +594,6 @@ typedef EFI_STATUS(__cdecl *EFI_CREATE_EVENT) (IN unsigned int Type, IN EFI_TPL 
 typedef EFI_STATUS(__cdecl *EFI_CREATE_EVENT_EX) (IN unsigned int Type, IN EFI_TPL NotifyTpl, IN void* NotifyFunction OPTIONAL, IN const void* NotifyContext OPTIONAL, IN const EFI_GUID* EventGroup OPTIONAL, OUT EFI_EVENT* Event);
 typedef EFI_STATUS(__cdecl *EFI_DISCONNECT_CONTROLLER) (IN EFI_HANDLE ControllerHandle, IN EFI_HANDLE DriverImageHandle OPTIONAL, IN EFI_HANDLE ChildHandle OPTIONAL);
 typedef void(__cdecl *EFI_EVENT_NOTIFY) (IN EFI_EVENT Event, IN void* Context);
-typedef void(*EFI_EXCEPTION_CALLBACK) (IN long long ExceptionType, IN OUT EFI_SYSTEM_CONTEXT SystemContext);
 typedef EFI_STATUS(__cdecl *EFI_EXIT) (IN EFI_HANDLE ImageHandle, IN EFI_STATUS ExitStatus, IN unsigned long long ExitDataSize, IN CHAR16* ExitData OPTIONAL);
 typedef EFI_STATUS(__cdecl *EFI_EXIT_BOOT_SERVICES) (IN EFI_HANDLE ImageHandle, IN unsigned long long MapKey);
 typedef EFI_STATUS(__cdecl *EFI_FILE_CLOSE) (IN void* This);
@@ -986,7 +612,6 @@ typedef EFI_STATUS(__cdecl *EFI_FILE_WRITE) (IN void* This, IN OUT unsigned long
 typedef EFI_STATUS(__cdecl *EFI_FILE_WRITE_EX) (IN void* This, IN OUT EFI_FILE_IO_TOKEN* Token);
 typedef EFI_STATUS(__cdecl *EFI_FREE_PAGES) (IN EFI_PHYSICAL_ADDRESS Memory, IN unsigned long long Pages);
 typedef EFI_STATUS(__cdecl *EFI_FREE_POOL) (IN void* Buffer);
-typedef EFI_STATUS(__cdecl *EFI_GET_MAXIMUM_PROCESSOR_INDEX) (IN void* This, OUT unsigned long long* MaxProcessorIndex);
 typedef EFI_STATUS(__cdecl *EFI_GET_MEMORY_MAP) (IN OUT unsigned long long* MemoryMapSize, OUT EFI_MEMORY_DESCRIPTOR* MemoryMap, OUT unsigned long long* MapKey, OUT unsigned long long* DescriptorSize, OUT unsigned int* DescriptorVersion);
 typedef EFI_STATUS(__cdecl *EFI_GET_NEXT_HIGH_MONO_COUNT) (OUT unsigned int* HighCount);
 typedef EFI_STATUS(__cdecl *EFI_GET_NEXT_MONOTONIC_COUNT) (OUT unsigned long long* Count);
@@ -1006,7 +631,6 @@ typedef EFI_STATUS(__cdecl *EFI_INPUT_RESET) (IN void* This, IN BOOLEAN Extended
 typedef EFI_STATUS(__cdecl *EFI_INSTALL_CONFIGURATION_TABLE) (IN EFI_GUID* Guid, IN void* Table);
 typedef EFI_STATUS(__cdecl *EFI_INSTALL_MULTIPLE_PROTOCOL_INTERFACES) (IN OUT EFI_HANDLE* Handle, ...);
 typedef EFI_STATUS(__cdecl *EFI_INSTALL_PROTOCOL_INTERFACE) (IN OUT EFI_HANDLE* Handle, IN EFI_GUID* Protocol, IN EFI_INTERFACE_TYPE InterfaceType, IN void* Interface);
-typedef EFI_STATUS(__cdecl *EFI_INVALIDATE_INSTRUCTION_CACHE) (IN void* This, IN unsigned long long ProcessorIndex, IN void* Start, IN unsigned long long Length);
 typedef EFI_STATUS(__cdecl *EFI_LOCATE_DEVICE_PATH) (IN EFI_GUID* Protocol, IN OUT EFI_DEVICE_PATH_PROTOCOL** DevicePath, OUT EFI_HANDLE* Device);
 typedef EFI_STATUS(__cdecl *EFI_LOCATE_HANDLE) (IN EFI_LOCATE_SEARCH_TYPE SearchType, IN EFI_GUID* Protocol OPTIONAL, IN void* SearchKey OPTIONAL, IN OUT unsigned long long* BufferSize, OUT EFI_HANDLE* Buffer);
 typedef EFI_STATUS(__cdecl *EFI_LOCATE_HANDLE_BUFFER) (IN EFI_LOCATE_SEARCH_TYPE SearchType, IN EFI_GUID* Protocol OPTIONAL, IN void* SearchKey OPTIONAL, OUT unsigned long long* NoHandles, OUT EFI_HANDLE** Buffer);
@@ -1020,13 +644,10 @@ typedef EFI_STATUS(__cdecl *EFI_MP_SERVICES_SWITCH_BSP) (IN void* This, IN unsig
 typedef EFI_STATUS(__cdecl *EFI_MP_SERVICES_WHOAMI) (IN void* This, OUT unsigned long long* ProcessorNumber);
 typedef EFI_STATUS(__cdecl *EFI_OPEN_PROTOCOL) (IN EFI_HANDLE Handle, IN EFI_GUID* Protocol, OUT void** Interface OPTIONAL, IN EFI_HANDLE AgentHandle, IN EFI_HANDLE ControllerHandle, IN unsigned int Attributes);
 typedef EFI_STATUS(__cdecl *EFI_OPEN_PROTOCOL_INFORMATION) (IN EFI_HANDLE Handle, IN EFI_GUID* Protocol, OUT EFI_OPEN_PROTOCOL_INFORMATION_ENTRY** EntryBuffer, OUT unsigned long long* EntryCount);
-typedef void(*EFI_PERIODIC_CALLBACK) (IN OUT EFI_SYSTEM_CONTEXT SystemContext);
 typedef EFI_STATUS(__cdecl *EFI_PROTOCOLS_PER_HANDLE) (IN EFI_HANDLE Handle, OUT EFI_GUID*** ProtocolBuffer, OUT unsigned long long* ProtocolBufferCount);
 typedef EFI_STATUS(__cdecl *EFI_QUERY_CAPSULE_CAPABILITIES) (IN EFI_CAPSULE_HEADER** CapsuleHeaderArray, IN unsigned long long CapsuleCount, OUT unsigned long long* MaximumCapsuleSize, OUT EFI_RESET_TYPE* ResetType);
 typedef EFI_STATUS(__cdecl *EFI_QUERY_VARIABLE_INFO) (IN unsigned int Attributes, OUT unsigned long long* MaximumVariableStorageSize, OUT unsigned long long* RemainingVariableStorageSize, OUT unsigned long long* MaximumVariableSize);
 typedef EFI_TPL(__cdecl *EFI_RAISE_TPL) (IN EFI_TPL NewTpl);
-typedef EFI_STATUS(__cdecl *EFI_REGISTER_EXCEPTION_CALLBACK) (IN void* This, IN unsigned long long ProcessorIndex, IN EFI_EXCEPTION_CALLBACK ExceptionCallback, IN long long ExceptionType);
-typedef EFI_STATUS(__cdecl *EFI_REGISTER_PERIODIC_CALLBACK) (IN void* This, IN unsigned long long ProcessorIndex, IN EFI_PERIODIC_CALLBACK PeriodicCallback);
 typedef EFI_STATUS(__cdecl *EFI_REGISTER_PROTOCOL_NOTIFY) (IN EFI_GUID* Protocol, IN EFI_EVENT Event, OUT void** Registration);
 typedef EFI_STATUS(__cdecl *EFI_REINSTALL_PROTOCOL_INTERFACE) (IN EFI_HANDLE Handle, IN EFI_GUID* Protocol, IN void* OldInterface, IN void* NewInterface);
 typedef EFI_STATUS(__cdecl *EFI_RESET_SYSTEM) (IN EFI_RESET_TYPE ResetType, IN EFI_STATUS ResetStatus, IN unsigned long long DataSize, IN CHAR16* ResetData OPTIONAL);
@@ -1062,14 +683,6 @@ typedef EFI_STATUS(__cdecl *EFI_TEXT_SET_CURSOR_POSITION) (IN void* This, IN uns
 typedef EFI_STATUS(__cdecl *EFI_TEXT_SET_MODE) (IN void* This, IN unsigned long long ModeNumber);
 typedef EFI_STATUS(__cdecl *EFI_TEXT_STRING) (IN void* This, IN CHAR16* String);
 typedef EFI_STATUS(__cdecl *EFI_TEXT_TEST_STRING) (IN void* This, IN CHAR16* String);
-typedef EFI_STATUS(__cdecl *EFI_UDP4_CANCEL)(IN void* This, IN EFI_UDP4_COMPLETION_TOKEN* Token OPTIONAL);
-typedef EFI_STATUS(__cdecl *EFI_UDP4_CONFIGURE) (IN void* This, IN EFI_UDP4_CONFIG_DATA* UdpConfigData OPTIONAL);
-typedef EFI_STATUS(__cdecl *EFI_UDP4_GET_MODE_DATA) (IN void* This, OUT EFI_UDP4_CONFIG_DATA* Udp4ConfigData OPTIONAL, OUT EFI_IP4_MODE_DATA* Ip4ModeData OPTIONAL, OUT EFI_MANAGED_NETWORK_CONFIG_DATA* MnpConfigData OPTIONAL, OUT EFI_SIMPLE_NETWORK_MODE* SnpModeData OPTIONAL);
-typedef EFI_STATUS(__cdecl *EFI_UDP4_GROUPS) (IN void* This, IN BOOLEAN JoinFlag, IN EFI_IPv4_ADDRESS* MulticastAddress OPTIONAL);
-typedef EFI_STATUS(__cdecl *EFI_UDP4_POLL) (IN void* This);
-typedef EFI_STATUS(__cdecl *EFI_UDP4_RECEIVE) (IN void* This, IN EFI_UDP4_COMPLETION_TOKEN* Token);
-typedef EFI_STATUS(__cdecl *EFI_UDP4_ROUTES) (IN void* This, IN BOOLEAN DeleteRoute, IN EFI_IPv4_ADDRESS* SubnetAddress, IN EFI_IPv4_ADDRESS* SubnetMask, IN EFI_IPv4_ADDRESS* GatewayAddress);
-typedef EFI_STATUS(__cdecl *EFI_UDP4_TRANSMIT) (IN void* This, IN EFI_UDP4_COMPLETION_TOKEN* Token);
 typedef EFI_STATUS(__cdecl *EFI_UNINSTALL_MULTIPLE_PROTOCOL_INTERFACES) (IN EFI_HANDLE Handle, ...);
 typedef EFI_STATUS(__cdecl *EFI_UNINSTALL_PROTOCOL_INTERFACE) (IN EFI_HANDLE Handle, IN EFI_GUID* Protocol, IN void* Interface);
 typedef EFI_STATUS(__cdecl *EFI_UPDATE_CAPSULE) (IN EFI_CAPSULE_HEADER** CapsuleHeaderArray, IN unsigned long long CapsuleCount, IN EFI_PHYSICAL_ADDRESS ScatterGatherList OPTIONAL);
@@ -1129,15 +742,6 @@ typedef struct
 	EFI_GUID VendorGuid;
 	void* VendorTable;
 } EFI_CONFIGURATION_TABLE;
-
-typedef struct
-{
-    EFI_INSTRUCTION_SET_ARCHITECTURE Isa;
-    EFI_GET_MAXIMUM_PROCESSOR_INDEX GetMaximumProcessorIndex;
-    EFI_REGISTER_PERIODIC_CALLBACK RegisterPeriodicCallback;
-    EFI_REGISTER_EXCEPTION_CALLBACK RegisterExceptionCallback;
-    EFI_INVALIDATE_INSTRUCTION_CACHE InvalidateInstructionCache;
-} EFI_DEBUG_SUPPORT_PROTOCOL;
 
 typedef struct
 {
@@ -1259,18 +863,6 @@ typedef struct
 	EFI_TCP4_CANCEL Cancel;
 	EFI_TCP4_POLL Poll;
 } EFI_TCP4_PROTOCOL;
-
-typedef struct
-{
-    EFI_UDP4_GET_MODE_DATA GetModeData;
-    EFI_UDP4_CONFIGURE Configure;
-    EFI_UDP4_GROUPS Groups;
-    EFI_UDP4_ROUTES Routes;
-    EFI_UDP4_TRANSMIT Transmit;
-    EFI_UDP4_RECEIVE Receive;
-    EFI_UDP4_CANCEL Cancel;
-    EFI_UDP4_POLL Poll;
-} EFI_UDP4_PROTOCOL;
 
 static EFI_HANDLE ih;
 static EFI_SYSTEM_TABLE* st;
@@ -5275,6 +4867,8 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define ISSUANCE_RATE 1000000000000LL
 #define MAX_AMOUNT (ISSUANCE_RATE * 1000ULL)
 #define MAX_INPUT_SIZE (MAX_TRANSACTION_SIZE - (sizeof(Transaction) + SIGNATURE_SIZE))
+#define MAX_NUMBER_OF_MINERS 1000000
+#define NUMBER_OF_MINER_SOLUTION_FLAGS 1073741824 // Must be 2^N
 #define MAX_NUMBER_OF_PROCESSORS 1024
 #define MAX_NUMBER_OF_PUBLIC_PEERS 256
 #define MAX_NUMBER_OF_SMART_CONTRACTS 1024
@@ -5746,6 +5340,11 @@ static struct Solution
 } solutions[MAX_NUMBER_OF_SOLUTIONS];
 static unsigned int numberOfSolutions = 0;
 static int solutionPublicationTicks[MAX_NUMBER_OF_SOLUTIONS];
+
+static unsigned long long* minerSolutionFlags = NULL;
+static unsigned char minerPublicKeys[MAX_NUMBER_OF_MINERS][32];
+static unsigned int minerScores[MAX_NUMBER_OF_MINERS];
+static unsigned int numberOfMiners = NUMBER_OF_COMPUTORS;
 
 static struct
 {
@@ -6362,6 +5961,8 @@ static void requestProcessor(void* ProcedureArgument)
                             numberOfOwnComputorIndices = 0;
                             for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
                             {
+                                *((__m256i*)minerPublicKeys[i]) = *((__m256i*)request->computors.publicKeys[i]);
+
                                 for (unsigned int j = 0; j < sizeof(computingSeeds) / sizeof(computingSeeds[0]); j++)
                                 {
                                     if (EQUAL(*((__m256i*)request->computors.publicKeys[i]), *((__m256i*)computingPublicKeys[j])))
@@ -7044,7 +6645,6 @@ static BOOLEAN initialize()
         getPublicKeyFromIdentity(computorsToSetMaxRevenueTo[i], computorsToSetMaxRevenueTo[i]);
     }
 
-
     int cpuInfo[4];
     __cpuid(cpuInfo, 0x15);
     if (cpuInfo[2] == 0 || cpuInfo[1] == 0 || cpuInfo[0] == 0)
@@ -7432,6 +7032,16 @@ static BOOLEAN initialize()
 
         bs->SetMem(solutionPublicationTicks, sizeof(solutionPublicationTicks), 0);
 
+        if (status = bs->AllocatePool(EfiRuntimeServicesData, NUMBER_OF_MINER_SOLUTION_FLAGS / 8, (void**)&minerSolutionFlags))
+        {
+            logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status, __LINE__);
+
+            return FALSE;
+        }
+        bs->SetMem(minerSolutionFlags, NUMBER_OF_MINER_SOLUTION_FLAGS / 8, 0);
+
+        bs->SetMem(minerScores, sizeof(minerScores[0]) * NUMBER_OF_COMPUTORS, 0);
+
         if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SOLUTION_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, EFI_FILE_ARCHIVE))
         {
             logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status, __LINE__);
@@ -7574,6 +7184,11 @@ static void deinitialize()
     if (ticks)
     {
         bs->FreePool(ticks);
+    }
+
+    if (minerSolutionFlags)
+    {
+        bs->FreePool(minerSolutionFlags);
     }
 
     if (dejavu0)
@@ -8475,85 +8090,107 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                             && !transaction->inputType
                                                                             && EQUAL(*((__m256i*)transaction->destinationPublicKey), *((__m256i*)adminPublicKey)))
                                                                         {
-                                                                            for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
+                                                                            random(transaction->sourcePublicKey, ((unsigned char*)transaction) + sizeof(Transaction), (unsigned char*)validationNeuronLinks, sizeof(validationNeuronLinks));
+                                                                            for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
                                                                             {
-                                                                                if (EQUAL(*((__m256i*)transaction->sourcePublicKey), *((__m256i*)miningPublicKeys[i])))
-                                                                                {
-                                                                                    unsigned int j;
-                                                                                    for (j = 0; j < numberOfSolutions; j++)
-                                                                                    {
-                                                                                        if (EQUAL(*((__m256i*)(((unsigned char*)transaction) + sizeof(Transaction))), *((__m256i*)solutions[j].nonce))
-                                                                                            && EQUAL(*((__m256i*)transaction->sourcePublicKey), *((__m256i*)solutions[j].computorPublicKey)))
-                                                                                        {
-                                                                                            solutionPublicationTicks[j] = -1;
+                                                                                validationNeuronLinks[k][0] %= NUMBER_OF_NEURONS;
+                                                                                validationNeuronLinks[k][1] %= NUMBER_OF_NEURONS;
+                                                                            }
 
+                                                                            bs->SetMem(validationNeuronValues, sizeof(validationNeuronValues), 0xFF);
+
+                                                                            unsigned int limiter = sizeof(miningData) / sizeof(miningData[0]);
+                                                                            int outputLength = 0;
+                                                                            while (outputLength < (sizeof(miningData) << 3))
+                                                                            {
+                                                                                const unsigned int prevValue0 = validationNeuronValues[NUMBER_OF_NEURONS - 1];
+                                                                                const unsigned int prevValue1 = validationNeuronValues[NUMBER_OF_NEURONS - 2];
+
+                                                                                for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
+                                                                                {
+                                                                                    validationNeuronValues[k] = ~(validationNeuronValues[validationNeuronLinks[k][0]] & validationNeuronValues[validationNeuronLinks[k][1]]);
+                                                                                }
+
+                                                                                if (validationNeuronValues[NUMBER_OF_NEURONS - 1] != prevValue0
+                                                                                    && validationNeuronValues[NUMBER_OF_NEURONS - 2] == prevValue1)
+                                                                                {
+                                                                                    if (!((miningData[outputLength >> 6] >> (outputLength & 63)) & 1))
+                                                                                    {
+                                                                                        break;
+                                                                                    }
+
+                                                                                    outputLength++;
+                                                                                }
+                                                                                else
+                                                                                {
+                                                                                    if (validationNeuronValues[NUMBER_OF_NEURONS - 2] != prevValue1
+                                                                                        && validationNeuronValues[NUMBER_OF_NEURONS - 1] == prevValue0)
+                                                                                    {
+                                                                                        if ((miningData[outputLength >> 6] >> (outputLength & 63)) & 1)
+                                                                                        {
+                                                                                            break;
+                                                                                        }
+
+                                                                                        outputLength++;
+                                                                                    }
+                                                                                    else
+                                                                                    {
+                                                                                        if (!(--limiter))
+                                                                                        {
                                                                                             break;
                                                                                         }
                                                                                     }
-                                                                                    if (j == numberOfSolutions)
+                                                                                }
+                                                                            }
+
+                                                                            if (outputLength >= SOLUTION_THRESHOLD)
+                                                                            {
+                                                                                unsigned char data[32 + 32];
+                                                                                *((__m256i*)&data[0]) = *((__m256i*)transaction->sourcePublicKey);
+                                                                                *((__m256i*)&data[32]) = *((__m256i*)(((unsigned char*)transaction) + sizeof(Transaction)));
+
+                                                                                for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
+                                                                                {
+                                                                                    if (EQUAL(*((__m256i*)transaction->sourcePublicKey), *((__m256i*)miningPublicKeys[i])))
                                                                                     {
-                                                                                        random(transaction->sourcePublicKey, ((unsigned char*)transaction) + sizeof(Transaction), (unsigned char*)validationNeuronLinks, sizeof(validationNeuronLinks));
-                                                                                        for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
+                                                                                        unsigned int j;
+                                                                                        for (j = 0; j < numberOfSolutions; j++)
                                                                                         {
-                                                                                            validationNeuronLinks[k][0] %= NUMBER_OF_NEURONS;
-                                                                                            validationNeuronLinks[k][1] %= NUMBER_OF_NEURONS;
-                                                                                        }
-
-                                                                                        bs->SetMem(validationNeuronValues, sizeof(validationNeuronValues), 0xFF);
-
-                                                                                        unsigned int limiter = sizeof(miningData) / sizeof(miningData[0]);
-                                                                                        int outputLength = 0;
-                                                                                        while (outputLength < (sizeof(miningData) << 3))
-                                                                                        {
-                                                                                            const unsigned int prevValue0 = validationNeuronValues[NUMBER_OF_NEURONS - 1];
-                                                                                            const unsigned int prevValue1 = validationNeuronValues[NUMBER_OF_NEURONS - 2];
-
-                                                                                            for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
+                                                                                            if (EQUAL(*((__m256i*)(((unsigned char*)transaction) + sizeof(Transaction))), *((__m256i*)solutions[j].nonce))
+                                                                                                && EQUAL(*((__m256i*)transaction->sourcePublicKey), *((__m256i*)solutions[j].computorPublicKey)))
                                                                                             {
-                                                                                                validationNeuronValues[k] = ~(validationNeuronValues[validationNeuronLinks[k][0]] & validationNeuronValues[validationNeuronLinks[k][1]]);
-                                                                                            }
+                                                                                                solutionPublicationTicks[j] = -1;
 
-                                                                                            if (validationNeuronValues[NUMBER_OF_NEURONS - 1] != prevValue0
-                                                                                                && validationNeuronValues[NUMBER_OF_NEURONS - 2] == prevValue1)
-                                                                                            {
-                                                                                                if (!((miningData[outputLength >> 6] >> (outputLength & 63)) & 1))
-                                                                                                {
-                                                                                                    break;
-                                                                                                }
-
-                                                                                                outputLength++;
-                                                                                            }
-                                                                                            else
-                                                                                            {
-                                                                                                if (validationNeuronValues[NUMBER_OF_NEURONS - 2] != prevValue1
-                                                                                                    && validationNeuronValues[NUMBER_OF_NEURONS - 1] == prevValue0)
-                                                                                                {
-                                                                                                    if ((miningData[outputLength >> 6] >> (outputLength & 63)) & 1)
-                                                                                                    {
-                                                                                                        break;
-                                                                                                    }
-
-                                                                                                    outputLength++;
-                                                                                                }
-                                                                                                else
-                                                                                                {
-                                                                                                    if (!(--limiter))
-                                                                                                    {
-                                                                                                        break;
-                                                                                                    }
-                                                                                                }
+                                                                                                break;
                                                                                             }
                                                                                         }
-
-                                                                                        if (outputLength >= SOLUTION_THRESHOLD)
+                                                                                        if (j == numberOfSolutions
+                                                                                            && numberOfSolutions < MAX_NUMBER_OF_SOLUTIONS)
                                                                                         {
                                                                                             *((__m256i*)solutions[numberOfSolutions].computorPublicKey) = *((__m256i*)transaction->sourcePublicKey);
                                                                                             *((__m256i*)solutions[numberOfSolutions].nonce) = *((__m256i*)(((unsigned char*)transaction) + sizeof(Transaction)));
                                                                                             solutionPublicationTicks[numberOfSolutions++] = -1;
                                                                                         }
-                                                                                    }
 
-                                                                                    break;
+                                                                                        break;
+                                                                                    }
+                                                                                }
+
+                                                                                unsigned int i;
+                                                                                for (i = 0; i < numberOfMiners; i++)
+                                                                                {
+                                                                                    if (EQUAL(*((__m256i*)transaction->sourcePublicKey), *((__m256i*)minerPublicKeys[i])))
+                                                                                    {
+                                                                                        minerScores[i]++;
+
+                                                                                        break;
+                                                                                    }
+                                                                                }
+                                                                                if (i == numberOfMiners
+                                                                                    && numberOfMiners < MAX_NUMBER_OF_MINERS)
+                                                                                {
+                                                                                    *((__m256i*)minerPublicKeys[numberOfMiners]) = *((__m256i*)transaction->sourcePublicKey);
+                                                                                    minerScores[numberOfMiners++] = 1;
                                                                                 }
                                                                             }
                                                                         }
@@ -8624,9 +8261,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                         packet.transaction.inputSize = sizeof(packet.nonce);
 
                                                         unsigned char digest[32];
-                                                        packet.transaction.sourcePublicKey[0] ^= BROADCAST_RESOURCE_TESTING_SOLUTION;
+                                                        packet.transaction.sourcePublicKey[0] ^= BROADCAST_TRANSACTION;
                                                         KangarooTwelve((unsigned char*)&packet.transaction, sizeof(packet.transaction) + sizeof(packet.nonce), digest, sizeof(digest));
-                                                        packet.transaction.sourcePublicKey[0] ^= BROADCAST_RESOURCE_TESTING_SOLUTION;
+                                                        packet.transaction.sourcePublicKey[0] ^= BROADCAST_TRANSACTION;
                                                         sign(miningSubseeds[i], miningPublicKeys[i], digest, packet.signature);
 
                                                         for (j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
@@ -9286,11 +8923,81 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                                         const unsigned int transactionSize = sizeof(Transaction) + pendingTransaction->inputSize + SIGNATURE_SIZE;
                                                                                         if (nextTickTransactionOffset + transactionSize <= FIRST_TICK_TRANSACTION_OFFSET + (((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * NUMBER_OF_TRANSACTIONS_PER_TICK * MAX_TRANSACTION_SIZE / TRANSACTION_SPARSENESS))
                                                                                         {
-                                                                                            tickTransactionOffsets[pendingTransaction->tick - system.initialTick][j] = nextTickTransactionOffset;
-                                                                                            bs->CopyMem(&tickTransactions[nextTickTransactionOffset], (void*)pendingTransaction, transactionSize);
-                                                                                            *((__m256i*)broadcastedFutureTickData.broadcastFutureTickData.tickData.transactionDigests[j]) = *((__m256i*)&entityPendingTransactionDigests[entityPendingTransactionIndices[index] * 32ULL]);
-                                                                                            j++;
-                                                                                            nextTickTransactionOffset += transactionSize;
+                                                                                            bool ok;
+
+                                                                                            if (!pendingTransaction->amount
+                                                                                                && pendingTransaction->inputSize == 32
+                                                                                                && !pendingTransaction->inputType
+                                                                                                && EQUAL(*((__m256i*)pendingTransaction->destinationPublicKey), *((__m256i*)adminPublicKey)))
+                                                                                            {
+                                                                                                ::random((unsigned char*)pendingTransaction->sourcePublicKey, ((unsigned char*)pendingTransaction) + sizeof(Transaction), (unsigned char*)validationNeuronLinks, sizeof(validationNeuronLinks));
+                                                                                                for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
+                                                                                                {
+                                                                                                    validationNeuronLinks[k][0] %= NUMBER_OF_NEURONS;
+                                                                                                    validationNeuronLinks[k][1] %= NUMBER_OF_NEURONS;
+                                                                                                }
+
+                                                                                                bs->SetMem(validationNeuronValues, sizeof(validationNeuronValues), 0xFF);
+
+                                                                                                unsigned int limiter = sizeof(miningData) / sizeof(miningData[0]);
+                                                                                                int outputLength = 0;
+                                                                                                while (outputLength < (sizeof(miningData) << 3))
+                                                                                                {
+                                                                                                    const unsigned int prevValue0 = validationNeuronValues[NUMBER_OF_NEURONS - 1];
+                                                                                                    const unsigned int prevValue1 = validationNeuronValues[NUMBER_OF_NEURONS - 2];
+
+                                                                                                    for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
+                                                                                                    {
+                                                                                                        validationNeuronValues[k] = ~(validationNeuronValues[validationNeuronLinks[k][0]] & validationNeuronValues[validationNeuronLinks[k][1]]);
+                                                                                                    }
+
+                                                                                                    if (validationNeuronValues[NUMBER_OF_NEURONS - 1] != prevValue0
+                                                                                                        && validationNeuronValues[NUMBER_OF_NEURONS - 2] == prevValue1)
+                                                                                                    {
+                                                                                                        if (!((miningData[outputLength >> 6] >> (outputLength & 63)) & 1))
+                                                                                                        {
+                                                                                                            break;
+                                                                                                        }
+
+                                                                                                        outputLength++;
+                                                                                                    }
+                                                                                                    else
+                                                                                                    {
+                                                                                                        if (validationNeuronValues[NUMBER_OF_NEURONS - 2] != prevValue1
+                                                                                                            && validationNeuronValues[NUMBER_OF_NEURONS - 1] == prevValue0)
+                                                                                                        {
+                                                                                                            if ((miningData[outputLength >> 6] >> (outputLength & 63)) & 1)
+                                                                                                            {
+                                                                                                                break;
+                                                                                                            }
+
+                                                                                                            outputLength++;
+                                                                                                        }
+                                                                                                        else
+                                                                                                        {
+                                                                                                            if (!(--limiter))
+                                                                                                            {
+                                                                                                                break;
+                                                                                                            }
+                                                                                                        }
+                                                                                                    }
+                                                                                                }
+
+                                                                                                ok = (outputLength >= SOLUTION_THRESHOLD);
+                                                                                            }
+                                                                                            else
+                                                                                            {
+                                                                                                ok = true;
+                                                                                            }
+
+                                                                                            if (ok)
+                                                                                            {
+                                                                                                tickTransactionOffsets[pendingTransaction->tick - system.initialTick][j] = nextTickTransactionOffset;
+                                                                                                bs->CopyMem(&tickTransactions[nextTickTransactionOffset], (void*)pendingTransaction, transactionSize);
+                                                                                                *((__m256i*)broadcastedFutureTickData.broadcastFutureTickData.tickData.transactionDigests[j]) = *((__m256i*)&entityPendingTransactionDigests[entityPendingTransactionIndices[index] * 32ULL]);
+                                                                                                j++;
+                                                                                                nextTickTransactionOffset += transactionSize;
+                                                                                            }
                                                                                         }
                                                                                     }
 
@@ -9849,7 +9556,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                                     }
                                                                                 }
 
-                                                                                if (outputLength >= SOLUTION_THRESHOLD)
+                                                                                if (outputLength >= SOLUTION_THRESHOLD
+                                                                                    && numberOfSolutions < MAX_NUMBER_OF_SOLUTIONS)
                                                                                 {
                                                                                     *((__m256i*)solutions[numberOfSolutions].computorPublicKey) = *((__m256i*)request->computorPublicKey);
                                                                                     *((__m256i*)solutions[numberOfSolutions++].nonce) = *((__m256i*)request->nonce);
