@@ -23,13 +23,13 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 95
-#define VERSION_C 4
+#define VERSION_B 96
+#define VERSION_C 0
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
 static unsigned short SYSTEM_FILE_NAME[] = L"system";
-static unsigned short SOLUTION_FILE_NAME[] = L"solution.045";
+static unsigned short SOLUTION_FILE_NAME[] = L"solution.046";
 static unsigned short SPECTRUM_FILE_NAME[] = L"spectrum.???";
 
 #include <intrin.h>
@@ -4842,7 +4842,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define QUORUM (NUMBER_OF_COMPUTORS * 2 / 3 + 1)
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 90
 #define SIGNATURE_SIZE 64
-#define SOLUTION_THRESHOLD 26
+#define SOLUTION_THRESHOLD 25
 #define SPECTRUM_CAPACITY 0x1000000ULL // Must be 2^N
 #define SPECTRUM_DEPTH 24 // Is derived from SPECTRUM_CAPACITY (=N)
 #define SPECTRUM_FRAGMENT_LENGTH 256
@@ -4898,6 +4898,7 @@ typedef struct
     void* requestBuffer;
     void* responseBuffer;
     unsigned int saltedId;
+    bool isEvenCoreThread;
     volatile char state;
 } Processor;
 
@@ -5264,6 +5265,7 @@ static EFI_MP_SERVICES_PROTOCOL* mpServicesProtocol;
 static unsigned long long frequency;
 static unsigned int numberOfProcessors = 0;
 static Processor processors[MAX_NUMBER_OF_PROCESSORS];
+static unsigned long long processorLoadNumerator = 0, processorLoadDenominator = 0;
 static volatile long long numberOfProcessedRequests = 0, prevNumberOfProcessedRequests = 0;
 static volatile long long numberOfDiscardedRequests = 0, prevNumberOfDiscardedRequests = 0;
 static volatile long long numberOfDuplicateRequests = 0, prevNumberOfDuplicateRequests = 0;
@@ -6346,7 +6348,7 @@ static EFI_HANDLE getTcp4Protocol(const unsigned char* remoteAddress, const unsi
     }
 }
 
-static void computorProcessor(void*)
+static void hasherProcessor(void*)
 {
     enableAVX();
 
@@ -6841,7 +6843,7 @@ static BOOLEAN initialize()
                 {
                     bs->SetMem(&system, sizeof(system), 0);
 
-                    system.epoch = 45;
+                    system.epoch = 46;
                     system.epochBeginningHour = 12;
                     system.epochBeginningDay = 13;
                     system.epochBeginningMonth = 4;
@@ -6849,9 +6851,9 @@ static BOOLEAN initialize()
                 }
 
                 system.version = VERSION_B;
-                if (system.epoch == 45)
+                if (system.epoch == 46)
                 {
-                    system.initialTick = system.tick = 5020000;
+                    system.initialTick = system.tick = 5030000;
                 }
                 else
                 {
@@ -6958,7 +6960,7 @@ static BOOLEAN initialize()
 
         unsigned char randomSeed[32];
         bs->SetMem(randomSeed, 32, 0);
-        randomSeed[0] = 159;
+        randomSeed[0] = 113;
         randomSeed[1] = 187;
         randomSeed[2] = 115;
         randomSeed[3] = 131;
@@ -7437,7 +7439,10 @@ static void logInfo()
         }
     }
 
-    setText(message, L"[+");
+    setNumber(message, processorLoadDenominator ? 100 * processorLoadNumerator / processorLoadDenominator : 0, FALSE);
+    processorLoadNumerator = 0;
+    processorLoadDenominator = 0;
+    appendText(message, L"% [+");
     appendNumber(message, numberOfProcessedRequests - prevNumberOfProcessedRequests, TRUE);
     appendText(message, L" -");
     appendNumber(message, numberOfDiscardedRequests - prevNumberOfDiscardedRequests, TRUE);
@@ -7838,16 +7843,16 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                     break;
                 }
 
-                if (!numberOfProcessors)
+                if (numberOfProcessors == 1)
                 {
                     computingProcessorNumber = i;
                 }
                 else
                 {
                     bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, shutdownCallback, NULL, &processors[numberOfProcessors].event);
-                    mpServicesProtocol->StartupThisAP(mpServicesProtocol, numberOfProcessors == 1 ? computorProcessor : requestProcessor, i, processors[numberOfProcessors].event, 0, &processors[numberOfProcessors], NULL);
+                    mpServicesProtocol->StartupThisAP(mpServicesProtocol, !numberOfProcessors ? hasherProcessor : requestProcessor, i, processors[numberOfProcessors].event, 0, &processors[numberOfProcessors], NULL);
                 }
-
+                processors[numberOfProcessors].isEvenCoreThread = (numberOfProcessors & 1);
                 numberOfProcessors++;
             }
         }
@@ -9633,7 +9638,34 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                             {
                                                                 for (unsigned int j = 0; j < numberOfProcessors - 2; j++)
                                                                 {
-                                                                    if (processors[2 + j].state == PROCESSOR_STATE_WARMING_UP)
+                                                                    if (processors[2 + j].isEvenCoreThread
+                                                                        && processors[2 + j].state == PROCESSOR_STATE_WARMING_UP)
+                                                                    {
+                                                                        dejavu0[saltedId >> 6] |= (1ULL << (saltedId & 63));
+                                                                        if (!(--dejavuSwapCounter))
+                                                                        {
+                                                                            unsigned long long* tmp = dejavu1;
+                                                                            dejavu1 = dejavu0;
+                                                                            bs->SetMem(dejavu0 = tmp, 536870912, 0);
+                                                                            dejavuSwapCounter = DEJAVU_SWAP_LIMIT;
+                                                                        }
+
+                                                                        processors[2 + j].saltedId = saltedId;
+                                                                        processors[2 + j].peer = &peers[i];
+                                                                        bs->CopyMem(processors[2 + j].requestBuffer, peers[i].receiveBuffer, requestResponseHeader->size);
+
+                                                                        processors[2 + j].state = PROCESSOR_STATE_WORKING_OUT;
+
+                                                                        bs->CopyMem(peers[i].receiveBuffer, ((char*)peers[i].receiveBuffer) + requestResponseHeader->size, receivedDataSize -= requestResponseHeader->size);
+                                                                        peers[i].receiveData.FragmentTable[0].FragmentBuffer = ((char*)peers[i].receiveBuffer) + receivedDataSize;
+
+                                                                        goto iteration;
+                                                                    }
+                                                                }
+                                                                for (unsigned int j = 0; j < numberOfProcessors - 2; j++)
+                                                                {
+                                                                    if (!processors[2 + j].isEvenCoreThread
+                                                                        && processors[2 + j].state == PROCESSOR_STATE_WARMING_UP)
                                                                     {
                                                                         dejavu0[saltedId >> 6] |= (1ULL << (saltedId & 63));
                                                                         if (!(--dejavuSwapCounter))
@@ -9902,6 +9934,12 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                 processor->state = PROCESSOR_STATE_WARMING_UP;
                             }
+
+                            if (processor->state == PROCESSOR_STATE_WORKING_OUT)
+                            {
+                                processorLoadNumerator++;
+                            }
+                            processorLoadDenominator++;
                         }
 
                         processKeyPresses();
