@@ -24,7 +24,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 98
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -4811,9 +4811,9 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 ////////// Qubic \\\\\\\\\\
 
 #define BUFFER_SIZE 4194304
-#define TARGET_TICK_DURATION 10
-#define TICK_REQUESTING_PERIOD 1
-#define INITIAL_SPECTRUM_REQUESTING_PERIOD 1
+#define TARGET_TICK_DURATION 10000
+#define TICK_REQUESTING_PERIOD 1000
+#define INITIAL_SPECTRUM_REQUESTING_PERIOD 1000
 #define DEJAVU_SWAP_LIMIT 10000000
 #define DISSEMINATION_MULTIPLIER 7
 #define FIRST_TICK_TRANSACTION_OFFSET sizeof(unsigned long long)
@@ -4829,7 +4829,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define MAX_NUMBER_OF_SOLUTIONS 1048576 // Must be 2^N
 #define MAX_TRANSACTION_SIZE 1024ULL
 #define NUMBER_OF_COMPUTORS 676
-#define MAX_NUMBER_OF_TICKS_PER_EPOCH (((((60 * 60 * 24 * 7) / TARGET_TICK_DURATION) + NUMBER_OF_COMPUTORS - 1) / NUMBER_OF_COMPUTORS) * NUMBER_OF_COMPUTORS)
+#define MAX_NUMBER_OF_TICKS_PER_EPOCH (((((60 * 60 * 24 * 7) / (TARGET_TICK_DURATION / 1000)) + NUMBER_OF_COMPUTORS - 1) / NUMBER_OF_COMPUTORS) * NUMBER_OF_COMPUTORS)
 #define MAX_SMART_CONTRACT_STATE_SIZE 1073741824
 #define MAX_UNIVERSE_SIZE 1073741824
 #define NUMBER_OF_EXCHANGED_PEERS 4
@@ -4838,24 +4838,24 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define NUMBER_OF_NEURONS 1048576
 #define NUMBER_OF_SOLUTION_NONCES 1000
 #define NUMBER_OF_TRANSACTIONS_PER_TICK 1024 // Must be 2^N
-#define PEER_REFRESHING_PERIOD 10
+#define PEER_REFRESHING_PERIOD 10000
 #define PORT 21841
 #define QUORUM (NUMBER_OF_COMPUTORS * 2 / 3 + 1)
 #define REQUEST_QUEUE_BUFFER_SIZE 1073741824
 #define REQUEST_QUEUE_LENGTH 65536 // Must be 65536
 #define RESPONSE_QUEUE_BUFFER_SIZE 1073741824
 #define RESPONSE_QUEUE_LENGTH 65536 // Must be 65536
-#define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 90
+#define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 90000
 #define SIGNATURE_SIZE 64
 #define SOLUTION_THRESHOLD 25
 #define SPECTRUM_CAPACITY 0x1000000ULL // Must be 2^N
 #define SPECTRUM_DEPTH 24 // Is derived from SPECTRUM_CAPACITY (=N)
 #define SPECTRUM_FRAGMENT_LENGTH 256
 #define SPECTRUM_FRAGMENT_DEPTH (SPECTRUM_DEPTH - 8)
-#define SYSTEM_DATA_SAVING_PERIOD 300
+#define SYSTEM_DATA_SAVING_PERIOD 300000
 #define TICK_TRANSACTIONS_PUBLICATION_OFFSET 5 // Must be 2+
 #define MINING_SOLUTIONS_PUBLICATION_OFFSET 7 // Must be 2+
-#define TIME_ACCURACY 60
+#define TIME_ACCURACY 60000
 #define TRANSACTION_SPARSENESS 4
 #define VOLUME_LABEL L"Qubic"
 
@@ -5271,12 +5271,14 @@ static unsigned char* requestQueueBuffer = NULL;
 static unsigned char* responseQueueBuffer = NULL;
 static struct Request
 {
+    unsigned long long enqueueingTick;
     Peer* peer;
     unsigned int offset;
     unsigned int saltedId;
 } requestQueueElements[REQUEST_QUEUE_LENGTH];
 static struct Response
 {
+    unsigned long long enqueueingTick;
     Peer* peer;
     unsigned int offset;
 } responseQueueElements[RESPONSE_QUEUE_LENGTH];
@@ -5286,6 +5288,7 @@ static volatile unsigned short requestQueueElementHead = 0, requestQueueElementT
 static volatile unsigned short responseQueueElementHead = 0, responseQueueElementTail = 0;
 static volatile char requestQueueTailLock = 0;
 static volatile char responseQueueHeadLock = 0;
+static unsigned long long queueProcessingNumerator = 0, queueProcessingDenominator = 0;
 
 static EFI_GUID tcp4ServiceBindingProtocolGuid = EFI_TCP4_SERVICE_BINDING_PROTOCOL_GUID;
 static EFI_SERVICE_BINDING_PROTOCOL* tcp4ServiceBindingProtocol;
@@ -5867,6 +5870,7 @@ static void requestProcessor(void* ProcedureArgument)
             }
             else
             {
+                const unsigned long long enqueueingTick = requestQueueElements[requestQueueElementTail].enqueueingTick;
                 Peer* peer = requestQueueElements[requestQueueElementTail].peer;
                 const unsigned int saltedId = requestQueueElements[requestQueueElementTail].saltedId;
 
@@ -6106,7 +6110,7 @@ static void requestProcessor(void* ProcedureArgument)
                         && request->tickData.minute <= 59
                         && request->tickData.second <= 59
                         && !request->tickData.millisecond
-                        && ms(request->tickData.year, request->tickData.month, request->tickData.day, request->tickData.hour, request->tickData.minute, request->tickData.second, request->tickData.millisecond) <= ms(time.Year - 2000, time.Month, time.Day, time.Hour, time.Minute, time.Second, time.Nanosecond / 1000000) + TIME_ACCURACY * 1000)
+                        && ms(request->tickData.year, request->tickData.month, request->tickData.day, request->tickData.hour, request->tickData.minute, request->tickData.second, request->tickData.millisecond) <= ms(time.Year - 2000, time.Month, time.Day, time.Hour, time.Minute, time.Second, time.Nanosecond / 1000000) + TIME_ACCURACY)
                     {
                         unsigned int i;
                         for (i = 0; i < NUMBER_OF_COMPUTORS; i++)
@@ -6288,6 +6292,7 @@ static void requestProcessor(void* ProcedureArgument)
                         {
                             responseQueueBufferHead = 0;
                         }
+                        responseQueueElements[responseQueueElementHead].enqueueingTick = enqueueingTick;
                         responseQueueElementHead++;
                     }
 
@@ -7666,8 +7671,19 @@ static void logInfo()
     appendNumber(message, filledResponseQueueBufferSize, TRUE);
     appendText(message, L" (");
     appendNumber(message, filledResponseQueueLength, TRUE);
-    appendText(message, L").");
+    appendText(message, L") | Average processing time = ");
+    if (queueProcessingDenominator)
+    {
+        appendNumber(message, (queueProcessingNumerator / queueProcessingDenominator) * 1000000 / frequency, TRUE);
+    }
+    else
+    {
+        appendText(message, L"?");
+    }
+    appendText(message, L" microseconds.");
     log(message);
+    queueProcessingNumerator = 0;
+    queueProcessingDenominator = 0;
 
     if (numberOfFilledInitialSpectrumFragments < SPECTRUM_CAPACITY / SPECTRUM_FRAGMENT_LENGTH)
     {
@@ -8036,7 +8052,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     }
                                     else
                                     {
-                                        if (curTimeTick - initialSpectrumRequestingTick >= INITIAL_SPECTRUM_REQUESTING_PERIOD * frequency)
+                                        if (curTimeTick - initialSpectrumRequestingTick >= INITIAL_SPECTRUM_REQUESTING_PERIOD * frequency / 1000)
                                         {
                                             initialSpectrumRequestingTick = curTimeTick;
 
@@ -8507,7 +8523,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             etalonTickMustBeCreated = true;
 
                                             if (!targetNextTickDataDigestIsKnown
-                                                && curTimeTick - tickTicks[sizeof(tickTicks) / sizeof(tickTicks[0]) - 1] > TARGET_TICK_DURATION * frequency)
+                                                && curTimeTick - tickTicks[sizeof(tickTicks) / sizeof(tickTicks[0]) - 1] > TARGET_TICK_DURATION * frequency / 1000)
                                             {
                                                 tickData[system.tick + 1 - system.initialTick].epoch = 0;
                                             }
@@ -9775,6 +9791,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                         requestQueueBufferHead = 0;
                                                                     }
                                                                     requestQueueElements[requestQueueElementHead].saltedId = saltedId;
+                                                                    requestQueueElements[requestQueueElementHead].enqueueingTick = __rdtsc();
                                                                     requestQueueElementHead++;
 
                                                                     if (!(--dejavuSwapCounter))
@@ -9955,14 +9972,14 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             }
                         }
 
-                        if (curTimeTick - systemDataSavingTick >= SYSTEM_DATA_SAVING_PERIOD * frequency)
+                        if (curTimeTick - systemDataSavingTick >= SYSTEM_DATA_SAVING_PERIOD * frequency / 1000)
                         {
                             systemDataSavingTick = curTimeTick;
 
                             saveSystem();
                         }
 
-                        if (curTimeTick - peerRefreshingTick >= PEER_REFRESHING_PERIOD * frequency)
+                        if (curTimeTick - peerRefreshingTick >= PEER_REFRESHING_PERIOD * frequency / 1000)
                         {
                             peerRefreshingTick = curTimeTick;
 
@@ -9974,7 +9991,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             }
                         }
 
-                        if (curTimeTick - resourceTestingSolutionPublicationTick >= RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD * frequency)
+                        if (curTimeTick - resourceTestingSolutionPublicationTick >= RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD * frequency / 1000)
                         {
                             resourceTestingSolutionPublicationTick = curTimeTick;
 
@@ -9983,7 +10000,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             saveSolutions();
                         }
 
-                        if (curTimeTick - tickRequestingTick >= TICK_REQUESTING_PERIOD * frequency)
+                        if (curTimeTick - tickRequestingTick >= TICK_REQUESTING_PERIOD * frequency / 1000)
                         {
                             tickRequestingTick = curTimeTick;
 
@@ -10021,6 +10038,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                         const unsigned short responseQueueElementHead = ::responseQueueElementHead;
                         while (responseQueueElementTail != responseQueueElementHead)
                         {
+                            queueProcessingNumerator += __rdtsc() - responseQueueElements[responseQueueElementTail].enqueueingTick;
+                            queueProcessingDenominator++;
+
                             RequestResponseHeader* responseHeader = (RequestResponseHeader*)&responseQueueBuffer[responseQueueElements[responseQueueElementTail].offset];
                             if (responseQueueElements[responseQueueElementTail].peer)
                             {
