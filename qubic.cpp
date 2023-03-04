@@ -23,7 +23,7 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 97
+#define VERSION_B 98
 #define VERSION_C 0
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
@@ -4813,6 +4813,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define BUFFER_SIZE 4194304
 #define TARGET_TICK_DURATION 10
 #define TICK_REQUESTING_PERIOD 1
+#define INITIAL_SPECTRUM_REQUESTING_PERIOD 1
 #define DEJAVU_SWAP_LIMIT 10000000
 #define DISSEMINATION_MULTIPLIER 7
 #define FIRST_TICK_TRANSACTION_OFFSET sizeof(unsigned long long)
@@ -4852,8 +4853,8 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define SPECTRUM_FRAGMENT_LENGTH 256
 #define SPECTRUM_FRAGMENT_DEPTH (SPECTRUM_DEPTH - 8)
 #define SYSTEM_DATA_SAVING_PERIOD 300
-#define TICK_TRANSACTIONS_PUBLICATION_OFFSET 3 // Must be 2+
-#define MINING_SOLUTIONS_PUBLICATION_OFFSET 5 // Must be 2+
+#define TICK_TRANSACTIONS_PUBLICATION_OFFSET 5 // Must be 2+
+#define MINING_SOLUTIONS_PUBLICATION_OFFSET 7 // Must be 2+
 #define TIME_ACCURACY 60
 #define TRANSACTION_SPARSENESS 4
 #define VOLUME_LABEL L"Qubic"
@@ -5790,10 +5791,9 @@ static void closePeer(Peer* peer)
     }
 }
 
-static void push(Peer* peer, RequestResponseHeader* requestResponseHeader, bool isUrgent)
+static void push(Peer* peer, RequestResponseHeader* requestResponseHeader)
 {
-    if (peer->tcp4Protocol && peer->isConnectedAccepted && !peer->isClosing
-        && (isUrgent || !peer->dataToTransmitSize))
+    if (peer->tcp4Protocol && peer->isConnectedAccepted && !peer->isClosing)
     {
         if (peer->dataToTransmitSize + requestResponseHeader->size > BUFFER_SIZE)
         {
@@ -5815,7 +5815,7 @@ static void pushToSome(RequestResponseHeader* requestResponseHeader)
     unsigned short numberOfSuitablePeers = 0;
     for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
     {
-        if (peers[i].tcp4Protocol && peers[i].isConnectedAccepted && !peers[i].isClosing
+        if (peers[i].tcp4Protocol && peers[i].isConnectedAccepted && peers[i].exchangedPublicPeers && !peers[i].isClosing
             && !peers[i].dataToTransmitSize)
         {
             suitablePeerIndices[numberOfSuitablePeers++] = i;
@@ -5827,7 +5827,7 @@ static void pushToSome(RequestResponseHeader* requestResponseHeader)
         unsigned short random;
         _rdrand16_step(&random);
         const unsigned short index = random % numberOfSuitablePeers;
-        push(&peers[index], requestResponseHeader, true);
+        push(&peers[index], requestResponseHeader);
 
         suitablePeerIndices[index] = suitablePeerIndices[--numberOfSuitablePeers];
     }
@@ -6917,7 +6917,7 @@ static BOOLEAN initialize()
                 system.version = VERSION_B;
                 if (system.epoch == 46)
                 {
-                    system.initialTick = system.tick = 5040000;
+                    system.initialTick = system.tick = 5070000;
                 }
                 else
                 {
@@ -7493,7 +7493,7 @@ static void publishSolutions()
 
         for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
         {
-            push(&peers[j], &broadcastedSolutions[i].header, true);
+            push(&peers[j], &broadcastedSolutions[i].header);
         }
     }
 }
@@ -7978,7 +7978,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                     etalonTick.tick = 0;
                     __m256i etalonTickEssenceDigest;
                     bs->SetMem(triggerSignature, sizeof(triggerSignature), 0);
-                    unsigned long long clockTick = 0, systemDataSavingTick = 0, loggingTick = 0, peerRefreshingTick = 0, resourceTestingSolutionPublicationTick = 0, tickRequestingTick = 0;
+                    unsigned int lastRequestedInitialSpectrumFragmentIndex = SPECTRUM_CAPACITY / SPECTRUM_FRAGMENT_LENGTH - 1;
+                    unsigned long long clockTick = 0, systemDataSavingTick = 0, loggingTick = 0, peerRefreshingTick = 0, resourceTestingSolutionPublicationTick = 0, tickRequestingTick = 0, initialSpectrumRequestingTick = 0;
                     while (!state)
                     {
                         const unsigned long long curTimeTick = __rdtsc();
@@ -8021,7 +8022,35 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                 /*if (numberOfFilledInitialSpectrumFragments < SPECTRUM_CAPACITY / SPECTRUM_FRAGMENT_LENGTH)
                                 {
-                                    /////
+                                    if (EQUAL(targetInitialSpectrumRoot, ZERO))
+                                    {
+
+                                    }
+                                    else
+                                    {
+                                        if (curTimeTick - initialSpectrumRequestingTick >= INITIAL_SPECTRUM_REQUESTING_PERIOD * frequency)
+                                        {
+                                            initialSpectrumRequestingTick = curTimeTick;
+
+                                            for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
+                                            {
+                                                if (peers[i].tcp4Protocol && peers[i].isConnectedAccepted && !peers[i].isClosing)
+                                                {
+                                                    for (unsigned int j = 0; j < SPECTRUM_CAPACITY / SPECTRUM_FRAGMENT_LENGTH; j++)
+                                                    {
+                                                        lastRequestedInitialSpectrumFragmentIndex = (lastRequestedInitialSpectrumFragmentIndex + 1) % (SPECTRUM_CAPACITY / SPECTRUM_FRAGMENT_LENGTH);
+                                                        if (!(initialSpectrumFragmentFlags[lastRequestedInitialSpectrumFragmentIndex >> 6] & (1ULL << (lastRequestedInitialSpectrumFragmentIndex & 63))))
+                                                        {
+                                                            requestedInitialSpectrumFragment.requestInitialSpectrumFragment.fragmentIndex = lastRequestedInitialSpectrumFragmentIndex;
+                                                            push(&peers[i], &requestedInitialSpectrumFragment.header, true);
+
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                                 else*/
                                 {
@@ -8248,7 +8277,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                 for (j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
                                                 {
-                                                    push(&peers[j], &packet.header, true);
+                                                    push(&peers[j], &packet.header);
                                                 }
                                             }
                                         }
@@ -8630,7 +8659,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                             for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
                                                             {
-                                                                push(&peers[j], &broadcastedTick.header, true);
+                                                                push(&peers[j], &broadcastedTick.header);
                                                             }
 
                                                             ACQUIRE(tickLocks[ownComputorIndices[i]]);
@@ -8791,15 +8820,15 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                         if (EQUAL(*((__m256i*)etalonTick.varStruct.nextTick.zero), ZERO) && !EQUAL(*((__m256i*)etalonTick.varStruct.nextTick.digestOfTransactions), ZERO))
                                                         {
                                                             bs->CopyMem(&curTickData, &nextTickData, sizeof(TickData));
+
+                                                            for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                                                            {
+                                                                system.tickCounters[i] += counters[i];
+                                                            }
                                                         }
                                                         else
                                                         {
                                                             curTickData.epoch = tickData[system.tick - system.initialTick].epoch = 0;
-                                                        }
-
-                                                        for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
-                                                        {
-                                                            system.tickCounters[i] += counters[i];
                                                         }
 
                                                         prevTickMillisecond = etalonTick.millisecond;
@@ -8995,7 +9024,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                                         for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
                                                                         {
-                                                                            push(&peers[j], &broadcastedFutureTickData.header, true);
+                                                                            push(&peers[j], &broadcastedFutureTickData.header);
                                                                         }
                                                                     }
 
@@ -9217,7 +9246,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if (receivedDataSize >= sizeof(RequestResponseHeader))
                                             {
                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                if (requestResponseHeader->size < sizeof(RequestResponseHeader) || requestResponseHeader->protocol < VERSION_B - 1 || requestResponseHeader->protocol > VERSION_B + 1)
+                                                if (requestResponseHeader->size < sizeof(RequestResponseHeader) || requestResponseHeader->protocol < VERSION_B - 2 || requestResponseHeader->protocol > VERSION_B + 1)
                                                 {
                                                     closePeer(&peers[i]);
                                                 }
@@ -9308,7 +9337,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                         {
                                                             if (broadcastedComputors.broadcastComputors.computors.epoch)
                                                             {
-                                                                push(&peers[i], &broadcastedComputors.header, true);
+                                                                push(&peers[i], &broadcastedComputors.header);
                                                             }
 
                                                             _InterlockedIncrement64(&numberOfProcessedRequests);
@@ -9342,7 +9371,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                                 if (!EQUAL(*((__m256i*)ticks[offset].varStruct.nextTick.zero), ZERO) || !(request->quorumTick.voteFlags[index >> 2] & (1 << ((index & 3) << 1))))
                                                                                 {
                                                                                     bs->CopyMem(&broadcastedTick.broadcastTick.tick, &ticks[offset], sizeof(Tick));
-                                                                                    push(&peers[i], &broadcastedTick.header, true);
+                                                                                    push(&peers[i], &broadcastedTick.header);
                                                                                 }
                                                                             }
                                                                         }
@@ -9365,7 +9394,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     && tickData[request->requestedTickData.tick - system.initialTick].epoch == broadcastedComputors.broadcastComputors.computors.epoch)
                                                                 {
                                                                     bs->CopyMem(&broadcastedFutureTickData.broadcastFutureTickData.tickData, &tickData[request->requestedTickData.tick - system.initialTick], sizeof(TickData));
-                                                                    push(&peers[i], &broadcastedFutureTickData.header, true);
+                                                                    push(&peers[i], &broadcastedFutureTickData.header);
                                                                 }
                                                             }
 
@@ -9408,10 +9437,16 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     }
                                                                 }
 
-                                                                push(&peers[i], &respondedInitialSpectrumFragment.header, true);
+                                                                push(&peers[i], &respondedInitialSpectrumFragment.header);
                                                             }
 
                                                             _InterlockedIncrement64(&numberOfProcessedRequests);
+                                                        }
+                                                        break;
+
+                                                        case RESPOND_INITIAL_SPECTRUM_FRAGMENT:
+                                                        {
+
                                                         }
                                                         break;
 
@@ -9589,7 +9624,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                 bs->SetMem(&respondedCurrentTickInfo.currentTickInfo, sizeof(CurrentTickInfo), 0);
                                                             }
 
-                                                            push(&peers[i], &respondedCurrentTickInfo.header, true);
+                                                            push(&peers[i], &respondedCurrentTickInfo.header);
 
                                                             _InterlockedIncrement64(&numberOfProcessedRequests);
                                                         }
@@ -9620,7 +9655,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                             const unsigned int transactionSize = sizeof(Transaction) + transaction->inputSize + SIGNATURE_SIZE;
                                                                             respondedTickTransaction.header.size = sizeof(respondedTickTransaction.header) + transactionSize;
                                                                             bs->CopyMem(&respondedTickTransaction.transactionBuffer, (void*)transaction, transactionSize);
-                                                                            push(&peers[i], &respondedTickTransaction.header, true);
+                                                                            push(&peers[i], &respondedTickTransaction.header);
                                                                         }
                                                                     }
 
@@ -9707,7 +9742,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     }
                                                                 }
 
-                                                                push(&peers[i], &respondedEntity.header, true);
+                                                                push(&peers[i], &respondedEntity.header);
                                                             }
 
                                                             _InterlockedIncrement64(&numberOfProcessedRequests);
@@ -9783,18 +9818,27 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         peers[i].receiveData.DataLength = peers[i].receiveData.FragmentTable[0].FragmentLength = BUFFER_SIZE - (unsigned int)(((unsigned long long)peers[i].receiveData.FragmentTable[0].FragmentBuffer) - ((unsigned long long)peers[i].receiveBuffer));
                                         if (peers[i].receiveData.DataLength)
                                         {
-                                            if (status = peers[i].tcp4Protocol->Receive(peers[i].tcp4Protocol, &peers[i].receiveToken))
+                                            EFI_TCP4_CONNECTION_STATE state;
+                                            if ((status = peers[i].tcp4Protocol->GetModeData(peers[i].tcp4Protocol, &state, NULL, NULL, NULL, NULL))
+                                                || state == Tcp4StateClosed)
                                             {
-                                                if (status != EFI_CONNECTION_FIN)
-                                                {
-                                                    logStatus(L"EFI_TCP4_PROTOCOL.Receive() fails", status, __LINE__);
-                                                }
-
                                                 closePeer(&peers[i]);
                                             }
                                             else
                                             {
-                                                peers[i].isReceiving = TRUE;
+                                                if (status = peers[i].tcp4Protocol->Receive(peers[i].tcp4Protocol, &peers[i].receiveToken))
+                                                {
+                                                    if (status != EFI_CONNECTION_FIN)
+                                                    {
+                                                        logStatus(L"EFI_TCP4_PROTOCOL.Receive() fails", status, __LINE__);
+                                                    }
+
+                                                    closePeer(&peers[i]);
+                                                }
+                                                else
+                                                {
+                                                    peers[i].isReceiving = TRUE;
+                                                }
                                             }
                                         }
                                     }
@@ -9957,7 +10001,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             }
                             for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
                             {
-                                push(&peers[i], &requestedQuorumTick.header, true);
+                                push(&peers[i], &requestedQuorumTick.header);
                             }
 
                             if (tickData[system.tick + 1 - system.initialTick].epoch != system.epoch)
@@ -9965,7 +10009,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 requestedTickData.requestTickData.requestedTickData.tick = system.tick + 1;
                                 for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
                                 {
-                                    push(&peers[i], &requestedTickData.header, true);
+                                    push(&peers[i], &requestedTickData.header);
                                 }
                             }
 
@@ -9974,7 +10018,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 requestedTickTransactions.requestedTickTransactions.tick = system.tick + 1;
                                 for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
                                 {
-                                    push(&peers[i], &requestedTickTransactions.header, true);
+                                    push(&peers[i], &requestedTickTransactions.header);
                                 }
                             }
                         }
@@ -9985,7 +10029,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             RequestResponseHeader* responseHeader = (RequestResponseHeader*)&responseQueueBuffer[responseQueueElements[responseQueueElementTail].offset];
                             if (responseQueueElements[responseQueueElementTail].peer)
                             {
-                                push(responseQueueElements[responseQueueElementTail].peer, responseHeader, true);
+                                push(responseQueueElements[responseQueueElementTail].peer, responseHeader);
                             }
                             else
                             {
