@@ -24,7 +24,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 98
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -5833,6 +5833,17 @@ static void pushToSome(RequestResponseHeader* requestResponseHeader)
     }
 }
 
+static void pushToAll(RequestResponseHeader* requestResponseHeader)
+{
+    for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
+    {
+        if (peers[i].exchangedPublicPeers)
+        {
+            push(&peers[i], requestResponseHeader);
+        }
+    }
+}
+
 static void requestProcessor(void* ProcedureArgument)
 {
     enableAVX();
@@ -7491,10 +7502,7 @@ static void publishSolutions()
         broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey[0] ^= BROADCAST_RESOURCE_TESTING_SOLUTION;
         sign(miningSubseeds[i], miningPublicKeys[i], digest, broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.signature);
 
-        for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
-        {
-            push(&peers[j], &broadcastedSolutions[i].header);
-        }
+        pushToAll(&broadcastedSolutions[i].header);
     }
 }
 
@@ -8275,10 +8283,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 KangarooTwelve((unsigned char*)&packet.transaction, sizeof(packet.transaction) + sizeof(packet.nonce), digest, sizeof(digest));
                                                 sign(miningSubseeds[i], miningPublicKeys[i], digest, packet.signature);
 
-                                                for (j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
-                                                {
-                                                    push(&peers[j], &packet.header);
-                                                }
+                                                pushToAll(&packet.header);
                                             }
                                         }
 
@@ -8657,10 +8662,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                             broadcastedTick.broadcastTick.tick.computorIndex ^= BROADCAST_TICK;
                                                             sign(computingSubseeds[ownComputorIndicesMapping[i]], computingPublicKeys[ownComputorIndicesMapping[i]], digest, broadcastedTick.broadcastTick.tick.signature);
 
-                                                            for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
-                                                            {
-                                                                push(&peers[j], &broadcastedTick.header);
-                                                            }
+                                                            pushToAll(&broadcastedTick.header);
 
                                                             ACQUIRE(tickLocks[ownComputorIndices[i]]);
                                                             bs->CopyMem(&ticks[(broadcastedTick.broadcastTick.tick.tick - system.initialTick) * NUMBER_OF_COMPUTORS + broadcastedTick.broadcastTick.tick.computorIndex], &broadcastedTick.broadcastTick.tick, sizeof(Tick));
@@ -9022,10 +9024,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                         broadcastedFutureTickData.broadcastFutureTickData.tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
                                                                         sign(computingSubseeds[ownComputorIndicesMapping[i]], computingPublicKeys[ownComputorIndicesMapping[i]], digest, broadcastedFutureTickData.broadcastFutureTickData.tickData.signature);
 
-                                                                        for (unsigned int j = 0; j < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; j++)
-                                                                        {
-                                                                            push(&peers[j], &broadcastedFutureTickData.header);
-                                                                        }
+                                                                        pushToAll(&broadcastedFutureTickData.header);
                                                                     }
 
                                                                     break;
@@ -9999,27 +9998,23 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags[i >> 2] |= ((EQUAL(*((__m256i*)tick->varStruct.nextTick.zero), ZERO)) ? 1 : 2) << ((i & 3) << 1);
                                 }
                             }
-                            for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
-                            {
-                                push(&peers[i], &requestedQuorumTick.header);
-                            }
+                            pushToAll(&requestedQuorumTick.header);
 
                             if (tickData[system.tick + 1 - system.initialTick].epoch != system.epoch)
                             {
                                 requestedTickData.requestTickData.requestedTickData.tick = system.tick + 1;
-                                for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
-                                {
-                                    push(&peers[i], &requestedTickData.header);
-                                }
+                                pushToAll(&requestedTickData.header);
+                            }
+                            if (tickData[system.tick + 2 - system.initialTick].epoch != system.epoch)
+                            {
+                                requestedTickData.requestTickData.requestedTickData.tick = system.tick + 2;
+                                pushToAll(&requestedTickData.header);
                             }
 
                             if (numberOfKnownNextTickTransactions != numberOfNextTickTransactions)
                             {
                                 requestedTickTransactions.requestedTickTransactions.tick = system.tick + 1;
-                                for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
-                                {
-                                    push(&peers[i], &requestedTickTransactions.header);
-                                }
+                                pushToAll(&requestedTickTransactions.header);
                             }
                         }
 
