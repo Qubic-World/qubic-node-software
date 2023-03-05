@@ -23,8 +23,8 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 98
-#define VERSION_C 2
+#define VERSION_B 99
+#define VERSION_C 0
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -4811,11 +4811,11 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 ////////// Qubic \\\\\\\\\\
 
 #define BUFFER_SIZE 4194304
-#define TARGET_TICK_DURATION 10000
-#define TICK_REQUESTING_PERIOD 1000
+#define TARGET_TICK_DURATION 5000
+#define TICK_REQUESTING_PERIOD 500
 #define INITIAL_SPECTRUM_REQUESTING_PERIOD 1000
 #define DEJAVU_SWAP_LIMIT 10000000
-#define DISSEMINATION_MULTIPLIER 7
+#define DISSEMINATION_MULTIPLIER 10
 #define FIRST_TICK_TRANSACTION_OFFSET sizeof(unsigned long long)
 #define ISSUANCE_RATE 1000000000000LL
 #define MAX_AMOUNT (ISSUANCE_RATE * 1000ULL)
@@ -4853,8 +4853,8 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define SPECTRUM_FRAGMENT_LENGTH 256
 #define SPECTRUM_FRAGMENT_DEPTH (SPECTRUM_DEPTH - 8)
 #define SYSTEM_DATA_SAVING_PERIOD 300000
-#define TICK_TRANSACTIONS_PUBLICATION_OFFSET 5 // Must be 2+
-#define MINING_SOLUTIONS_PUBLICATION_OFFSET 7 // Must be 2+
+#define TICK_TRANSACTIONS_PUBLICATION_OFFSET 2 // Must be 2+
+#define MINING_SOLUTIONS_PUBLICATION_OFFSET 3 // Must be 2+
 #define TIME_ACCURACY 60000
 #define TRANSACTION_SPARSENESS 4
 #define VOLUME_LABEL L"Qubic"
@@ -6933,7 +6933,7 @@ static BOOLEAN initialize()
                 system.version = VERSION_B;
                 if (system.epoch == 46)
                 {
-                    system.initialTick = system.tick = 5070000;
+                    system.initialTick = system.tick = 5080000;
                 }
                 else
                 {
@@ -9261,7 +9261,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if (receivedDataSize >= sizeof(RequestResponseHeader))
                                             {
                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                if (requestResponseHeader->size < sizeof(RequestResponseHeader) || requestResponseHeader->protocol < VERSION_B - 2 || requestResponseHeader->protocol > VERSION_B + 1)
+                                                if (requestResponseHeader->size < sizeof(RequestResponseHeader) || requestResponseHeader->protocol < VERSION_B - 3 || requestResponseHeader->protocol > VERSION_B + 1)
                                                 {
                                                     closePeer(&peers[i]);
                                                 }
