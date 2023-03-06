@@ -23,8 +23,8 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 99
-#define VERSION_C 1
+#define VERSION_B 100
+#define VERSION_C 0
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -5033,6 +5033,7 @@ typedef struct
     unsigned short computorIndex;
     unsigned short epoch;
     unsigned int tick;
+
     unsigned short millisecond;
     unsigned char second;
     unsigned char minute;
@@ -5040,8 +5041,26 @@ typedef struct
     unsigned char day;
     unsigned char month;
     unsigned char year;
+
     unsigned int revenues[NUMBER_OF_COMPUTORS];
+
+    union
+    {
+        struct
+        {
+            unsigned char uriSize;
+            unsigned char uri[255];
+        } proposal;
+        struct
+        {
+            unsigned char zero;
+            unsigned char votes[(NUMBER_OF_COMPUTORS * 3 + 7) / 8];
+            unsigned char quasiRandomNumber;
+        } ballot;
+    } varStruct;
+
     unsigned char transactionDigests[NUMBER_OF_TRANSACTIONS_PER_TICK][32];
+
     unsigned char signature[SIGNATURE_SIZE];
 } TickData;
 
@@ -6933,7 +6952,7 @@ static BOOLEAN initialize()
                 system.version = VERSION_B;
                 if (system.epoch == 46)
                 {
-                    system.initialTick = system.tick = 5080000;
+                    system.initialTick = system.tick = 5090000;
                 }
                 else
                 {
@@ -8904,6 +8923,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                         broadcastedFutureTickData.broadcastFutureTickData.tickData.month = newTime.Month;
                                                                         broadcastedFutureTickData.broadcastFutureTickData.tickData.year = newTime.Year - 2000;
 
+                                                                        bs->SetMem(&broadcastedFutureTickData.broadcastFutureTickData.tickData.varStruct.ballot, sizeof(broadcastedFutureTickData.broadcastFutureTickData.tickData.varStruct.ballot), 0);
+                                                                        unsigned short random;
+                                                                        _rdrand16_step(&random);
+                                                                        broadcastedFutureTickData.broadcastFutureTickData.tickData.varStruct.ballot.quasiRandomNumber = (unsigned char)random;
+
                                                                         unsigned int maxCounter = 0;
                                                                         for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
                                                                         {
@@ -8927,7 +8951,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                         {
                                                                             for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
                                                                             {
-                                                                                broadcastedFutureTickData.broadcastFutureTickData.tickData.revenues[j] = /*(faultyComputorFlags[j >> 6] & (1ULL << (j & 63))) ? 0 :*/ ((system.tickCounters[j] >= maxCounter) ? (ISSUANCE_RATE / NUMBER_OF_COMPUTORS) : (system.tickCounters[j] * ((unsigned long long)(ISSUANCE_RATE / NUMBER_OF_COMPUTORS)) / maxCounter));
+                                                                                broadcastedFutureTickData.broadcastFutureTickData.tickData.revenues[j] = (faultyComputorFlags[j >> 6] & (1ULL << (j & 63))) ? 0 : ((system.tickCounters[j] >= maxCounter) ? (ISSUANCE_RATE / NUMBER_OF_COMPUTORS) : (system.tickCounters[j] * ((unsigned long long)(ISSUANCE_RATE / NUMBER_OF_COMPUTORS)) / maxCounter));
                                                                                 for (unsigned int k = 0; k < sizeof(computorsToSetMaxRevenueTo) / sizeof(computorsToSetMaxRevenueTo[0]); k++)
                                                                                 {
                                                                                     if (EQUAL(*((__m256i*)broadcastedComputors.broadcastComputors.computors.publicKeys[j]), *((__m256i*)computorsToSetMaxRevenueTo[k])))
