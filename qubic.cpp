@@ -24,7 +24,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 99
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -6216,7 +6216,7 @@ static void requestProcessor(void* ProcedureArgument)
                                 if (((Transaction*)&entityPendingTransactions[spectrumIndex * MAX_TRANSACTION_SIZE])->tick < request->tick)
                                 {
                                     bs->CopyMem(&entityPendingTransactions[spectrumIndex * MAX_TRANSACTION_SIZE], request, transactionSize);
-                                    KangarooTwelve(&entityPendingTransactions[spectrumIndex * MAX_TRANSACTION_SIZE], transactionSize, &entityPendingTransactionDigests[spectrumIndex * 32ULL], 32);
+                                    KangarooTwelve((unsigned char*)request, transactionSize, &entityPendingTransactionDigests[spectrumIndex * 32ULL], 32);
                                 }
 
                                 RELEASE(entityPendingTransactionsLock);
@@ -7695,6 +7695,8 @@ static void logInfo()
     }
 }
 
+/**/static int debug0 = 0, debug1 = 0, debug2 = 0, debug3 = 0;
+
 static void processKeyPresses()
 {
     EFI_INPUT_KEY key;
@@ -7809,6 +7811,16 @@ static void processKeyPresses()
             appendText(message, L"/");
             appendNumber(message, numberOfSolutions, TRUE);
             appendText(message, L" solutions.");
+            log(message);
+
+            setNumber(message, debug0, TRUE);
+            appendText(message, L"/");
+            appendNumber(message, debug1, TRUE);
+            appendText(message, L"/");
+            appendNumber(message, debug2, TRUE);
+            appendText(message, L"/");
+            appendNumber(message, debug3, TRUE);
+            appendText(message, L" debug counters.");
             log(message);
         }
         break;
@@ -8947,9 +8959,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                             const Transaction* pendingTransaction = ((Transaction*)&entityPendingTransactions[entityPendingTransactionIndices[index] * MAX_TRANSACTION_SIZE]);
                                                                             if (pendingTransaction->tick == system.tick + TICK_TRANSACTIONS_PUBLICATION_OFFSET)
                                                                             {
+                                                                                /**/debug0++;
                                                                                 const unsigned int transactionSize = sizeof(Transaction) + pendingTransaction->inputSize + SIGNATURE_SIZE;
                                                                                 if (nextTickTransactionOffset + transactionSize <= FIRST_TICK_TRANSACTION_OFFSET + (((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * NUMBER_OF_TRANSACTIONS_PER_TICK * MAX_TRANSACTION_SIZE / TRANSACTION_SPARSENESS))
                                                                                 {
+                                                                                    /**/debug1++;
                                                                                     bool ok;
 
                                                                                     if (!pendingTransaction->amount
@@ -8957,6 +8971,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                                         && !pendingTransaction->inputType
                                                                                         && EQUAL(*((__m256i*)pendingTransaction->destinationPublicKey), *((__m256i*)adminPublicKey)))
                                                                                     {
+                                                                                        /**/debug2++;
                                                                                         ::random((unsigned char*)pendingTransaction->sourcePublicKey, ((unsigned char*)pendingTransaction) + sizeof(Transaction), (unsigned char*)validationNeuronLinks, sizeof(validationNeuronLinks));
                                                                                         for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
                                                                                         {
@@ -9019,6 +9034,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                                                     if (ok)
                                                                                     {
+                                                                                        /**/debug3++;
                                                                                         tickTransactionOffsets[pendingTransaction->tick - system.initialTick][j] = nextTickTransactionOffset;
                                                                                         bs->CopyMem(&tickTransactions[nextTickTransactionOffset], (void*)pendingTransaction, transactionSize);
                                                                                         *((__m256i*)broadcastedFutureTickData.broadcastFutureTickData.tickData.transactionDigests[j]) = *((__m256i*)&entityPendingTransactionDigests[entityPendingTransactionIndices[index] * 32ULL]);
