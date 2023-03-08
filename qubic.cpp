@@ -23,13 +23,13 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 100
-#define VERSION_C 1
+#define VERSION_B 101
+#define VERSION_C 0
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
 static unsigned short SYSTEM_FILE_NAME[] = L"system";
-static unsigned short SOLUTION_FILE_NAME[] = L"solution.046";
+static unsigned short SOLUTION_FILE_NAME[] = L"solution.047";
 static unsigned short SPECTRUM_FILE_NAME[] = L"spectrum.???";
 
 #include <intrin.h>
@@ -4847,7 +4847,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define RESPONSE_QUEUE_LENGTH 65536 // Must be 65536
 #define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 90000
 #define SIGNATURE_SIZE 64
-#define SOLUTION_THRESHOLD 25
+#define SOLUTION_THRESHOLD 24
 #define SPECTRUM_CAPACITY 0x1000000ULL // Must be 2^N
 #define SPECTRUM_DEPTH 24 // Is derived from SPECTRUM_CAPACITY (=N)
 #define SPECTRUM_FRAGMENT_LENGTH 256
@@ -6942,7 +6942,7 @@ static BOOLEAN initialize()
                 {
                     bs->SetMem(&system, sizeof(system), 0);
 
-                    system.epoch = 46;
+                    system.epoch = 47;
                     system.epochBeginningHour = 12;
                     system.epochBeginningDay = 13;
                     system.epochBeginningMonth = 4;
@@ -6950,9 +6950,9 @@ static BOOLEAN initialize()
                 }
 
                 system.version = VERSION_B;
-                if (system.epoch == 46)
+                if (system.epoch == 47)
                 {
-                    system.initialTick = system.tick = 5090000;
+                    system.initialTick = system.tick = 5100000;
                 }
                 else
                 {
@@ -7059,7 +7059,7 @@ static BOOLEAN initialize()
 
         unsigned char randomSeed[32];
         bs->SetMem(randomSeed, 32, 0);
-        randomSeed[0] = 113;
+        randomSeed[0] = 114;
         randomSeed[1] = 187;
         randomSeed[2] = 115;
         randomSeed[3] = 131;
@@ -8398,6 +8398,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                                     if (!isKnown)
                                                                     {
+                                                                        log(L"A long performing task is...");
                                                                         for (unsigned int j = 0; j < SPECTRUM_CAPACITY; j++)
                                                                         {
                                                                             Transaction* pendingTransaction = (Transaction*)&entityPendingTransactions[j * MAX_TRANSACTION_SIZE];
@@ -8435,6 +8436,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                                 }
                                                                             }
                                                                         }
+                                                                        log(L"...over.");
                                                                     }
 
                                                                     if (isKnown)
@@ -8481,6 +8483,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                             if (!isKnown)
                                                             {
+                                                                log(L"A long performing task is...");
                                                                 for (unsigned int j = 0; j < SPECTRUM_CAPACITY; j++)
                                                                 {
                                                                     Transaction* pendingTransaction = (Transaction*)&entityPendingTransactions[j * MAX_TRANSACTION_SIZE];
@@ -8518,6 +8521,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                         }
                                                                     }
                                                                 }
+                                                                log(L"...over.");
                                                             }
 
                                                             if (isKnown)
@@ -9286,7 +9290,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if (receivedDataSize >= sizeof(RequestResponseHeader))
                                             {
                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                if (requestResponseHeader->size < sizeof(RequestResponseHeader) || requestResponseHeader->protocol < VERSION_B - 4 || requestResponseHeader->protocol > VERSION_B + 1)
+                                                if (requestResponseHeader->size < sizeof(RequestResponseHeader) || requestResponseHeader->protocol < VERSION_B || requestResponseHeader->protocol > VERSION_B + 1)
                                                 {
                                                     closePeer(&peers[i]);
                                                 }
