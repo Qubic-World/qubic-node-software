@@ -23,7 +23,7 @@ static const unsigned char knownPublicPeers[][4] = {
 ////////// Public Settings \\\\\\\\\\
 
 #define VERSION_A 1
-#define VERSION_B 101
+#define VERSION_B 102
 #define VERSION_C 0
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
@@ -4900,12 +4900,28 @@ typedef struct
     void* responseBuffer;
 } Processor;
 
-typedef struct
+struct RequestResponseHeader
 {
-    unsigned int size;
-    unsigned short protocol;
-    unsigned short type;
-} RequestResponseHeader;
+private:
+    unsigned char _size[3];
+
+public:
+    unsigned char protocol;
+    unsigned char dejavu[3];
+    unsigned char type;
+
+    inline unsigned int size()
+    {
+        return (*((unsigned int*)_size)) & 0xFFFFFF;
+    }
+
+    inline void setSize(unsigned int size)
+    {
+        _size[0] = (unsigned char)size;
+        _size[1] = (unsigned char)(size >> 8);
+        _size[2] = (unsigned char)(size >> 16);
+    }
+};
 
 #define EXCHANGE_PUBLIC_PEERS 0
 
@@ -5817,14 +5833,16 @@ static void push(Peer* peer, RequestResponseHeader* requestResponseHeader)
 {
     if (peer->tcp4Protocol && peer->isConnectedAccepted && !peer->isClosing)
     {
-        if (peer->dataToTransmitSize + requestResponseHeader->size > BUFFER_SIZE)
+        requestResponseHeader->dejavu[2] = requestResponseHeader->dejavu[1] = requestResponseHeader->dejavu[0] = 0;
+
+        if (peer->dataToTransmitSize + requestResponseHeader->size() > BUFFER_SIZE)
         {
             closePeer(peer);
         }
         else
         {
-            bs->CopyMem(&peer->dataToTransmit[peer->dataToTransmitSize], requestResponseHeader, requestResponseHeader->size);
-            peer->dataToTransmitSize += requestResponseHeader->size;
+            bs->CopyMem(&peer->dataToTransmit[peer->dataToTransmitSize], requestResponseHeader, requestResponseHeader->size());
+            peer->dataToTransmitSize += requestResponseHeader->size();
 
             _InterlockedIncrement64(&numberOfDisseminatedRequests);
         }
@@ -5894,8 +5912,8 @@ static void requestProcessor(void* ProcedureArgument)
                 const unsigned int saltedId = requestQueueElements[requestQueueElementTail].saltedId;
 
                 RequestResponseHeader* requestHeader = (RequestResponseHeader*)&requestQueueBuffer[requestQueueElements[requestQueueElementTail].offset];
-                bs->CopyMem(processor->requestBuffer, requestHeader, requestHeader->size);
-                requestQueueBufferTail += requestHeader->size;
+                bs->CopyMem(processor->requestBuffer, requestHeader, requestHeader->size());
+                requestQueueBufferTail += requestHeader->size();
                 if (requestQueueBufferTail > REQUEST_QUEUE_BUFFER_SIZE - BUFFER_SIZE)
                 {
                     requestQueueBufferTail = 0;
@@ -5904,8 +5922,7 @@ static void requestProcessor(void* ProcedureArgument)
 
                 RELEASE(requestQueueTailLock);
 
-                bool mustBeRemovedFromDejavu = false;
-                responseHeader->size = 0;
+                responseHeader->setSize(0);
 
                 switch (requestHeader->type)
                 {
@@ -5955,7 +5972,7 @@ static void requestProcessor(void* ProcedureArgument)
                                 }
                             }
 
-                            responseHeader->size = requestHeader->size;
+                            responseHeader->setSize(requestHeader->size());
                             processor->peer = NULL;
                         }
                     }
@@ -5968,7 +5985,7 @@ static void requestProcessor(void* ProcedureArgument)
                     if (request->computors.epoch > broadcastedComputors.broadcastComputors.computors.epoch)
                     {
                         unsigned char digest[32];
-                        KangarooTwelve((unsigned char*)request, requestHeader->size - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
+                        KangarooTwelve((unsigned char*)request, requestHeader->size() - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
                         if (verify(adminPublicKey, digest, request->computors.signature))
                         {
                             bs->CopyMem(&broadcastedComputors.broadcastComputors.computors, &request->computors, sizeof(Computors));
@@ -5993,7 +6010,7 @@ static void requestProcessor(void* ProcedureArgument)
                                 }
                             }
 
-                            responseHeader->size = requestHeader->size;
+                            responseHeader->setSize(requestHeader->size());
                             processor->peer = NULL;
                         }
                     }
@@ -6110,7 +6127,7 @@ static void requestProcessor(void* ProcedureArgument)
 
                             RELEASE(tickLocks[request->tick.computorIndex]);
 
-                            responseHeader->size = requestHeader->size;
+                            responseHeader->setSize(requestHeader->size());
                             processor->peer = NULL;
                         }
                     }
@@ -6204,7 +6221,7 @@ static void requestProcessor(void* ProcedureArgument)
                                         }
                                     }
 
-                                    responseHeader->size = requestHeader->size;
+                                    responseHeader->setSize(requestHeader->size());
                                     processor->peer = NULL;
                                 }
                             }
@@ -6224,7 +6241,7 @@ static void requestProcessor(void* ProcedureArgument)
                         KangarooTwelve((unsigned char*)request, transactionSize - SIGNATURE_SIZE, digest, sizeof(digest));
                         if (verify(request->sourcePublicKey, digest, (((const unsigned char*)request) + sizeof(Transaction) + request->inputSize)))
                         {
-                            responseHeader->size = requestHeader->size;
+                            responseHeader->setSize(requestHeader->size());
                             processor->peer = NULL;
 
                             const int spectrumIndex = ::spectrumIndex(request->sourcePublicKey);
@@ -6289,23 +6306,23 @@ static void requestProcessor(void* ProcedureArgument)
                             }
                         }
 
-                        responseHeader->size = requestHeader->size;
+                        responseHeader->setSize(requestHeader->size());
                         processor->peer = NULL;
                     }
                 }
                 break;
                 }
 
-                if (responseHeader->size)
+                if (responseHeader->size())
                 {
                     ACQUIRE(responseQueueHeadLock);
 
-                    if ((responseQueueBufferHead >= responseQueueBufferTail || responseQueueBufferHead + responseHeader->size < responseQueueBufferTail)
+                    if ((responseQueueBufferHead >= responseQueueBufferTail || responseQueueBufferHead + responseHeader->size() < responseQueueBufferTail)
                         && (unsigned short)(responseQueueElementHead + 1) != responseQueueElementTail)
                     {
                         responseQueueElements[responseQueueElementHead].offset = responseQueueBufferHead;
-                        bs->CopyMem(&responseQueueBuffer[responseQueueBufferHead], processor->responseBuffer, responseHeader->size);
-                        responseQueueBufferHead += responseHeader->size;
+                        bs->CopyMem(&responseQueueBuffer[responseQueueBufferHead], processor->responseBuffer, responseHeader->size());
+                        responseQueueBufferHead += responseHeader->size();
                         responseQueueElements[responseQueueElementHead].peer = peer;
                         if (responseQueueBufferHead > RESPONSE_QUEUE_BUFFER_SIZE - BUFFER_SIZE)
                         {
@@ -6316,12 +6333,6 @@ static void requestProcessor(void* ProcedureArgument)
                     }
 
                     RELEASE(responseQueueHeadLock);
-                }
-
-                if (mustBeRemovedFromDejavu)
-                {
-                    dejavu0[saltedId >> 6] &= ~(1ULL << (saltedId & 63));
-                    dejavu1[saltedId >> 6] &= ~(1ULL << (saltedId & 63));
                 }
 
                 _InterlockedIncrement64(&numberOfProcessedRequests);
@@ -6714,7 +6725,7 @@ static BOOLEAN initialize()
     bs->SetMem(peers, sizeof(peers), 0);
     bs->SetMem(publicPeers, sizeof(publicPeers), 0);
 
-    broadcastedComputors.header.size = sizeof(broadcastedComputors.header) + sizeof(broadcastedComputors.broadcastComputors);
+    broadcastedComputors.header.setSize(sizeof(broadcastedComputors.header) + sizeof(broadcastedComputors.broadcastComputors));
     broadcastedComputors.header.protocol = VERSION_B;
     broadcastedComputors.header.type = BROADCAST_COMPUTORS;
     broadcastedComputors.broadcastComputors.computors.epoch = 0;
@@ -6729,40 +6740,40 @@ static BOOLEAN initialize()
 
     for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
     {
-        broadcastedSolutions[i].header.size = sizeof(broadcastedSolutions[i]);
+        broadcastedSolutions[i].header.setSize(sizeof(broadcastedSolutions[i]));
         broadcastedSolutions[i].header.protocol = VERSION_B;
         broadcastedSolutions[i].header.type = BROADCAST_RESOURCE_TESTING_SOLUTION;
     }
-    broadcastedTick.header.size = sizeof(broadcastedTick);
+    broadcastedTick.header.setSize(sizeof(broadcastedTick));
     broadcastedTick.header.protocol = VERSION_B;
     broadcastedTick.header.type = BROADCAST_TICK;
-    broadcastedFutureTickData.header.size = sizeof(broadcastedFutureTickData);
+    broadcastedFutureTickData.header.setSize(sizeof(broadcastedFutureTickData));
     broadcastedFutureTickData.header.protocol = VERSION_B;
     broadcastedFutureTickData.header.type = BROADCAST_FUTURE_TICK_DATA;
-    requestedComputors.header.size = sizeof(requestedComputors);
+    requestedComputors.header.setSize(sizeof(requestedComputors));
     requestedComputors.header.protocol = VERSION_B;
     requestedComputors.header.type = REQUEST_COMPUTORS;
-    requestedQuorumTick.header.size = sizeof(requestedQuorumTick);
+    requestedQuorumTick.header.setSize(sizeof(requestedQuorumTick));
     requestedQuorumTick.header.protocol = VERSION_B;
     requestedQuorumTick.header.type = REQUEST_QUORUM_TICK;
-    requestedTickData.header.size = sizeof(requestedTickData);
+    requestedTickData.header.setSize(sizeof(requestedTickData));
     requestedTickData.header.protocol = VERSION_B;
     requestedTickData.header.type = REQUEST_TICK_DATA;
-    respondedMinerPublicKey.header.size = sizeof(respondedMinerPublicKey);
+    respondedMinerPublicKey.header.setSize(sizeof(respondedMinerPublicKey));
     respondedMinerPublicKey.header.protocol = VERSION_B;
     respondedMinerPublicKey.header.type = RESPOND_MINER_PUBLIC_KEY;
-    respondedCurrentTickInfo.header.size = sizeof(respondedCurrentTickInfo);
+    respondedCurrentTickInfo.header.setSize(sizeof(respondedCurrentTickInfo));
     respondedCurrentTickInfo.header.protocol = VERSION_B;
     respondedCurrentTickInfo.header.type = RESPOND_CURRENT_TICK_INFO;
-    requestedTickTransactions.header.size = sizeof(requestedTickTransactions);
+    requestedTickTransactions.header.setSize(sizeof(requestedTickTransactions));
     requestedTickTransactions.header.protocol = VERSION_B;
     requestedTickTransactions.header.type = REQUEST_TICK_TRANSACTIONS;
     respondedTickTransaction.header.protocol = VERSION_B;
     respondedTickTransaction.header.type = RESPOND_TICK_TRANSACTION;
-    respondedEntity.header.size = sizeof(respondedEntity);
+    respondedEntity.header.setSize(sizeof(respondedEntity));
     respondedEntity.header.protocol = VERSION_B;
     respondedEntity.header.type = RESPOND_ENTITY;
-    requestedInitialSpectrumFragment.header.size = sizeof(requestedInitialSpectrumFragment);
+    requestedInitialSpectrumFragment.header.setSize(sizeof(requestedInitialSpectrumFragment));
     requestedInitialSpectrumFragment.header.protocol = VERSION_B;
     requestedInitialSpectrumFragment.header.type = REQUEST_INITIAL_SPECTRUM_FRAGMENT;
     respondedInitialSpectrumFragment.header.protocol = VERSION_B;
@@ -6952,7 +6963,7 @@ static BOOLEAN initialize()
                 system.version = VERSION_B;
                 if (system.epoch == 47)
                 {
-                    system.initialTick = system.tick = 5100000;
+                    system.initialTick = system.tick = 5110000;
                 }
                 else
                 {
@@ -7743,6 +7754,18 @@ static void processKeyPresses()
             {
                 if (faultyComputorFlags[i >> 6] & (1ULL << (i & 63)))
                 {
+                    getIdentity(broadcastedComputors.broadcastComputors.computors.publicKeys[i], message, false);
+                    appendText(message, L" = ");
+                    long long amount = 0;
+                    const int spectrumIndex = ::spectrumIndex(broadcastedComputors.broadcastComputors.computors.publicKeys[i]);
+                    if (spectrumIndex >= 0)
+                    {
+                        amount = spectrum[spectrumIndex].incomingAmount - spectrum[spectrumIndex].outgoingAmount;
+                    }
+                    appendNumber(message, amount, TRUE);
+                    appendText(message, L" qus");
+                    log(message);
+
                     numberOfFaultyComputors++;
                 }
             }
@@ -8304,7 +8327,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     unsigned char nonce[32];
                                                     unsigned char signature[SIGNATURE_SIZE];
                                                 } packet;
-                                                packet.header.size = sizeof(packet);
+                                                packet.header.setSize(sizeof(packet));
                                                 packet.header.protocol = VERSION_B;
                                                 packet.header.type = BROADCAST_TRANSACTION;
                                                 *((__m256i*)packet.transaction.sourcePublicKey) = *((__m256i*)miningPublicKeys[i]);
@@ -8398,7 +8421,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                                     if (!isKnown)
                                                                     {
-                                                                        log(L"A long performing task is...");
                                                                         for (unsigned int j = 0; j < SPECTRUM_CAPACITY; j++)
                                                                         {
                                                                             Transaction* pendingTransaction = (Transaction*)&entityPendingTransactions[j * MAX_TRANSACTION_SIZE];
@@ -8436,7 +8458,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                                 }
                                                                             }
                                                                         }
-                                                                        log(L"...over.");
                                                                     }
 
                                                                     if (isKnown)
@@ -8483,7 +8504,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                                             if (!isKnown)
                                                             {
-                                                                log(L"A long performing task is...");
                                                                 for (unsigned int j = 0; j < SPECTRUM_CAPACITY; j++)
                                                                 {
                                                                     Transaction* pendingTransaction = (Transaction*)&entityPendingTransactions[j * MAX_TRANSACTION_SIZE];
@@ -8521,7 +8541,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                         }
                                                                     }
                                                                 }
-                                                                log(L"...over.");
                                                             }
 
                                                             if (isKnown)
@@ -9204,20 +9223,20 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             }
 
                                             RequestResponseHeader* requestHeader = (RequestResponseHeader*)peers[i].dataToTransmit;
-                                            requestHeader->size = sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers);
+                                            requestHeader->setSize(sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers));
                                             requestHeader->protocol = VERSION_B;
                                             requestHeader->type = EXCHANGE_PUBLIC_PEERS;
 
                                             char* ptr = (char*)&peers[i].dataToTransmit[sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers)];
                                                     
-                                            peers[i].dataToTransmitSize = requestHeader->size;
+                                            peers[i].dataToTransmitSize = requestHeader->size();
 
                                             if (!broadcastedComputors.broadcastComputors.computors.epoch
                                                 || broadcastedComputors.broadcastComputors.computors.epoch != system.epoch)
                                             {
-                                                bs->CopyMem(ptr, &requestedComputors, requestedComputors.header.size);
-                                                ptr += requestedComputors.header.size;
-                                                peers[i].dataToTransmitSize += requestedComputors.header.size;
+                                                bs->CopyMem(ptr, &requestedComputors, requestedComputors.header.size());
+                                                ptr += requestedComputors.header.size();
+                                                peers[i].dataToTransmitSize += requestedComputors.header.size();
                                                 _InterlockedIncrement64(&numberOfDisseminatedRequests);
                                             }
 
@@ -9290,13 +9309,13 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if (receivedDataSize >= sizeof(RequestResponseHeader))
                                             {
                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                if (requestResponseHeader->size < sizeof(RequestResponseHeader) || requestResponseHeader->protocol < VERSION_B || requestResponseHeader->protocol > VERSION_B + 1)
+                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol < VERSION_B || requestResponseHeader->protocol > VERSION_B + 1)
                                                 {
                                                     closePeer(&peers[i]);
                                                 }
                                                 else
                                                 {
-                                                    if (receivedDataSize >= requestResponseHeader->size)
+                                                    if (receivedDataSize >= requestResponseHeader->size())
                                                     {
                                                         switch (requestResponseHeader->type)
                                                         {
@@ -9346,20 +9365,20 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     }
 
                                                                     RequestResponseHeader* responseHeader = (RequestResponseHeader*)responseBuffer;
-                                                                    responseHeader->size = sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers);
+                                                                    responseHeader->setSize(sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers));
                                                                     responseHeader->protocol = VERSION_B;
                                                                     responseHeader->type = EXCHANGE_PUBLIC_PEERS;
 
                                                                     char* ptr = ((char*)responseBuffer) + (sizeof(RequestResponseHeader) + sizeof(ExchangePublicPeers));
 
-                                                                    peers[i].dataToTransmitSize += responseHeader->size;
+                                                                    peers[i].dataToTransmitSize += responseHeader->size();
 
                                                                     if (!broadcastedComputors.broadcastComputors.computors.epoch
                                                                         || broadcastedComputors.broadcastComputors.computors.epoch != system.epoch)
                                                                     {
-                                                                        bs->CopyMem(ptr, &requestedComputors, requestedComputors.header.size);
-                                                                        ptr += requestedComputors.header.size;
-                                                                        peers[i].dataToTransmitSize += requestedComputors.header.size;
+                                                                        bs->CopyMem(ptr, &requestedComputors, requestedComputors.header.size());
+                                                                        ptr += requestedComputors.header.size();
+                                                                        peers[i].dataToTransmitSize += requestedComputors.header.size();
                                                                         _InterlockedIncrement64(&numberOfDisseminatedRequests);
                                                                     }
 
@@ -9451,7 +9470,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                             RequestInitialSpectrumFragment* request = (RequestInitialSpectrumFragment*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader));
                                                             if (request->fragmentIndex < SPECTRUM_CAPACITY / SPECTRUM_FRAGMENT_LENGTH)
                                                             {
-                                                                respondedInitialSpectrumFragment.header.size = sizeof(RequestResponseHeader) + sizeof(RespondInitialSpectrumFragment);
+                                                                respondedInitialSpectrumFragment.header.setSize(sizeof(RequestResponseHeader) + sizeof(RespondInitialSpectrumFragment));
                                                                 respondedInitialSpectrumFragment.fragmentIndex = request->fragmentIndex;
 
                                                                 unsigned int initialSpectrumDigestInputOffset = 0;
@@ -9474,7 +9493,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                 {
                                                                     if (!EQUAL(*((__m256i*)initSpectrum[request->fragmentIndex * SPECTRUM_FRAGMENT_LENGTH + j].publicKey), ZERO))
                                                                     {
-                                                                        respondedInitialSpectrumFragment.header.size += sizeof(Entity);
+                                                                        respondedInitialSpectrumFragment.header.setSize(respondedInitialSpectrumFragment.header.size() + sizeof(Entity));
                                                                         respondedInitialSpectrumFragment.entityFlags[j >> 3] |= (1 << (j & 7));
                                                                         bs->CopyMem(entity, &initSpectrum[request->fragmentIndex * SPECTRUM_FRAGMENT_LENGTH + j], sizeof(Entity));
                                                                         entity++;
@@ -9527,13 +9546,13 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                             *((__m256i*)respondedMinerPublicKey.respondMinerPublicKey.computorPublicKey) = *((__m256i*)miningPublicKeys[miningIdIndex]);
                                                             if (peers[i].tcp4Protocol && peers[i].isConnectedAccepted && !peers[i].isClosing)
                                                             {
-                                                                if (peers[i].dataToTransmitSize + respondedMinerPublicKey.header.size > BUFFER_SIZE)
+                                                                if (peers[i].dataToTransmitSize + respondedMinerPublicKey.header.size() > BUFFER_SIZE)
                                                                 {
                                                                     peers[i].dataToTransmitSize = 0;
                                                                 }
 
-                                                                bs->CopyMem(&peers[i].dataToTransmit[peers[i].dataToTransmitSize], &respondedMinerPublicKey.header, respondedMinerPublicKey.header.size);
-                                                                peers[i].dataToTransmitSize += respondedMinerPublicKey.header.size;
+                                                                bs->CopyMem(&peers[i].dataToTransmit[peers[i].dataToTransmitSize], &respondedMinerPublicKey.header, respondedMinerPublicKey.header.size());
+                                                                peers[i].dataToTransmitSize += respondedMinerPublicKey.header.size();
 
                                                                 _InterlockedIncrement64(&numberOfDisseminatedRequests);
                                                             }
@@ -9697,7 +9716,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                         {
                                                                             const Transaction* transaction = (Transaction*)&tickTransactions[tickTransactionOffsets[request->tick - system.initialTick][index]];
                                                                             const unsigned int transactionSize = sizeof(Transaction) + transaction->inputSize + SIGNATURE_SIZE;
-                                                                            respondedTickTransaction.header.size = sizeof(respondedTickTransaction.header) + transactionSize;
+                                                                            respondedTickTransaction.header.setSize(sizeof(respondedTickTransaction.header) + transactionSize);
                                                                             bs->CopyMem(&respondedTickTransaction.transactionBuffer, (void*)transaction, transactionSize);
                                                                             push(&peers[i], &respondedTickTransaction.header);
                                                                         }
@@ -9806,14 +9825,14 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                 || (requestResponseHeader->type == BROADCAST_TICK && ((BroadcastTick*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader)))->tick.tick == system.tick)
                                                                 || (requestResponseHeader->type == BROADCAST_FUTURE_TICK_DATA && ((BroadcastFutureTickData*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader)))->tickData.tick == system.tick + 1))
                                                             {
-                                                                if ((requestQueueBufferHead >= requestQueueBufferTail || requestQueueBufferHead + requestResponseHeader->size < requestQueueBufferTail)
+                                                                if ((requestQueueBufferHead >= requestQueueBufferTail || requestQueueBufferHead + requestResponseHeader->size() < requestQueueBufferTail)
                                                                     && (unsigned short)(requestQueueElementHead + 1) != requestQueueElementTail)
                                                                 {
                                                                     dejavu0[saltedId >> 6] |= (1ULL << (saltedId & 63));
 
                                                                     requestQueueElements[requestQueueElementHead].offset = requestQueueBufferHead;
-                                                                    bs->CopyMem(&requestQueueBuffer[requestQueueBufferHead], peers[i].receiveBuffer, requestResponseHeader->size);
-                                                                    requestQueueBufferHead += requestResponseHeader->size;
+                                                                    bs->CopyMem(&requestQueueBuffer[requestQueueBufferHead], peers[i].receiveBuffer, requestResponseHeader->size());
+                                                                    requestQueueBufferHead += requestResponseHeader->size();
                                                                     requestQueueElements[requestQueueElementHead].peer = &peers[i];
                                                                     if (requestQueueBufferHead > REQUEST_QUEUE_BUFFER_SIZE - BUFFER_SIZE)
                                                                     {
@@ -9843,7 +9862,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                         }
                                                         }
 
-                                                        bs->CopyMem(peers[i].receiveBuffer, ((char*)peers[i].receiveBuffer) + requestResponseHeader->size, receivedDataSize -= requestResponseHeader->size);
+                                                        bs->CopyMem(peers[i].receiveBuffer, ((char*)peers[i].receiveBuffer) + requestResponseHeader->size(), receivedDataSize -= requestResponseHeader->size());
                                                         peers[i].receiveData.FragmentTable[0].FragmentBuffer = ((char*)peers[i].receiveBuffer) + receivedDataSize;
 
                                                         goto iteration;
@@ -10079,7 +10098,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             {
                                 pushToSome(responseHeader);
                             }
-                            responseQueueBufferTail += responseHeader->size;
+                            responseQueueBufferTail += responseHeader->size();
                             if (responseQueueBufferTail > RESPONSE_QUEUE_BUFFER_SIZE - BUFFER_SIZE)
                             {
                                 responseQueueBufferTail = 0;
