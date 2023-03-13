@@ -24,7 +24,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 102
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -9825,6 +9825,29 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                 || (requestResponseHeader->type == BROADCAST_TICK && ((BroadcastTick*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader)))->tick.tick == system.tick)
                                                                 || (requestResponseHeader->type == BROADCAST_FUTURE_TICK_DATA && ((BroadcastFutureTickData*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader)))->tickData.tick == system.tick + 1))
                                                             {
+                                                                unsigned int filledRequestQueueBufferSize = (requestQueueBufferHead >= requestQueueBufferTail) ? (requestQueueBufferHead - requestQueueBufferTail) : (REQUEST_QUEUE_BUFFER_SIZE - (requestQueueBufferTail - requestQueueBufferHead));
+                                                                unsigned int filledResponseQueueBufferSize = (responseQueueBufferHead >= responseQueueBufferTail) ? (responseQueueBufferHead - responseQueueBufferTail) : (RESPONSE_QUEUE_BUFFER_SIZE - (responseQueueBufferTail - responseQueueBufferHead));
+                                                                unsigned int filledRequestQueueLength = (requestQueueElementHead >= requestQueueElementTail) ? (requestQueueElementHead - requestQueueElementTail) : (REQUEST_QUEUE_LENGTH - (requestQueueElementTail - requestQueueElementHead));
+                                                                unsigned int filledResponseQueueLength = (responseQueueElementHead >= responseQueueElementTail) ? (responseQueueElementHead - responseQueueElementTail) : (RESPONSE_QUEUE_LENGTH - (responseQueueElementTail - responseQueueElementHead));
+                                                                setNumber(message, filledRequestQueueBufferSize, TRUE);
+                                                                appendText(message, L" (");
+                                                                appendNumber(message, filledRequestQueueLength, TRUE);
+                                                                appendText(message, L") # ");
+                                                                appendNumber(message, filledResponseQueueBufferSize, TRUE);
+                                                                appendText(message, L" (");
+                                                                appendNumber(message, filledResponseQueueLength, TRUE);
+                                                                appendText(message, L") | Average processing time = ");
+                                                                if (queueProcessingDenominator)
+                                                                {
+                                                                    appendNumber(message, (queueProcessingNumerator / queueProcessingDenominator) * 1000000 / frequency, TRUE);
+                                                                }
+                                                                else
+                                                                {
+                                                                    appendText(message, L"?");
+                                                                }
+                                                                appendText(message, L" microseconds.");
+                                                                log(message);
+
                                                                 if ((requestQueueBufferHead >= requestQueueBufferTail || requestQueueBufferHead + requestResponseHeader->size() < requestQueueBufferTail)
                                                                     && (unsigned short)(requestQueueElementHead + 1) != requestQueueElementTail)
                                                                 {
@@ -10082,6 +10105,29 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 pushToAll(&requestedTickTransactions.header);
                             }
                         }
+
+                        unsigned int filledRequestQueueBufferSize = (requestQueueBufferHead >= requestQueueBufferTail) ? (requestQueueBufferHead - requestQueueBufferTail) : (REQUEST_QUEUE_BUFFER_SIZE - (requestQueueBufferTail - requestQueueBufferHead));
+                        unsigned int filledResponseQueueBufferSize = (responseQueueBufferHead >= responseQueueBufferTail) ? (responseQueueBufferHead - responseQueueBufferTail) : (RESPONSE_QUEUE_BUFFER_SIZE - (responseQueueBufferTail - responseQueueBufferHead));
+                        unsigned int filledRequestQueueLength = (requestQueueElementHead >= requestQueueElementTail) ? (requestQueueElementHead - requestQueueElementTail) : (REQUEST_QUEUE_LENGTH - (requestQueueElementTail - requestQueueElementHead));
+                        unsigned int filledResponseQueueLength = (responseQueueElementHead >= responseQueueElementTail) ? (responseQueueElementHead - responseQueueElementTail) : (RESPONSE_QUEUE_LENGTH - (responseQueueElementTail - responseQueueElementHead));
+                        setNumber(message, filledRequestQueueBufferSize, TRUE);
+                        appendText(message, L" (");
+                        appendNumber(message, filledRequestQueueLength, TRUE);
+                        appendText(message, L") @ ");
+                        appendNumber(message, filledResponseQueueBufferSize, TRUE);
+                        appendText(message, L" (");
+                        appendNumber(message, filledResponseQueueLength, TRUE);
+                        appendText(message, L") | Average processing time = ");
+                        if (queueProcessingDenominator)
+                        {
+                            appendNumber(message, (queueProcessingNumerator / queueProcessingDenominator) * 1000000 / frequency, TRUE);
+                        }
+                        else
+                        {
+                            appendText(message, L"?");
+                        }
+                        appendText(message, L" microseconds.");
+                        log(message);
 
                         const unsigned short responseQueueElementHead = ::responseQueueElementHead;
                         while (responseQueueElementTail != responseQueueElementHead)
