@@ -23,7 +23,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 104
-#define VERSION_C 2
+#define VERSION_C 3
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -5315,13 +5315,11 @@ static unsigned char* requestQueueBuffer = NULL;
 static unsigned char* responseQueueBuffer = NULL;
 static struct Request
 {
-    unsigned long long enqueueingTick;
     Peer* peer;
     unsigned int offset;
 } requestQueueElements[REQUEST_QUEUE_LENGTH];
 static struct Response
 {
-    unsigned long long enqueueingTick;
     Peer* peer;
     unsigned int offset;
 } responseQueueElements[RESPONSE_QUEUE_LENGTH];
@@ -5331,7 +5329,7 @@ static volatile unsigned short requestQueueElementHead = 0, requestQueueElementT
 static volatile unsigned short responseQueueElementHead = 0, responseQueueElementTail = 0;
 static volatile char requestQueueTailLock = 0;
 static volatile char responseQueueHeadLock = 0;
-static unsigned long long queueProcessingNumerator = 0, queueProcessingDenominator = 0;
+static volatile unsigned long long queueProcessingNumerator = 0, queueProcessingDenominator = 0;
 
 static EFI_GUID tcp4ServiceBindingProtocolGuid = EFI_TCP4_SERVICE_BINDING_PROTOCOL_GUID;
 static EFI_SERVICE_BINDING_PROTOCOL* tcp4ServiceBindingProtocol;
@@ -5858,7 +5856,7 @@ static void pushToAll(RequestResponseHeader* requestResponseHeader)
     }
 }
 
-static void enqueueResponse(const unsigned long long enqueueingTick, Peer* peer, RequestResponseHeader* responseHeader)
+static void enqueueResponse(Peer* peer, RequestResponseHeader* responseHeader)
 {
     ACQUIRE(responseQueueHeadLock);
 
@@ -5868,7 +5866,6 @@ static void enqueueResponse(const unsigned long long enqueueingTick, Peer* peer,
         responseQueueElements[responseQueueElementHead].offset = responseQueueBufferHead;
         bs->CopyMem(&responseQueueBuffer[responseQueueBufferHead], responseHeader, responseHeader->size());
         responseQueueBufferHead += responseHeader->size();
-        responseQueueElements[responseQueueElementHead].enqueueingTick = enqueueingTick;
         responseQueueElements[responseQueueElementHead].peer = peer;
         if (responseQueueBufferHead > RESPONSE_QUEUE_BUFFER_SIZE - BUFFER_SIZE)
         {
@@ -5880,7 +5877,7 @@ static void enqueueResponse(const unsigned long long enqueueingTick, Peer* peer,
     RELEASE(responseQueueHeadLock);
 }
 
-static void enqueueResponse(const unsigned long long enqueueingTick, Peer* peer, const bool randomizeDejavu, const unsigned char type, void* data, unsigned int dataSize)
+static void enqueueResponse(Peer* peer, const bool randomizeDejavu, const unsigned char type, void* data, unsigned int dataSize)
 {
     ACQUIRE(responseQueueHeadLock);
 
@@ -5902,7 +5899,6 @@ static void enqueueResponse(const unsigned long long enqueueingTick, Peer* peer,
         responseHeader->setType(type);
         bs->CopyMem(&responseQueueBuffer[responseQueueBufferHead + sizeof(RequestResponseHeader)], data, dataSize);
         responseQueueBufferHead += responseHeader->size();
-        responseQueueElements[responseQueueElementHead].enqueueingTick = enqueueingTick;
         responseQueueElements[responseQueueElementHead].peer = peer;
         if (responseQueueBufferHead > RESPONSE_QUEUE_BUFFER_SIZE - BUFFER_SIZE)
         {
@@ -5936,11 +5932,12 @@ static void requestProcessor(void* ProcedureArgument)
             }
             else
             {
+                const unsigned long long beginningTick = __rdtsc();
+
                 RequestResponseHeader* requestHeader = (RequestResponseHeader*)&requestQueueBuffer[requestQueueElements[requestQueueElementTail].offset];
                 bs->CopyMem(header, requestHeader, requestHeader->size());
                 requestQueueBufferTail += requestHeader->size();
 
-                const unsigned long long enqueueingTick = requestQueueElements[requestQueueElementTail].enqueueingTick;
                 Peer* peer = requestQueueElements[requestQueueElementTail].peer;
 
                 if (requestQueueBufferTail > REQUEST_QUEUE_BUFFER_SIZE - BUFFER_SIZE)
@@ -5992,7 +5989,7 @@ static void requestProcessor(void* ProcedureArgument)
                         request->resourceTestingSolution.computorPublicKey[0] ^= BROADCAST_RESOURCE_TESTING_SOLUTION;
                         if (verify(request->resourceTestingSolution.computorPublicKey, digest, request->resourceTestingSolution.signature))
                         {
-                            enqueueResponse(enqueueingTick, NULL, header);
+                            enqueueResponse(NULL, header);
 
                             for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
                             {
@@ -6044,7 +6041,7 @@ static void requestProcessor(void* ProcedureArgument)
                         {
                             if (header->isDejavuZero())
                             {
-                                enqueueResponse(enqueueingTick, NULL, header);
+                                enqueueResponse(NULL, header);
                             }
 
                             bs->CopyMem(&broadcastedComputors.broadcastComputors.computors, &request->computors, sizeof(Computors));
@@ -6094,7 +6091,7 @@ static void requestProcessor(void* ProcedureArgument)
                         {
                             if (header->isDejavuZero())
                             {
-                                enqueueResponse(enqueueingTick, NULL, header);
+                                enqueueResponse(NULL, header);
                             }
 
                             ACQUIRE(tickLocks[request->tick.computorIndex]);
@@ -6242,7 +6239,7 @@ static void requestProcessor(void* ProcedureArgument)
                                 {
                                     if (header->isDejavuZero())
                                     {
-                                        enqueueResponse(enqueueingTick, NULL, header);
+                                        enqueueResponse(NULL, header);
                                     }
 
                                     if (request->tickData.tick == system.tick + 1 && targetNextTickDataDigestIsKnown)
@@ -6303,7 +6300,7 @@ static void requestProcessor(void* ProcedureArgument)
                         {
                             if (header->isDejavuZero())
                             {
-                                enqueueResponse(enqueueingTick, NULL, header);
+                                enqueueResponse(NULL, header);
                             }
 
                             const int spectrumIndex = ::spectrumIndex(request->sourcePublicKey);
@@ -6353,7 +6350,7 @@ static void requestProcessor(void* ProcedureArgument)
                 {
                     if (broadcastedComputors.broadcastComputors.computors.epoch)
                     {
-                        enqueueResponse(enqueueingTick, peer, true, BROADCAST_COMPUTORS, &broadcastedComputors.broadcastComputors, sizeof(broadcastedComputors.broadcastComputors));
+                        enqueueResponse(peer, true, BROADCAST_COMPUTORS, &broadcastedComputors.broadcastComputors, sizeof(broadcastedComputors.broadcastComputors));
                     }
                 }
                 break;
@@ -6382,7 +6379,7 @@ static void requestProcessor(void* ProcedureArgument)
                                 {
                                     if (!EQUAL(*((__m256i*)ticks[offset].varStruct.nextTick.zero), ZERO) || !(request->quorumTick.voteFlags[index >> 2] & (1 << ((index & 3) << 1))))
                                     {
-                                        enqueueResponse(enqueueingTick, peer, true, BROADCAST_TICK, &ticks[offset], sizeof(Tick));
+                                        enqueueResponse(peer, true, BROADCAST_TICK, &ticks[offset], sizeof(Tick));
                                     }
                                 }
                             }
@@ -6399,7 +6396,7 @@ static void requestProcessor(void* ProcedureArgument)
                     if (request->requestedTickData.tick > system.initialTick && request->requestedTickData.tick < system.initialTick + MAX_NUMBER_OF_TICKS_PER_EPOCH
                         && tickData[request->requestedTickData.tick - system.initialTick].epoch == system.epoch)
                     {
-                        enqueueResponse(enqueueingTick, peer, true, BROADCAST_FUTURE_TICK_DATA, &tickData[request->requestedTickData.tick - system.initialTick], sizeof(TickData));
+                        enqueueResponse(peer, true, BROADCAST_FUTURE_TICK_DATA, &tickData[request->requestedTickData.tick - system.initialTick], sizeof(TickData));
                     }
                 }
                 break;
@@ -6425,7 +6422,7 @@ static void requestProcessor(void* ProcedureArgument)
                                 && tickTransactionOffsets[request->tick - system.initialTick][index])
                             {
                                 const Transaction* transaction = (Transaction*)&tickTransactions[tickTransactionOffsets[request->tick - system.initialTick][index]];
-                                enqueueResponse(enqueueingTick, peer, true, BROADCAST_TRANSACTION, (void*)transaction, sizeof(Transaction) + transaction->inputSize + SIGNATURE_SIZE);
+                                enqueueResponse(peer, true, BROADCAST_TRANSACTION, (void*)transaction, sizeof(Transaction) + transaction->inputSize + SIGNATURE_SIZE);
                             }
 
                             tickTransactionIndices[index] = tickTransactionIndices[--numberOfTickTransactions];
@@ -6466,7 +6463,7 @@ static void requestProcessor(void* ProcedureArgument)
                         bs->SetMem(&packet.currentTickInfo, sizeof(CurrentTickInfo), 0);
                     }
 
-                    enqueueResponse(enqueueingTick, peer, &packet.header);
+                    enqueueResponse(peer, &packet.header);
                 }
                 break;
 
@@ -6514,7 +6511,7 @@ static void requestProcessor(void* ProcedureArgument)
                             }
                         }
 
-                        enqueueResponse(enqueueingTick, peer, &packet.header);
+                        enqueueResponse(peer, &packet.header);
                     }
                 }
                 break;
@@ -6526,7 +6523,7 @@ static void requestProcessor(void* ProcedureArgument)
                     KangarooTwelve((unsigned char*)&request->tick, sizeof(request->tick), digest, sizeof(digest));
                     if (verify(adminPublicKey, digest, request->signature))
                     {
-                        enqueueResponse(enqueueingTick, NULL, header);
+                        enqueueResponse(NULL, header);
 
                         if (request->tick == system.tick && EQUAL(*((__m256i*)triggerSignature), ZERO))
                         {
@@ -6543,6 +6540,9 @@ static void requestProcessor(void* ProcedureArgument)
                 }
                 break;
                 }
+
+                queueProcessingNumerator += __rdtsc() - beginningTick;
+                queueProcessingDenominator++;
 
                 _InterlockedIncrement64(&numberOfProcessedRequests);
             }
@@ -7898,10 +7898,10 @@ static void logInfo()
     {
         appendText(message, L"?");
     }
-    appendText(message, L" microseconds.");
-    log(message);
     queueProcessingNumerator = 0;
     queueProcessingDenominator = 0;
+    appendText(message, L" microseconds.");
+    log(message);
 }
 
 static void processKeyPresses()
@@ -9600,7 +9600,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                 {
                                                                     requestQueueBufferHead = 0;
                                                                 }
-                                                                requestQueueElements[requestQueueElementHead].enqueueingTick = __rdtsc();
                                                                 requestQueueElementHead++;
 
                                                                 if (!(--dejavuSwapCounter))
@@ -9852,9 +9851,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                         {
                             while (responseQueueElementTail != responseQueueElementHead)
                             {
-                                queueProcessingNumerator += __rdtsc() - responseQueueElements[responseQueueElementTail].enqueueingTick;
-                                queueProcessingDenominator++;
-
                                 RequestResponseHeader* responseHeader = (RequestResponseHeader*)&responseQueueBuffer[responseQueueElements[responseQueueElementTail].offset];
                                 if (responseQueueElements[responseQueueElementTail].peer)
                                 {
