@@ -23,7 +23,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 104
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -8223,6 +8223,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                     __m256i etalonTickEssenceDigest;
                     bs->SetMem(triggerSignature, sizeof(triggerSignature), 0);
                     unsigned long long clockTick = 0, systemDataSavingTick = 0, loggingTick = 0, peerRefreshingTick = 0, resourceTestingSolutionPublicationTick = 0, tickRequestingTick = 0;
+                    unsigned long long mainLoopNumerator = 0, mainLoopDenominator = 0;
                     while (!state)
                     {
                         const unsigned long long curTimeTick = __rdtsc();
@@ -9309,6 +9310,16 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             loggingTick = curTimeTick;
 
                             logInfo();
+
+                            if (mainLoopDenominator)
+                            {
+                                setText(message, L"Main loop duration = ");
+                                appendNumber(message, (mainLoopNumerator / mainLoopDenominator) * 1000000 / frequency, TRUE);
+                                appendText(message, L" microseconds.");
+                                log(message);
+                            }
+                            mainLoopNumerator = 0;
+                            mainLoopDenominator = 0;
                         }
 
                         peerTcp4Protocol->Poll(peerTcp4Protocol);
@@ -9863,6 +9874,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                         }
 
                         processKeyPresses();
+
+                        mainLoopNumerator += __rdtsc() - curTimeTick;
+                        mainLoopDenominator++;
                     }
 
                     bs->CloseProtocol(peerChildHandle, &tcp4ProtocolGuid, ih, NULL);
