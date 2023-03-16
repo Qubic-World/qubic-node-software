@@ -23,7 +23,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 104
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -4812,7 +4812,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define BUFFER_SIZE 4194304
 #define TARGET_TICK_DURATION 5000
 #define TICK_REQUESTING_PERIOD 500
-#define DEJAVU_SWAP_LIMIT 10000000
+#define DEJAVU_SWAP_LIMIT 1000000
 #define DISSEMINATION_MULTIPLIER 10
 #define FIRST_TICK_TRANSACTION_OFFSET sizeof(unsigned long long)
 #define ISSUANCE_RATE 1000000000000LL
@@ -4823,7 +4823,6 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define MAX_NUMBER_OF_PROCESSORS 1024
 #define MAX_NUMBER_OF_PUBLIC_PEERS 256
 #define MAX_NUMBER_OF_SMART_CONTRACTS 1024
-#define MAX_NUMBER_OF_NEW_SMART_CONTRACTS_PER_EPOCH 10
 #define MAX_NUMBER_OF_SOLUTIONS 1048576 // Must be 2^N
 #define MAX_TRANSACTION_SIZE 1024ULL
 #define NUMBER_OF_COMPUTORS 676
@@ -5151,15 +5150,6 @@ typedef struct
 {
     RequestedTickData requestedTickData;
 } RequestTickData;
-
-#define REQUEST_MINER_PUBLIC_KEY 21
-
-#define RESPOND_MINER_PUBLIC_KEY 22
-
-typedef struct
-{
-    unsigned char computorPublicKey[32];
-} RespondMinerPublicKey;
 
 #define RESPOND_RESOURCE_TESTING_SOLUTION 23
 
@@ -6965,9 +6955,11 @@ static BOOLEAN initialize()
     }
     broadcastedTick.header.setSize(sizeof(broadcastedTick));
     broadcastedTick.header.setProtocol();
+    broadcastedTick.header.zeroDejavu();
     broadcastedTick.header.setType(BROADCAST_TICK);
     broadcastedFutureTickData.header.setSize(sizeof(broadcastedFutureTickData));
     broadcastedFutureTickData.header.setProtocol();
+    broadcastedFutureTickData.header.zeroDejavu();
     broadcastedFutureTickData.header.setType(BROADCAST_FUTURE_TICK_DATA);
     requestedComputors.header.setSize(sizeof(requestedComputors));
     requestedComputors.header.setProtocol();
@@ -8038,7 +8030,7 @@ static void processKeyPresses()
             appendText(message, L"/");
             appendNumber(message, numberOfSolutions, TRUE);
             appendText(message, L" solutions.");
-            log(message);
+            //log(message);
         }
         break;
 
