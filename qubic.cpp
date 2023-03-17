@@ -1,17 +1,11 @@
 ////////// Private Settings \\\\\\\\\\
 
-#define AVX512 0
-
 // Do NOT share the data of "Private Settings" section with anybody!!!
-static unsigned char computingSeeds[][55 + 1] = {
-    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-};
-static unsigned char miningSeeds[][55 + 1] = {
-    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-};
 
-static unsigned char computorsToSetMaxRevenueTo[][60 + 1] = {
-    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+#define OPERATOR "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
+static unsigned char computorSeeds[][55 + 1] = {
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 };
 
 static const unsigned char knownPublicPeers[][4] = {
@@ -21,9 +15,11 @@ static const unsigned char knownPublicPeers[][4] = {
 
 ////////// Public Settings \\\\\\\\\\
 
+#define AVX512 0
+
 #define VERSION_A 1
 #define VERSION_B 104
-#define VERSION_C 3
+#define VERSION_C 4
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -4811,7 +4807,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 
 #define BUFFER_SIZE 4194304
 #define TARGET_TICK_DURATION 5000
-#define TICK_REQUESTING_PERIOD 500
+#define TICK_REQUESTING_PERIOD 200
 #define DEJAVU_SWAP_LIMIT 1000000
 #define DISSEMINATION_MULTIPLIER 10
 #define FIRST_TICK_TRANSACTION_OFFSET sizeof(unsigned long long)
@@ -5219,8 +5215,8 @@ typedef struct
 
 static volatile int state = 0;
 
-static unsigned char computingSubseeds[sizeof(computingSeeds) / sizeof(computingSeeds[0])][32], computingPrivateKeys[sizeof(computingSeeds) / sizeof(computingSeeds[0])][32], computingPublicKeys[sizeof(computingSeeds) / sizeof(computingSeeds[0])][32];
-static unsigned char miningSubseeds[sizeof(miningSeeds) / sizeof(miningSeeds[0])][32], miningPrivateKeys[sizeof(miningSeeds) / sizeof(miningSeeds[0])][32], miningPublicKeys[sizeof(miningSeeds) / sizeof(miningSeeds[0])][32];
+static unsigned char operatorPublicKey[32];
+static unsigned char computorSubseeds[sizeof(computorSeeds) / sizeof(computorSeeds[0])][32], computorPrivateKeys[sizeof(computorSeeds) / sizeof(computorSeeds[0])][32], computorPublicKeys[sizeof(computorSeeds) / sizeof(computorSeeds[0])][32];
 static unsigned char adminPublicKey[32];
 
 static struct
@@ -5260,7 +5256,7 @@ static unsigned int tickNumberOfComputors = 0, tickTotalNumberOfComputors = 0, f
 static unsigned int numberOfNextTickTransactions = 0, numberOfKnownNextTickTransactions = 0;
 static unsigned short numberOfOwnComputorIndices = 0;
 static short ownComputorIndices[NUMBER_OF_COMPUTORS / 3];
-static short ownComputorIndicesMapping[sizeof(computingSeeds) / sizeof(computingSeeds[0])];
+static short ownComputorIndicesMapping[sizeof(computorSeeds) / sizeof(computorSeeds[0])];
 
 static Tick* ticks = NULL;
 static unsigned long long tickFlags[MAX_NUMBER_OF_TICKS_PER_EPOCH][(NUMBER_OF_COMPUTORS + 63) / 64];
@@ -5363,7 +5359,7 @@ static struct
 {
     RequestResponseHeader header;
     BroadcastResourceTestingSolution broadcastResourceTestingSolution;
-} broadcastedSolutions[sizeof(miningSeeds) / sizeof(miningSeeds[0])];
+} broadcastedSolutions[sizeof(computorSeeds) / sizeof(computorSeeds[0])];
 
 static struct
 {
@@ -5821,7 +5817,27 @@ static void push(Peer* peer, RequestResponseHeader* requestResponseHeader)
     }
 }
 
-static void pushToSome(RequestResponseHeader* requestResponseHeader)
+static void pushToAny(RequestResponseHeader* requestResponseHeader)
+{
+    unsigned short suitablePeerIndices[NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS];
+    unsigned short numberOfSuitablePeers = 0;
+    for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
+    {
+        if (peers[i].tcp4Protocol && peers[i].isConnectedAccepted && peers[i].exchangedPublicPeers && !peers[i].isClosing
+            && !peers[i].dataToTransmitSize)
+        {
+            suitablePeerIndices[numberOfSuitablePeers++] = i;
+        }
+    }
+    if (numberOfSuitablePeers)
+    {
+        unsigned short random;
+        _rdrand16_step(&random);
+        push(&peers[random % numberOfSuitablePeers], requestResponseHeader);
+    }
+}
+
+static void pushToSeveral(RequestResponseHeader* requestResponseHeader)
 {
     unsigned short suitablePeerIndices[NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS];
     unsigned short numberOfSuitablePeers = 0;
@@ -5991,9 +6007,9 @@ static void requestProcessor(void* ProcedureArgument)
                         {
                             enqueueResponse(NULL, header);
 
-                            for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
+                            for (unsigned int i = 0; i < sizeof(computorSeeds) / sizeof(computorSeeds[0]); i++)
                             {
-                                if (EQUAL(*((__m256i*)request->resourceTestingSolution.computorPublicKey), *((__m256i*)miningPublicKeys[i])))
+                                if (EQUAL(*((__m256i*)request->resourceTestingSolution.computorPublicKey), *((__m256i*)computorPublicKeys[i])))
                                 {
                                     for (unsigned int j = 0; j < NUMBER_OF_SOLUTION_NONCES; j++)
                                     {
@@ -6053,9 +6069,9 @@ static void requestProcessor(void* ProcedureArgument)
                                 {
                                     *((__m256i*)minerPublicKeys[i]) = *((__m256i*)request->computors.publicKeys[i]);
 
-                                    for (unsigned int j = 0; j < sizeof(computingSeeds) / sizeof(computingSeeds[0]); j++)
+                                    for (unsigned int j = 0; j < sizeof(computorSeeds) / sizeof(computorSeeds[0]); j++)
                                     {
-                                        if (EQUAL(*((__m256i*)request->computors.publicKeys[i]), *((__m256i*)computingPublicKeys[j])))
+                                        if (EQUAL(*((__m256i*)request->computors.publicKeys[i]), *((__m256i*)computorPublicKeys[j])))
                                         {
                                             ownComputorIndices[numberOfOwnComputorIndices] = i;
                                             ownComputorIndicesMapping[numberOfOwnComputorIndices++] = j;
@@ -6361,10 +6377,10 @@ static void requestProcessor(void* ProcedureArgument)
                     if (request->quorumTick.tick >= system.initialTick && request->quorumTick.tick < system.initialTick + MAX_NUMBER_OF_TICKS_PER_EPOCH)
                     {
                         unsigned short computorIndices[NUMBER_OF_COMPUTORS];
-                        unsigned short numberOfComputorIndices = NUMBER_OF_COMPUTORS;
-                        for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
+                        unsigned short numberOfComputorIndices;
+                        for (numberOfComputorIndices = 0; numberOfComputorIndices < NUMBER_OF_COMPUTORS; numberOfComputorIndices++)
                         {
-                            computorIndices[j] = j;
+                            computorIndices[numberOfComputorIndices] = numberOfComputorIndices;
                         }
                         while (numberOfComputorIndices)
                         {
@@ -6737,7 +6753,7 @@ static void saveSolutions()
     else
     {
         unsigned long long totalSize = 0;
-        for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
+        for (unsigned int i = 0; i < sizeof(computorSeeds) / sizeof(computorSeeds[0]); i++)
         {
             DeprecatedResourceTestingSolution solution;
             bs->CopyMem(solution.computorPublicKey, broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey, sizeof(solution.computorPublicKey));
@@ -6878,31 +6894,26 @@ static BOOLEAN initialize()
 
     targetNextTickDataDigest = ZERO;
 
-    for (unsigned int i = 0; i < sizeof(computingSeeds) / sizeof(computingSeeds[0]); i++)
+    getPublicKeyFromIdentity((const unsigned char*)OPERATOR, operatorPublicKey);
+    if (EQUAL(*((__m256i*)operatorPublicKey), ZERO))
     {
-        if (!getSubseed(computingSeeds[i], computingSubseeds[i]))
-        {
-            return FALSE;
-        }
-        getPrivateKey(computingSubseeds[i], computingPrivateKeys[i]);
-        getPublicKey(computingPrivateKeys[i], computingPublicKeys[i]);
+        _rdrand64_step((unsigned long long*)&operatorPublicKey[0]);
+        _rdrand64_step((unsigned long long*)&operatorPublicKey[8]);
+        _rdrand64_step((unsigned long long*)&operatorPublicKey[16]);
+        _rdrand64_step((unsigned long long*)&operatorPublicKey[24]);
     }
-    for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
+
+    for (unsigned int i = 0; i < sizeof(computorSeeds) / sizeof(computorSeeds[0]); i++)
     {
-        if (!getSubseed(miningSeeds[i], miningSubseeds[i]))
+        if (!getSubseed(computorSeeds[i], computorSubseeds[i]))
         {
             return FALSE;
         }
-        getPrivateKey(miningSubseeds[i], miningPrivateKeys[i]);
-        getPublicKey(miningPrivateKeys[i], miningPublicKeys[i]);
+        getPrivateKey(computorSubseeds[i], computorPrivateKeys[i]);
+        getPublicKey(computorPrivateKeys[i], computorPublicKeys[i]);
     }
 
     getPublicKeyFromIdentity((const unsigned char*)ADMIN, adminPublicKey);
-
-    for (unsigned int i = 0; i < sizeof(computorsToSetMaxRevenueTo) / sizeof(computorsToSetMaxRevenueTo[0]); i++)
-    {
-        getPublicKeyFromIdentity(computorsToSetMaxRevenueTo[i], computorsToSetMaxRevenueTo[i]);
-    }
 
     int cpuInfo[4];
     __cpuid(cpuInfo, 0x15);
@@ -6947,7 +6958,7 @@ static BOOLEAN initialize()
     }
     bs->SetMem(&broadcastedComputors.broadcastComputors.computors.signature, sizeof(broadcastedComputors.broadcastComputors.computors.signature), 0);
 
-    for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
+    for (unsigned int i = 0; i < sizeof(computorSeeds) / sizeof(computorSeeds[0]); i++)
     {
         broadcastedSolutions[i].header.setSize(sizeof(broadcastedSolutions[i]));
         broadcastedSolutions[i].header.setProtocol();
@@ -7292,7 +7303,7 @@ static BOOLEAN initialize()
         }
         else
         {
-            for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
+            for (unsigned int i = 0; i < sizeof(computorSeeds) / sizeof(computorSeeds[0]); i++)
             {
                 DeprecatedResourceTestingSolution solution;
                 unsigned long long size = sizeof(DeprecatedResourceTestingSolution);
@@ -7306,7 +7317,7 @@ static BOOLEAN initialize()
                 {
                     if (!size)
                     {
-                        *((__m256i*)broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey) = *((__m256i*)miningPublicKeys[i]);
+                        *((__m256i*)broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey) = *((__m256i*)computorPublicKeys[i]);
                         bs->SetMem(&broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces, sizeof(broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces), 0);
                     }
                     else
@@ -7384,14 +7395,10 @@ static BOOLEAN initialize()
 
 static void deinitialize()
 {
-    bs->SetMem(computingSeeds, sizeof(computingSeeds), 0);
-    bs->SetMem(computingSubseeds, sizeof(computingSubseeds), 0);
-    bs->SetMem(computingPrivateKeys, sizeof(computingPrivateKeys), 0);
-    bs->SetMem(computingPublicKeys, sizeof(computingPublicKeys), 0);
-    bs->SetMem(miningSeeds, sizeof(miningSeeds), 0);
-    bs->SetMem(miningSubseeds, sizeof(miningSubseeds), 0);
-    bs->SetMem(miningPrivateKeys, sizeof(miningPrivateKeys), 0);
-    bs->SetMem(miningPublicKeys, sizeof(miningPublicKeys), 0);
+    bs->SetMem(computorSeeds, sizeof(computorSeeds), 0);
+    bs->SetMem(computorSubseeds, sizeof(computorSubseeds), 0);
+    bs->SetMem(computorPrivateKeys, sizeof(computorPrivateKeys), 0);
+    bs->SetMem(computorPublicKeys, sizeof(computorPublicKeys), 0);
 
     if (root)
     {
@@ -7644,7 +7651,7 @@ static void terminateEpoch()
 
 static void publishSolutions()
 {
-    for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
+    for (unsigned int i = 0; i < sizeof(computorSeeds) / sizeof(computorSeeds[0]); i++)
     {
         broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.millisecond = time.Nanosecond / 1000000;
         broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.second = time.Second;
@@ -7723,7 +7730,7 @@ static void publishSolutions()
         broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey[0] ^= BROADCAST_RESOURCE_TESTING_SOLUTION;
         KangarooTwelve((unsigned char*)&broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution, sizeof(ResourceTestingSolution) - SIGNATURE_SIZE, digest, sizeof(digest));
         broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey[0] ^= BROADCAST_RESOURCE_TESTING_SOLUTION;
-        sign(miningSubseeds[i], miningPublicKeys[i], digest, broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.signature);
+        sign(computorSubseeds[i], computorPublicKeys[i], digest, broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.signature);
 
         pushToAll(&broadcastedSolutions[i].header);
     }
@@ -7809,7 +7816,7 @@ static void logInfo()
     appendText(message, L".");
     appendNumber(message, (tickDuration % frequency) * 10 / frequency, FALSE);
     appendText(message, L" s | Scores = ");
-    for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
+    for (unsigned int i = 0; i < sizeof(computorSeeds) / sizeof(computorSeeds[0]); i++)
     {
         int score = 0;
         for (unsigned int j = 0; j < NUMBER_OF_SOLUTION_NONCES; j++)
@@ -8120,33 +8127,15 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
     if (initialize())
     {
-        log(L"Computing ids:");
-        for (unsigned int i = 0; i < sizeof(computingSeeds) / sizeof(computingSeeds[0]); i++)
+        log(L"Ids:");
+        for (unsigned int i = 0; i < sizeof(computorSeeds) / sizeof(computorSeeds[0]); i++)
         {
-            if (!EQUAL(*((__m256i*)computingSeeds[i]), ZERO))
+            if (!EQUAL(*((__m256i*)computorSeeds[i]), ZERO))
             {
-                getIdentity(computingPublicKeys[i], message, false);
+                getIdentity(computorPublicKeys[i], message, false);
                 appendText(message, L" = ");
                 long long amount = 0;
-                const int spectrumIndex = ::spectrumIndex(computingPublicKeys[i]);
-                if (spectrumIndex >= 0)
-                {
-                    amount = spectrum[spectrumIndex].incomingAmount - spectrum[spectrumIndex].outgoingAmount;
-                }
-                appendNumber(message, amount, TRUE);
-                appendText(message, L" qus");
-                log(message);
-            }
-        }
-        log(L"Mining ids:");
-        for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
-        {
-            if (!EQUAL(*((__m256i*)miningSeeds[i]), ZERO))
-            {
-                getIdentity(miningPublicKeys[i], message, false);
-                appendText(message, L" = ");
-                long long amount = 0;
-                const int spectrumIndex = ::spectrumIndex(miningPublicKeys[i]);
+                const int spectrumIndex = ::spectrumIndex(computorPublicKeys[i]);
                 if (spectrumIndex >= 0)
                 {
                     amount = spectrum[spectrumIndex].incomingAmount - spectrum[spectrumIndex].outgoingAmount;
@@ -8223,6 +8212,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                     __m256i etalonTickEssenceDigest;
                     bs->SetMem(triggerSignature, sizeof(triggerSignature), 0);
                     unsigned long long clockTick = 0, systemDataSavingTick = 0, loggingTick = 0, peerRefreshingTick = 0, resourceTestingSolutionPublicationTick = 0, tickRequestingTick = 0;
+                    unsigned int tickRequestingIndicator = 0;
                     unsigned long long mainLoopNumerator = 0, mainLoopDenominator = 0;
                     while (!state)
                     {
@@ -8369,9 +8359,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     {
                                                                         minerSolutionFlags[flagIndex >> 6] |= (1ULL << (flagIndex & 63));
 
-                                                                        for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
+                                                                        for (unsigned int i = 0; i < sizeof(computorSeeds) / sizeof(computorSeeds[0]); i++)
                                                                         {
-                                                                            if (EQUAL(*((__m256i*)transaction->sourcePublicKey), *((__m256i*)miningPublicKeys[i])))
+                                                                            if (EQUAL(*((__m256i*)transaction->sourcePublicKey), *((__m256i*)computorPublicKeys[i])))
                                                                             {
                                                                                 unsigned int j;
                                                                                 for (j = 0; j < numberOfSolutions; j++)
@@ -8429,7 +8419,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         }
                                     }
 
-                                    for (unsigned int i = 0; i < sizeof(miningSeeds) / sizeof(miningSeeds[0]); i++)
+                                    for (unsigned int i = 0; i < sizeof(computorSeeds) / sizeof(computorSeeds[0]); i++)
                                     {
                                         int solutionIndexToPublish = -1;
 
@@ -8437,7 +8427,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                         for (j = 0; j < numberOfSolutions; j++)
                                         {
                                             if (solutionPublicationTicks[j] > 0
-                                                && EQUAL(*((__m256i*)solutions[j].computorPublicKey), *((__m256i*)miningPublicKeys[i])))
+                                                && EQUAL(*((__m256i*)solutions[j].computorPublicKey), *((__m256i*)computorPublicKeys[i])))
                                             {
                                                 if (solutionPublicationTicks[j] <= (int)system.tick)
                                                 {
@@ -8452,7 +8442,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             for (j = 0; j < numberOfSolutions; j++)
                                             {
                                                 if (!solutionPublicationTicks[j]
-                                                    && EQUAL(*((__m256i*)solutions[j].computorPublicKey), *((__m256i*)miningPublicKeys[i])))
+                                                    && EQUAL(*((__m256i*)solutions[j].computorPublicKey), *((__m256i*)computorPublicKeys[i])))
                                                 {
                                                     solutionIndexToPublish = j;
 
@@ -8474,7 +8464,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             packet.header.setSize(sizeof(packet));
                                             packet.header.setProtocol();
                                             packet.header.setType(BROADCAST_TRANSACTION);
-                                            *((__m256i*)packet.transaction.sourcePublicKey) = *((__m256i*)miningPublicKeys[i]);
+                                            *((__m256i*)packet.transaction.sourcePublicKey) = *((__m256i*)computorPublicKeys[i]);
                                             *((__m256i*)packet.transaction.destinationPublicKey) = *((__m256i*)adminPublicKey);
                                             packet.transaction.amount = 0;
                                             solutionPublicationTicks[solutionIndexToPublish] = packet.transaction.tick = system.tick + MINING_SOLUTIONS_PUBLICATION_OFFSET;
@@ -8484,7 +8474,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                                             unsigned char digest[32];
                                             KangarooTwelve((unsigned char*)&packet.transaction, sizeof(packet.transaction) + sizeof(packet.nonce), digest, sizeof(digest));
-                                            sign(miningSubseeds[i], miningPublicKeys[i], digest, packet.signature);
+                                            sign(computorSubseeds[i], computorPublicKeys[i], digest, packet.signature);
 
                                             pushToAll(&packet.header);
                                         }
@@ -8852,7 +8842,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                     {
                                                         broadcastedTick.broadcastTick.tick.computorIndex = ownComputorIndices[i] ^ BROADCAST_TICK;
                                                         unsigned char saltedData[32 + 32];
-                                                        *((__m256i*) & saltedData[0]) = *((__m256i*)computingPublicKeys[ownComputorIndicesMapping[i]]);
+                                                        *((__m256i*) & saltedData[0]) = *((__m256i*)computorPublicKeys[ownComputorIndicesMapping[i]]);
                                                         *((__m256i*) & saltedData[32]) = *((__m256i*)etalonTick.saltedSpectrumDigest);
                                                         KangarooTwelve64To32(saltedData, broadcastedTick.broadcastTick.tick.saltedSpectrumDigest);
                                                         *((__m256i*) & saltedData[32]) = *((__m256i*)etalonTick.saltedUniverseDigest);
@@ -8863,7 +8853,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                         unsigned char digest[32];
                                                         KangarooTwelve((unsigned char*)&broadcastedTick.broadcastTick.tick, sizeof(Tick) - SIGNATURE_SIZE, digest, sizeof(digest));
                                                         broadcastedTick.broadcastTick.tick.computorIndex ^= BROADCAST_TICK;
-                                                        sign(computingSubseeds[ownComputorIndicesMapping[i]], computingPublicKeys[ownComputorIndicesMapping[i]], digest, broadcastedTick.broadcastTick.tick.signature);
+                                                        sign(computorSubseeds[ownComputorIndicesMapping[i]], computorPublicKeys[ownComputorIndicesMapping[i]], digest, broadcastedTick.broadcastTick.tick.signature);
 
                                                         pushToAll(&broadcastedTick.header);
 
@@ -9108,9 +9098,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                         for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
                                                                         {
                                                                             broadcastedFutureTickData.broadcastFutureTickData.tickData.revenues[j] = (faultyComputorFlags[j >> 6] & (1ULL << (j & 63))) ? 0 : ((system.tickCounters[j] >= maxCounter) ? (ISSUANCE_RATE / NUMBER_OF_COMPUTORS) : (system.tickCounters[j] * ((unsigned long long)(ISSUANCE_RATE / NUMBER_OF_COMPUTORS)) / maxCounter));
-                                                                            for (unsigned int k = 0; k < sizeof(computorsToSetMaxRevenueTo) / sizeof(computorsToSetMaxRevenueTo[0]); k++)
+                                                                            for (unsigned int k = 0; k < sizeof(computorSeeds) / sizeof(computorSeeds[0]); k++)
                                                                             {
-                                                                                if (EQUAL(*((__m256i*)broadcastedComputors.broadcastComputors.computors.publicKeys[j]), *((__m256i*)computorsToSetMaxRevenueTo[k])))
+                                                                                if (EQUAL(*((__m256i*)broadcastedComputors.broadcastComputors.computors.publicKeys[j]), *((__m256i*)computorPublicKeys[k])))
                                                                                 {
                                                                                     broadcastedFutureTickData.broadcastFutureTickData.tickData.revenues[j] = ISSUANCE_RATE / NUMBER_OF_COMPUTORS;
 
@@ -9230,7 +9220,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     unsigned char digest[32];
                                                                     KangarooTwelve((unsigned char*)&broadcastedFutureTickData.broadcastFutureTickData.tickData, sizeof(TickData) - SIGNATURE_SIZE, digest, sizeof(digest));
                                                                     broadcastedFutureTickData.broadcastFutureTickData.tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
-                                                                    sign(computingSubseeds[ownComputorIndicesMapping[i]], computingPublicKeys[ownComputorIndicesMapping[i]], digest, broadcastedFutureTickData.broadcastFutureTickData.tickData.signature);
+                                                                    sign(computorSubseeds[ownComputorIndicesMapping[i]], computorPublicKeys[ownComputorIndicesMapping[i]], digest, broadcastedFutureTickData.broadcastFutureTickData.tickData.signature);
 
                                                                     pushToAll(&broadcastedFutureTickData.header);
                                                                 }
@@ -9282,7 +9272,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                                     {
                                                                         unsigned char digest[32];
                                                                         KangarooTwelve((unsigned char*)&system.tick, sizeof(system.tick), digest, sizeof(digest));
-                                                                        sign(computingSubseeds[ownComputorIndicesMapping[i]], computingPublicKeys[ownComputorIndicesMapping[i]], digest, triggerSignature);
+                                                                        sign(computorSubseeds[ownComputorIndicesMapping[i]], computorPublicKeys[ownComputorIndicesMapping[i]], digest, triggerSignature);
 
                                                                         etalonTickMustBeCreated = true;
                                                                         etalonTick.tick = 0;
@@ -9474,9 +9464,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                         /*case RESPOND_RESOURCE_TESTING_SOLUTION:
                                                         {
                                                             RespondResourceTestingSolution* request = (RespondResourceTestingSolution*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader));
-                                                            for (unsigned int j = 0; j < sizeof(miningSeeds) / sizeof(miningSeeds[0]); j++)
+                                                            for (unsigned int j = 0; j < sizeof(computorSeeds) / sizeof(computorSeeds[0]); j++)
                                                             {
-                                                                if (EQUAL(*((__m256i*)request->computorPublicKey), *((__m256i*)miningPublicKeys[j])))
+                                                                if (EQUAL(*((__m256i*)request->computorPublicKey), *((__m256i*)computorPublicKeys[j])))
                                                                 {
                                                                     unsigned int k;
                                                                     for (k = 0; k < numberOfSolutions; k++)
@@ -9810,39 +9800,59 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                         {
                             tickRequestingTick = curTimeTick;
 
-                            requestedQuorumTick.header.randomizeDejavu();
-                            requestedQuorumTick.requestQuorumTick.quorumTick.tick = system.tick;
-                            bs->SetMem(&requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags, sizeof(requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags), 0);
-                            const unsigned int baseOffset = (system.tick - system.initialTick) * NUMBER_OF_COMPUTORS;
-                            for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                            if (tickRequestingIndicator == tickTotalNumberOfComputors)
                             {
-                                const Tick* tick = &ticks[baseOffset + i];
-                                if (tick->epoch == system.epoch)
+                                requestedQuorumTick.header.randomizeDejavu();
+                                requestedQuorumTick.requestQuorumTick.quorumTick.tick = system.tick;
+                                bs->SetMem(&requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags, sizeof(requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags), 0);
+                                const unsigned int baseOffset = (system.tick - system.initialTick) * NUMBER_OF_COMPUTORS;
+                                for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
                                 {
-                                    requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags[i >> 2] |= ((EQUAL(*((__m256i*)tick->varStruct.nextTick.zero), ZERO)) ? 1 : 2) << ((i & 3) << 1);
+                                    const Tick* tick = &ticks[baseOffset + i];
+                                    if (tick->epoch == system.epoch)
+                                    {
+                                        requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags[i >> 2] |= ((EQUAL(*((__m256i*)tick->varStruct.nextTick.zero), ZERO)) ? 1 : 2) << ((i & 3) << 1);
+                                    }
+                                }
+                                pushToAny(&requestedQuorumTick.header);
+
+                                if (futureTickTotalNumberOfComputors > NUMBER_OF_COMPUTORS - QUORUM)
+                                {
+                                    requestedQuorumTick.requestQuorumTick.quorumTick.tick = system.tick + 1;
+                                    bs->SetMem(&requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags, sizeof(requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags), 0);
+                                    const unsigned int baseOffset = (system.tick + 1 - system.initialTick) * NUMBER_OF_COMPUTORS;
+                                    for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                                    {
+                                        const Tick* tick = &ticks[baseOffset + i];
+                                        if (tick->epoch == system.epoch)
+                                        {
+                                            requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags[i >> 2] |= ((EQUAL(*((__m256i*)tick->varStruct.nextTick.zero), ZERO)) ? 1 : 2) << ((i & 3) << 1);
+                                        }
+                                    }
+                                    pushToAny(&requestedQuorumTick.header);
                                 }
                             }
-                            pushToAll(&requestedQuorumTick.header);
+                            tickRequestingIndicator = tickTotalNumberOfComputors;
 
                             if (tickData[system.tick + 1 - system.initialTick].epoch != system.epoch
                                 || targetNextTickDataDigestIsKnown)
                             {
                                 requestedTickData.header.randomizeDejavu();
                                 requestedTickData.requestTickData.requestedTickData.tick = system.tick + 1;
-                                pushToAll(&requestedTickData.header);
+                                pushToAny(&requestedTickData.header);
                             }
                             if (tickData[system.tick + 2 - system.initialTick].epoch != system.epoch)
                             {
                                 requestedTickData.header.randomizeDejavu();
                                 requestedTickData.requestTickData.requestedTickData.tick = system.tick + 2;
-                                pushToAll(&requestedTickData.header);
+                                pushToAny(&requestedTickData.header);
                             }
 
                             if (numberOfKnownNextTickTransactions != numberOfNextTickTransactions)
                             {
                                 requestedTickTransactions.header.randomizeDejavu();
                                 requestedTickTransactions.requestedTickTransactions.tick = system.tick + 1;
-                                pushToAll(&requestedTickTransactions.header);
+                                pushToAny(&requestedTickTransactions.header);
                             }
                         }
 
@@ -9858,7 +9868,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 }
                                 else
                                 {
-                                    pushToSome(responseHeader);
+                                    pushToSeveral(responseHeader);
                                 }
                                 responseQueueBufferTail += responseHeader->size();
                                 if (responseQueueBufferTail > RESPONSE_QUEUE_BUFFER_SIZE - BUFFER_SIZE)
