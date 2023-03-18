@@ -19,7 +19,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 104
-#define VERSION_C 5
+#define VERSION_C 6
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -5214,6 +5214,7 @@ typedef struct
 } RespondedEntity;
 
 static volatile int state = 0;
+static volatile bool situationIsCritical = false;
 static volatile bool systemMustBeSaved = false, spectrumMustBeSaved = false;
 
 static unsigned char operatorPublicKey[32];
@@ -6878,7 +6879,7 @@ static void tickerProcessor(void*)
                                         {
                                             while (true)
                                             {
-                                                log(L"CRITICAL SITUATION!!!");
+                                                situationIsCritical = true;
                                             }
                                         }
                                         else
@@ -7013,7 +7014,7 @@ static void tickerProcessor(void*)
                                 {
                                     while (true)
                                     {
-                                        log(L"CRITICAL SITUATION!!!");
+                                        situationIsCritical = true;
                                     }
                                 }
                             }
@@ -9194,6 +9195,14 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                     unsigned long long mainLoopNumerator = 0, mainLoopDenominator = 0;
                     while (!state)
                     {
+                        if (situationIsCritical)
+                        {
+                            while (true)
+                            {
+                                log(L"CRITICAL SITUATION!!!");
+                            }
+                        }
+
                         const unsigned long long curTimeTick = __rdtsc();
 
                         if (curTimeTick - clockTick >= (frequency >> 1))
