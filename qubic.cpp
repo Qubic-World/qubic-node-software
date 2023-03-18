@@ -19,7 +19,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 104
-#define VERSION_C 6
+#define VERSION_C 7
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -5214,7 +5214,7 @@ typedef struct
 } RespondedEntity;
 
 static volatile int state = 0;
-static volatile bool situationIsCritical = false;
+static volatile char criticalSituation = 0;
 static volatile bool systemMustBeSaved = false, spectrumMustBeSaved = false;
 
 static unsigned char operatorPublicKey[32];
@@ -6879,7 +6879,7 @@ static void tickerProcessor(void*)
                                         {
                                             while (true)
                                             {
-                                                situationIsCritical = true;
+                                                criticalSituation = 1;
                                             }
                                         }
                                         else
@@ -7014,7 +7014,7 @@ static void tickerProcessor(void*)
                                 {
                                     while (true)
                                     {
-                                        situationIsCritical = true;
+                                        criticalSituation = 2;
                                     }
                                 }
                             }
@@ -9195,11 +9195,18 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                     unsigned long long mainLoopNumerator = 0, mainLoopDenominator = 0;
                     while (!state)
                     {
-                        if (situationIsCritical)
+                        if (criticalSituation == 1)
                         {
                             while (true)
                             {
-                                log(L"CRITICAL SITUATION!!!");
+                                log(L"CRITICAL SITUATION #1!!!");
+                            }
+                        }
+                        if (criticalSituation == 2)
+                        {
+                            while (true)
+                            {
+                                log(L"CRITICAL SITUATION #2!!!");
                             }
                         }
 
