@@ -18,8 +18,8 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 104
-#define VERSION_C 7
+#define VERSION_B 105
+#define VERSION_C 0
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -5213,6 +5213,65 @@ typedef struct
     unsigned char siblings[SPECTRUM_DEPTH][32];
 } RespondedEntity;
 
+struct ComputorProposal
+{
+    unsigned char uriSize;
+    unsigned char uri[255];
+};
+struct ComputorBallot
+{
+    unsigned char zero;
+    unsigned char votes[(NUMBER_OF_COMPUTORS * 3 + 7) / 8];
+    unsigned char quasiRandomNumber;
+};
+
+#define PROCESS_SPECIAL_COMMAND 255
+
+struct SpecialCommand
+{
+    unsigned long long everIncreasingNonceAndCommandType;
+};
+
+#define SPECIAL_COMMAND_SHUT_DOWN 0ULL
+
+#define SPECIAL_COMMAND_GET_PROPOSAL_AND_BALLOT_REQUEST 1ULL
+struct SpecialCommandGetProposalAndBallotRequest
+{
+    unsigned long long everIncreasingNonceAndCommandType;
+    unsigned short computorIndex;
+    unsigned char padding[2];
+    unsigned char signature[SIGNATURE_SIZE];
+};
+
+#define SPECIAL_COMMAND_GET_PROPOSAL_AND_BALLOT_RESPONSE 2ULL
+struct SpecialCommandGetProposalAndBallotResponse
+{
+    unsigned long long everIncreasingNonceAndCommandType;
+    unsigned short computorIndex;
+    unsigned char padding[2];
+    ComputorProposal proposal;
+    ComputorBallot ballot;
+};
+
+#define SPECIAL_COMMAND_SET_PROPOSAL_AND_BALLOT_REQUEST 3ULL
+struct SpecialCommandSetProposalAndBallotRequest
+{
+    unsigned long long everIncreasingNonceAndCommandType;
+    unsigned short computorIndex;
+    unsigned char padding[2];
+    ComputorProposal proposal;
+    ComputorBallot ballot;
+    unsigned char signature[SIGNATURE_SIZE];
+};
+
+#define SPECIAL_COMMAND_SET_PROPOSAL_AND_BALLOT_RESPONSE 4ULL
+struct SpecialCommandSetProposalAndBallotResponse
+{
+    unsigned long long everIncreasingNonceAndCommandType;
+    unsigned short computorIndex;
+    unsigned char padding[2];
+};
+
 static volatile int state = 0;
 static volatile char criticalSituation = 0;
 static volatile bool systemMustBeSaved = false, spectrumMustBeSaved = false;
@@ -5250,6 +5309,11 @@ static struct System
     unsigned char epochBeginningDay;
     unsigned char epochBeginningMonth;
     unsigned char epochBeginningYear;
+
+    unsigned long long latestOperatorNonce;
+
+    ComputorProposal proposals[NUMBER_OF_COMPUTORS];
+    ComputorBallot ballots[NUMBER_OF_COMPUTORS];
 } system;
 static unsigned long long faultyComputorFlags[(NUMBER_OF_COMPUTORS + 63) / 64];
 static unsigned short prevTickMillisecond;
@@ -5362,17 +5426,7 @@ static struct
     BroadcastResourceTestingSolution broadcastResourceTestingSolution;
 } broadcastedSolutions[sizeof(computorSeeds) / sizeof(computorSeeds[0])];
 
-static struct
-{
-    RequestResponseHeader header;
-    BroadcastTick broadcastTick;
-} broadcastedTick; // TODO: Localize
-
-static struct
-{
-    RequestResponseHeader header;
-    BroadcastFutureTickData broadcastFutureTickData;
-} broadcastedFutureTickData; // TODO: Localize
+BroadcastFutureTickData broadcastFutureTickData;
 
 static struct
 {
@@ -6053,7 +6107,7 @@ static void requestProcessor(void* ProcedureArgument)
                     if (request->computors.epoch > broadcastedComputors.broadcastComputors.computors.epoch)
                     {
                         unsigned char digest[32];
-                        KangarooTwelve((unsigned char*)request, header->size() - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
+                        KangarooTwelve((unsigned char*)request, sizeof(BroadcastComputors) - SIGNATURE_SIZE, digest, sizeof(digest));
                         if (verify(adminPublicKey, digest, request->computors.signature))
                         {
                             if (header->isDejavuZero())
@@ -6551,6 +6605,68 @@ static void requestProcessor(void* ProcedureArgument)
                             if (system.latestCreatedTick == system.tick)
                             {
                                 system.latestCreatedTick--;
+                            }
+                        }
+                    }
+                }
+                break;
+
+                case PROCESS_SPECIAL_COMMAND:
+                {
+                    SpecialCommand* request = (SpecialCommand*)((char*)processor->buffer + sizeof(RequestResponseHeader));
+                    if (requestHeader->size() >= sizeof(RequestResponseHeader) + sizeof(SpecialCommand) + SIGNATURE_SIZE
+                        && (request->everIncreasingNonceAndCommandType & 0xFFFFFFFFFFFFFF) > system.latestOperatorNonce)
+                    {
+                        unsigned char digest[32];
+                        KangarooTwelve((unsigned char*)&request, requestHeader->size() - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
+                        if (verify(operatorPublicKey, digest, ((const unsigned char*)processor->buffer + (requestHeader->size() - SIGNATURE_SIZE))))
+                        {
+                            system.latestOperatorNonce = request->everIncreasingNonceAndCommandType & 0xFFFFFFFFFFFFFF;
+
+                            switch (request->everIncreasingNonceAndCommandType >> 56)
+                            {
+                            case SPECIAL_COMMAND_SHUT_DOWN:
+                            {
+                                state = 1;
+                            }
+                            break;
+
+                            case SPECIAL_COMMAND_GET_PROPOSAL_AND_BALLOT_REQUEST:
+                            {
+                                SpecialCommandGetProposalAndBallotRequest* request = (SpecialCommandGetProposalAndBallotRequest*)((char*)processor->buffer + sizeof(RequestResponseHeader));
+                                if (request->computorIndex < NUMBER_OF_COMPUTORS)
+                                {
+                                    SpecialCommandGetProposalAndBallotResponse response;
+
+                                    response.everIncreasingNonceAndCommandType = (request->everIncreasingNonceAndCommandType & 0xFFFFFFFFFFFFFF) | (SPECIAL_COMMAND_GET_PROPOSAL_AND_BALLOT_RESPONSE << 56);
+                                    response.computorIndex = request->computorIndex;
+                                    *((short*)response.padding) = 0;
+                                    bs->CopyMem(&response.proposal, &system.proposals[request->computorIndex], sizeof(ComputorProposal));
+                                    bs->CopyMem(&response.ballot, &system.ballots[request->computorIndex], sizeof(ComputorBallot));
+
+                                    enqueueResponse(peer, true, SPECIAL_COMMAND_GET_PROPOSAL_AND_BALLOT_RESPONSE, &response, sizeof(response));
+                                }
+                            }
+                            break;
+
+                            case SPECIAL_COMMAND_SET_PROPOSAL_AND_BALLOT_REQUEST:
+                            {
+                                SpecialCommandSetProposalAndBallotRequest* request = (SpecialCommandSetProposalAndBallotRequest*)((char*)processor->buffer + sizeof(RequestResponseHeader));
+                                if (request->computorIndex < NUMBER_OF_COMPUTORS)
+                                {
+                                    bs->CopyMem(&system.proposals[request->computorIndex], &request->proposal, sizeof(ComputorProposal));
+                                    bs->CopyMem(&system.ballots[request->computorIndex], &request->ballot, sizeof(ComputorBallot));
+
+                                    SpecialCommandSetProposalAndBallotResponse response;
+
+                                    response.everIncreasingNonceAndCommandType = (request->everIncreasingNonceAndCommandType & 0xFFFFFFFFFFFFFF) | (SPECIAL_COMMAND_SET_PROPOSAL_AND_BALLOT_RESPONSE << 56);
+                                    response.computorIndex = request->computorIndex;
+                                    *((short*)response.padding) = 0;
+
+                                    enqueueResponse(peer, true, SPECIAL_COMMAND_SET_PROPOSAL_AND_BALLOT_RESPONSE, &response, sizeof(response));
+                                }
+                            }
+                            break;
                             }
                         }
                     }
@@ -7422,28 +7538,29 @@ static void tickerProcessor(void*)
 
                                 if (futureTickTotalNumberOfComputors <= NUMBER_OF_COMPUTORS - QUORUM)
                                 {
-                                    bs->CopyMem(&broadcastedTick.broadcastTick.tick, &etalonTick, sizeof(Tick));
+                                    BroadcastTick broadcastTick;
+                                    bs->CopyMem(&broadcastTick.tick, &etalonTick, sizeof(Tick));
                                     for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
                                     {
-                                        broadcastedTick.broadcastTick.tick.computorIndex = ownComputorIndices[i] ^ BROADCAST_TICK;
+                                        broadcastTick.tick.computorIndex = ownComputorIndices[i] ^ BROADCAST_TICK;
                                         unsigned char saltedData[32 + 32];
                                         *((__m256i*) & saltedData[0]) = *((__m256i*)computorPublicKeys[ownComputorIndicesMapping[i]]);
                                         *((__m256i*) & saltedData[32]) = *((__m256i*)etalonTick.saltedSpectrumDigest);
-                                        KangarooTwelve64To32(saltedData, broadcastedTick.broadcastTick.tick.saltedSpectrumDigest);
+                                        KangarooTwelve64To32(saltedData, broadcastTick.tick.saltedSpectrumDigest);
                                         *((__m256i*) & saltedData[32]) = *((__m256i*)etalonTick.saltedUniverseDigest);
-                                        KangarooTwelve64To32(saltedData, broadcastedTick.broadcastTick.tick.saltedUniverseDigest);
+                                        KangarooTwelve64To32(saltedData, broadcastTick.tick.saltedUniverseDigest);
                                         *((__m256i*) & saltedData[32]) = *((__m256i*)etalonTick.saltedComputerDigest);
-                                        KangarooTwelve64To32(saltedData, broadcastedTick.broadcastTick.tick.saltedComputerDigest);
+                                        KangarooTwelve64To32(saltedData, broadcastTick.tick.saltedComputerDigest);
 
                                         unsigned char digest[32];
-                                        KangarooTwelve((unsigned char*)&broadcastedTick.broadcastTick.tick, sizeof(Tick) - SIGNATURE_SIZE, digest, sizeof(digest));
-                                        broadcastedTick.broadcastTick.tick.computorIndex ^= BROADCAST_TICK;
-                                        sign(computorSubseeds[ownComputorIndicesMapping[i]], computorPublicKeys[ownComputorIndicesMapping[i]], digest, broadcastedTick.broadcastTick.tick.signature);
+                                        KangarooTwelve((unsigned char*)&broadcastTick.tick, sizeof(Tick) - SIGNATURE_SIZE, digest, sizeof(digest));
+                                        broadcastTick.tick.computorIndex ^= BROADCAST_TICK;
+                                        sign(computorSubseeds[ownComputorIndicesMapping[i]], computorPublicKeys[ownComputorIndicesMapping[i]], digest, broadcastTick.tick.signature);
 
-                                        enqueueResponse(NULL, false, BROADCAST_TICK, &broadcastedTick.broadcastTick, sizeof(broadcastedTick.broadcastTick));
+                                        enqueueResponse(NULL, false, BROADCAST_TICK, &broadcastTick, sizeof(broadcastTick));
 
                                         ACQUIRE(tickLocks[ownComputorIndices[i]]);
-                                        bs->CopyMem(&ticks[(broadcastedTick.broadcastTick.tick.tick - system.initialTick) * NUMBER_OF_COMPUTORS + broadcastedTick.broadcastTick.tick.computorIndex], &broadcastedTick.broadcastTick.tick, sizeof(Tick));
+                                        bs->CopyMem(&ticks[(broadcastTick.tick.tick - system.initialTick) * NUMBER_OF_COMPUTORS + broadcastTick.tick.computorIndex], &broadcastTick.tick, sizeof(Tick));
                                         RELEASE(tickLocks[ownComputorIndices[i]]);
                                     }
                                 }
@@ -7635,22 +7752,26 @@ static void tickerProcessor(void*)
                                         {
                                             if ((system.tick + TICK_TRANSACTIONS_PUBLICATION_OFFSET) % NUMBER_OF_COMPUTORS == ownComputorIndices[i])
                                             {
-                                                broadcastedFutureTickData.broadcastFutureTickData.tickData.computorIndex = ownComputorIndices[i] ^ BROADCAST_FUTURE_TICK_DATA;
-                                                broadcastedFutureTickData.broadcastFutureTickData.tickData.epoch = system.epoch;
-                                                broadcastedFutureTickData.broadcastFutureTickData.tickData.tick = system.tick + TICK_TRANSACTIONS_PUBLICATION_OFFSET;
+                                                broadcastFutureTickData.tickData.computorIndex = ownComputorIndices[i] ^ BROADCAST_FUTURE_TICK_DATA;
+                                                broadcastFutureTickData.tickData.epoch = system.epoch;
+                                                broadcastFutureTickData.tickData.tick = system.tick + TICK_TRANSACTIONS_PUBLICATION_OFFSET;
 
-                                                broadcastedFutureTickData.broadcastFutureTickData.tickData.millisecond = 0;
-                                                broadcastedFutureTickData.broadcastFutureTickData.tickData.second = time.Second;
-                                                broadcastedFutureTickData.broadcastFutureTickData.tickData.minute = time.Minute;
-                                                broadcastedFutureTickData.broadcastFutureTickData.tickData.hour = time.Hour;
-                                                broadcastedFutureTickData.broadcastFutureTickData.tickData.day = time.Day;
-                                                broadcastedFutureTickData.broadcastFutureTickData.tickData.month = time.Month;
-                                                broadcastedFutureTickData.broadcastFutureTickData.tickData.year = time.Year - 2000;
+                                                broadcastFutureTickData.tickData.millisecond = 0;
+                                                broadcastFutureTickData.tickData.second = time.Second;
+                                                broadcastFutureTickData.tickData.minute = time.Minute;
+                                                broadcastFutureTickData.tickData.hour = time.Hour;
+                                                broadcastFutureTickData.tickData.day = time.Day;
+                                                broadcastFutureTickData.tickData.month = time.Month;
+                                                broadcastFutureTickData.tickData.year = time.Year - 2000;
 
-                                                bs->SetMem(&broadcastedFutureTickData.broadcastFutureTickData.tickData.varStruct.ballot, sizeof(broadcastedFutureTickData.broadcastFutureTickData.tickData.varStruct.ballot), 0);
-                                                unsigned short random;
-                                                _rdrand16_step(&random);
-                                                broadcastedFutureTickData.broadcastFutureTickData.tickData.varStruct.ballot.quasiRandomNumber = (unsigned char)random;
+                                                if (system.proposals[ownComputorIndices[i]].uriSize)
+                                                {
+                                                    bs->CopyMem(&broadcastFutureTickData.tickData.varStruct.proposal, &system.proposals[ownComputorIndices[i]], sizeof(ComputorProposal));
+                                                }
+                                                else
+                                                {
+                                                    bs->CopyMem(&broadcastFutureTickData.tickData.varStruct.ballot, &system.ballots[ownComputorIndices[i]], sizeof(ComputorBallot));
+                                                }
 
                                                 unsigned int maxCounter = 0;
                                                 for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
@@ -7675,12 +7796,12 @@ static void tickerProcessor(void*)
                                                 {
                                                     for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
                                                     {
-                                                        broadcastedFutureTickData.broadcastFutureTickData.tickData.revenues[j] = (faultyComputorFlags[j >> 6] & (1ULL << (j & 63))) ? 0 : ((system.tickCounters[j] >= maxCounter) ? (ISSUANCE_RATE / NUMBER_OF_COMPUTORS) : (system.tickCounters[j] * ((unsigned long long)(ISSUANCE_RATE / NUMBER_OF_COMPUTORS)) / maxCounter));
+                                                        broadcastFutureTickData.tickData.revenues[j] = (faultyComputorFlags[j >> 6] & (1ULL << (j & 63))) ? 0 : ((system.tickCounters[j] >= maxCounter) ? (ISSUANCE_RATE / NUMBER_OF_COMPUTORS) : (system.tickCounters[j] * ((unsigned long long)(ISSUANCE_RATE / NUMBER_OF_COMPUTORS)) / maxCounter));
                                                         for (unsigned int k = 0; k < sizeof(computorSeeds) / sizeof(computorSeeds[0]); k++)
                                                         {
                                                             if (EQUAL(*((__m256i*)broadcastedComputors.broadcastComputors.computors.publicKeys[j]), *((__m256i*)computorPublicKeys[k])))
                                                             {
-                                                                broadcastedFutureTickData.broadcastFutureTickData.tickData.revenues[j] = ISSUANCE_RATE / NUMBER_OF_COMPUTORS;
+                                                                broadcastFutureTickData.tickData.revenues[j] = ISSUANCE_RATE / NUMBER_OF_COMPUTORS;
 
                                                                 break;
                                                             }
@@ -7689,7 +7810,7 @@ static void tickerProcessor(void*)
                                                 }
                                                 else
                                                 {
-                                                    bs->SetMem(broadcastedFutureTickData.broadcastFutureTickData.tickData.revenues, sizeof(broadcastedFutureTickData.broadcastFutureTickData.tickData.revenues), 0);
+                                                    bs->SetMem(broadcastFutureTickData.tickData.revenues, sizeof(broadcastFutureTickData.tickData.revenues), 0);
                                                 }
 
                                                 unsigned int numberOfEntityPendingTransactionIndices;
@@ -7781,7 +7902,7 @@ static void tickerProcessor(void*)
                                                             {
                                                                 tickTransactionOffsets[pendingTransaction->tick - system.initialTick][j] = nextTickTransactionOffset;
                                                                 bs->CopyMem(&tickTransactions[nextTickTransactionOffset], (void*)pendingTransaction, transactionSize);
-                                                                *((__m256i*)broadcastedFutureTickData.broadcastFutureTickData.tickData.transactionDigests[j]) = *((__m256i*) & entityPendingTransactionDigests[entityPendingTransactionIndices[index] * 32ULL]);
+                                                                *((__m256i*)broadcastFutureTickData.tickData.transactionDigests[j]) = *((__m256i*) & entityPendingTransactionDigests[entityPendingTransactionIndices[index] * 32ULL]);
                                                                 j++;
                                                                 nextTickTransactionOffset += transactionSize;
                                                             }
@@ -7792,15 +7913,15 @@ static void tickerProcessor(void*)
                                                 }
                                                 for (; j < NUMBER_OF_TRANSACTIONS_PER_TICK; j++)
                                                 {
-                                                    *((__m256i*)broadcastedFutureTickData.broadcastFutureTickData.tickData.transactionDigests[j]) = ZERO;
+                                                    *((__m256i*)broadcastFutureTickData.tickData.transactionDigests[j]) = ZERO;
                                                 }
 
                                                 unsigned char digest[32];
-                                                KangarooTwelve((unsigned char*)&broadcastedFutureTickData.broadcastFutureTickData.tickData, sizeof(TickData) - SIGNATURE_SIZE, digest, sizeof(digest));
-                                                broadcastedFutureTickData.broadcastFutureTickData.tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
-                                                sign(computorSubseeds[ownComputorIndicesMapping[i]], computorPublicKeys[ownComputorIndicesMapping[i]], digest, broadcastedFutureTickData.broadcastFutureTickData.tickData.signature);
+                                                KangarooTwelve((unsigned char*)&broadcastFutureTickData.tickData, sizeof(TickData) - SIGNATURE_SIZE, digest, sizeof(digest));
+                                                broadcastFutureTickData.tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
+                                                sign(computorSubseeds[ownComputorIndicesMapping[i]], computorPublicKeys[ownComputorIndicesMapping[i]], digest, broadcastFutureTickData.tickData.signature);
 
-                                                enqueueResponse(NULL, false, BROADCAST_FUTURE_TICK_DATA, &broadcastedFutureTickData.broadcastFutureTickData, sizeof(broadcastedFutureTickData.broadcastFutureTickData));
+                                                enqueueResponse(NULL, false, BROADCAST_FUTURE_TICK_DATA, &broadcastFutureTickData, sizeof(broadcastFutureTickData));
 
                                                 break;
                                             }
@@ -8275,6 +8396,8 @@ static BOOLEAN initialize()
         }
         else
         {
+            bs->SetMem(&system, sizeof(system), 0);
+
             unsigned long long size = sizeof(system);
             status = dataFile->Read(dataFile, &size, &system);
             dataFile->Close(dataFile);
@@ -8286,19 +8409,8 @@ static BOOLEAN initialize()
             }
             else
             {
-                if (size)
+                if (!size)
                 {
-                    if (size != sizeof(system))
-                    {
-                        logStatus(L"EFI_FILE_PROTOCOL.Read() reads invalid number of bytes", size, __LINE__);
-
-                        return FALSE;
-                    }
-                }
-                else
-                {
-                    bs->SetMem(&system, sizeof(system), 0);
-
                     system.epoch = 48;
                     system.epochBeginningHour = 12;
                     system.epochBeginningDay = 13;
@@ -8309,7 +8421,7 @@ static BOOLEAN initialize()
                 system.version = VERSION_B;
                 if (system.epoch == 48)
                 {
-                    system.initialTick = system.tick = 5140000;
+                    system.initialTick = system.tick = 5150000;
                 }
                 else
                 {
