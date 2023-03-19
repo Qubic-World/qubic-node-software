@@ -18,8 +18,8 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 105
-#define VERSION_C 2
+#define VERSION_B 106
+#define VERSION_C 0
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -4807,7 +4807,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 
 #define BUFFER_SIZE 4194304
 #define TARGET_TICK_DURATION 5000
-#define TICK_REQUESTING_PERIOD 200
+#define TICK_REQUESTING_PERIOD 1000
 #define DEJAVU_SWAP_LIMIT 1000000
 #define DISSEMINATION_MULTIPLIER 10
 #define FIRST_TICK_TRANSACTION_OFFSET sizeof(unsigned long long)
@@ -8426,7 +8426,7 @@ static BOOLEAN initialize()
                 system.version = VERSION_B;
                 if (system.epoch == 48)
                 {
-                    system.initialTick = system.tick = 5150000;
+                    system.initialTick = system.tick = 5160000;
                 }
                 else
                 {
@@ -9308,7 +9308,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                     _rdrand32_step(&salt);
 
                     unsigned long long clockTick = 0, systemDataSavingTick = 0, loggingTick = 0, peerRefreshingTick = 0, resourceTestingSolutionPublicationTick = 0, tickRequestingTick = 0;
-                    unsigned int tickRequestingIndicator = 0;
                     unsigned long long mainLoopNumerator = 0, mainLoopDenominator = 0;
                     while (!state)
                     {
@@ -9508,7 +9507,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if (receivedDataSize >= sizeof(RequestResponseHeader))
                                             {
                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B || requestResponseHeader->protocol() > VERSION_B + 1)
+                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B - 1 || requestResponseHeader->protocol() > VERSION_B + 1)
                                                 {
                                                     closePeer(&peers[i]);
                                                 }
@@ -9855,12 +9854,25 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                         {
                             tickRequestingTick = curTimeTick;
 
-                            if (tickRequestingIndicator == tickTotalNumberOfComputors)
+                            requestedQuorumTick.header.randomizeDejavu();
+                            requestedQuorumTick.requestQuorumTick.quorumTick.tick = system.tick;
+                            bs->SetMem(&requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags, sizeof(requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags), 0);
+                            const unsigned int baseOffset = (system.tick - system.initialTick) * NUMBER_OF_COMPUTORS;
+                            for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
                             {
-                                requestedQuorumTick.header.randomizeDejavu();
-                                requestedQuorumTick.requestQuorumTick.quorumTick.tick = system.tick;
+                                const Tick* tick = &ticks[baseOffset + i];
+                                if (tick->epoch == system.epoch)
+                                {
+                                    requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags[i >> 2] |= ((EQUAL(*((__m256i*)tick->varStruct.nextTick.zero), ZERO)) ? 1 : 2) << ((i & 3) << 1);
+                                }
+                            }
+                            pushToAny(&requestedQuorumTick.header);
+
+                            if (futureTickTotalNumberOfComputors > NUMBER_OF_COMPUTORS - QUORUM)
+                            {
+                                requestedQuorumTick.requestQuorumTick.quorumTick.tick = system.tick + 1;
                                 bs->SetMem(&requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags, sizeof(requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags), 0);
-                                const unsigned int baseOffset = (system.tick - system.initialTick) * NUMBER_OF_COMPUTORS;
+                                const unsigned int baseOffset = (system.tick + 1 - system.initialTick) * NUMBER_OF_COMPUTORS;
                                 for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
                                 {
                                     const Tick* tick = &ticks[baseOffset + i];
@@ -9870,24 +9882,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                     }
                                 }
                                 pushToAny(&requestedQuorumTick.header);
-
-                                if (futureTickTotalNumberOfComputors > NUMBER_OF_COMPUTORS - QUORUM)
-                                {
-                                    requestedQuorumTick.requestQuorumTick.quorumTick.tick = system.tick + 1;
-                                    bs->SetMem(&requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags, sizeof(requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags), 0);
-                                    const unsigned int baseOffset = (system.tick + 1 - system.initialTick) * NUMBER_OF_COMPUTORS;
-                                    for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
-                                    {
-                                        const Tick* tick = &ticks[baseOffset + i];
-                                        if (tick->epoch == system.epoch)
-                                        {
-                                            requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags[i >> 2] |= ((EQUAL(*((__m256i*)tick->varStruct.nextTick.zero), ZERO)) ? 1 : 2) << ((i & 3) << 1);
-                                        }
-                                    }
-                                    pushToAny(&requestedQuorumTick.header);
-                                }
                             }
-                            tickRequestingIndicator = tickTotalNumberOfComputors;
 
                             if (tickData[system.tick + 1 - system.initialTick].epoch != system.epoch
                                 || targetNextTickDataDigestIsKnown)
