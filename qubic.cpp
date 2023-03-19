@@ -19,7 +19,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 105
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -5287,6 +5287,7 @@ static struct
 } broadcastedComputors;
 
 static bool epochMustBeTerminated = false;
+static TickData curTickData, nextTickData;
 
 static EFI_TIME time;
 static CHAR16 message[16384], timestampedMessage[16384];
@@ -6806,7 +6807,6 @@ static void tickerProcessor(void*)
 
     __m256i prevTickSpectrumDigest = initSpectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1];
     unsigned int latestOwnTick = 0;
-    TickData curTickData, nextTickData;
     curTickData.epoch = 0;
     etalonTick.tick = 0;
     __m256i etalonTickEssenceDigest;
