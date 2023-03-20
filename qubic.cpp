@@ -19,12 +19,11 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 106
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
 static unsigned short SYSTEM_FILE_NAME[] = L"system";
-static unsigned short SOLUTION_FILE_NAME[] = L"solution.047";
 static unsigned short SPECTRUM_FILE_NAME[] = L"spectrum.???";
 
 #include <intrin.h>
@@ -4838,7 +4837,6 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define REQUEST_QUEUE_LENGTH 65536 // Must be 65536
 #define RESPONSE_QUEUE_BUFFER_SIZE 1073741824
 #define RESPONSE_QUEUE_LENGTH 65536 // Must be 65536
-#define RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD 90000
 #define SIGNATURE_SIZE 64
 #define SOLUTION_THRESHOLD 24
 #define SPECTRUM_CAPACITY 0x1000000ULL // Must be 2^N
@@ -4963,34 +4961,6 @@ typedef struct
 {
     unsigned char peers[NUMBER_OF_EXCHANGED_PEERS][4];
 } ExchangePublicPeers;
-
-#define BROADCAST_RESOURCE_TESTING_SOLUTION 1
-
-typedef struct
-{
-    unsigned char computorPublicKey[32];
-    unsigned short millisecond;
-    unsigned char second;
-    unsigned char minute;
-    unsigned char hour;
-    unsigned char day;
-    unsigned char month;
-    unsigned char year;
-    unsigned char nonces[NUMBER_OF_SOLUTION_NONCES][32];
-    unsigned char signature[SIGNATURE_SIZE];
-} ResourceTestingSolution;
-
-typedef struct
-{
-    unsigned char computorPublicKey[32];
-    unsigned char nonces[NUMBER_OF_SOLUTION_NONCES][32];
-    unsigned char signature[SIGNATURE_SIZE];
-} DeprecatedResourceTestingSolution;
-
-typedef struct
-{
-    ResourceTestingSolution resourceTestingSolution;
-} BroadcastResourceTestingSolution;
 
 #define BROADCAST_COMPUTORS 2
 
@@ -5301,7 +5271,7 @@ static struct System
     unsigned int tick;
     unsigned int initialTick;
     unsigned int latestCreatedTick;
-    unsigned int tickCounters[NUMBER_OF_COMPUTORS];
+    unsigned int revenueCounters[NUMBER_OF_COMPUTORS];
 
     unsigned short epochBeginningMillisecond;
     unsigned char epochBeginningSecond;
@@ -5326,7 +5296,6 @@ static short ownComputorIndices[NUMBER_OF_COMPUTORS / 3];
 static short ownComputorIndicesMapping[sizeof(computorSeeds) / sizeof(computorSeeds[0])];
 
 static Tick* ticks = NULL;
-static unsigned long long tickFlags[MAX_NUMBER_OF_TICKS_PER_EPOCH][(NUMBER_OF_COMPUTORS + 63) / 64];
 static TickData* tickData = NULL;
 static Tick etalonTick;
 static bool etalonTickMustBeCreated = false;
@@ -5420,12 +5389,6 @@ static unsigned long long* minerSolutionFlags = NULL;
 static unsigned char minerPublicKeys[MAX_NUMBER_OF_MINERS][32];
 static unsigned int minerScores[MAX_NUMBER_OF_MINERS];
 static unsigned int numberOfMiners = NUMBER_OF_COMPUTORS;
-
-static struct
-{
-    RequestResponseHeader header;
-    BroadcastResourceTestingSolution broadcastResourceTestingSolution;
-} broadcastedSolutions[sizeof(computorSeeds) / sizeof(computorSeeds[0])];
 
 BroadcastFutureTickData broadcastFutureTickData;
 
@@ -5917,17 +5880,6 @@ static void pushToSeveral(RequestResponseHeader* requestResponseHeader)
     }
 }
 
-static void pushToAll(RequestResponseHeader* requestResponseHeader)
-{
-    for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
-    {
-        if (peers[i].exchangedPublicPeers)
-        {
-            push(&peers[i], requestResponseHeader);
-        }
-    }
-}
-
 static void enqueueResponse(Peer* peer, RequestResponseHeader* responseHeader)
 {
     ACQUIRE(responseQueueHeadLock);
@@ -6022,6 +5974,91 @@ static void requestProcessor(void* ProcedureArgument)
 
                 switch (header->type())
                 {
+                case RESPOND_RESOURCE_TESTING_SOLUTION:
+                {
+                    RespondResourceTestingSolution* request = (RespondResourceTestingSolution*)((char*)processor->buffer + sizeof(RequestResponseHeader));
+                    for (unsigned int j = 0; j < sizeof(computorSeeds) / sizeof(computorSeeds[0]); j++)
+                    {
+                        if (EQUAL(*((__m256i*)request->computorPublicKey), *((__m256i*)computorPublicKeys[j])))
+                        {
+                            unsigned int k;
+                            for (k = 0; k < numberOfSolutions; k++)
+                            {
+                                if (EQUAL(*((__m256i*)request->nonce), *((__m256i*)solutions[k].nonce))
+                                    && EQUAL(*((__m256i*)request->computorPublicKey), *((__m256i*)solutions[k].computorPublicKey)))
+                                {
+                                    break;
+                                }
+                            }
+                            if (k == numberOfSolutions)
+                            {
+                                random(request->computorPublicKey, request->nonce, (unsigned char*)validationNeuronLinks, sizeof(validationNeuronLinks));
+                                for (k = 0; k < NUMBER_OF_NEURONS; k++)
+                                {
+                                    validationNeuronLinks[k][0] %= NUMBER_OF_NEURONS;
+                                    validationNeuronLinks[k][1] %= NUMBER_OF_NEURONS;
+                                }
+
+                                bs->SetMem(validationNeuronValues, sizeof(validationNeuronValues), 0xFF);
+
+                                unsigned int limiter = sizeof(miningData) / sizeof(miningData[0]);
+                                int outputLength = 0;
+                                while (outputLength < (sizeof(miningData) << 3))
+                                {
+                                    const unsigned int prevValue0 = validationNeuronValues[NUMBER_OF_NEURONS - 1];
+                                    const unsigned int prevValue1 = validationNeuronValues[NUMBER_OF_NEURONS - 2];
+
+                                    for (k = 0; k < NUMBER_OF_NEURONS; k++)
+                                    {
+                                        validationNeuronValues[k] = ~(validationNeuronValues[validationNeuronLinks[k][0]] & validationNeuronValues[validationNeuronLinks[k][1]]);
+                                    }
+
+                                    if (validationNeuronValues[NUMBER_OF_NEURONS - 1] != prevValue0
+                                        && validationNeuronValues[NUMBER_OF_NEURONS - 2] == prevValue1)
+                                    {
+                                        if (!((miningData[outputLength >> 6] >> (outputLength & 63)) & 1))
+                                        {
+                                            break;
+                                        }
+
+                                        outputLength++;
+                                    }
+                                    else
+                                    {
+                                        if (validationNeuronValues[NUMBER_OF_NEURONS - 2] != prevValue1
+                                            && validationNeuronValues[NUMBER_OF_NEURONS - 1] == prevValue0)
+                                        {
+                                            if ((miningData[outputLength >> 6] >> (outputLength & 63)) & 1)
+                                            {
+                                                break;
+                                            }
+
+                                            outputLength++;
+                                        }
+                                        else
+                                        {
+                                            if (!(--limiter))
+                                            {
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if (outputLength >= SOLUTION_THRESHOLD
+                                    && numberOfSolutions < MAX_NUMBER_OF_SOLUTIONS)
+                                {
+                                    *((__m256i*)solutions[numberOfSolutions].computorPublicKey) = *((__m256i*)request->computorPublicKey);
+                                    *((__m256i*)solutions[numberOfSolutions++].nonce) = *((__m256i*)request->nonce);
+                                }
+                            }
+
+                            break;
+                        }
+                    }
+                }
+                break;
+
                 case EXCHANGE_PUBLIC_PEERS:
                 {
                     if (!peer->exchangedPublicPeers)
@@ -6049,58 +6086,6 @@ static void requestProcessor(void* ProcedureArgument)
                     }
                 }
                 break;
-
-                /*case BROADCAST_RESOURCE_TESTING_SOLUTION:
-                {
-                    BroadcastResourceTestingSolution* request = (BroadcastResourceTestingSolution*)((char*)processor->buffer + sizeof(RequestResponseHeader));
-                    if (!EQUAL(*((__m256i*)request->resourceTestingSolution.computorPublicKey), ZERO))
-                    {
-                        unsigned char digest[32];
-                        request->resourceTestingSolution.computorPublicKey[0] ^= BROADCAST_RESOURCE_TESTING_SOLUTION;
-                        KangarooTwelve((unsigned char*)&request->resourceTestingSolution, sizeof(ResourceTestingSolution) - SIGNATURE_SIZE, digest, sizeof(digest));
-                        request->resourceTestingSolution.computorPublicKey[0] ^= BROADCAST_RESOURCE_TESTING_SOLUTION;
-                        if (verify(request->resourceTestingSolution.computorPublicKey, digest, request->resourceTestingSolution.signature))
-                        {
-                            enqueueResponse(NULL, header);
-
-                            for (unsigned int i = 0; i < sizeof(computorSeeds) / sizeof(computorSeeds[0]); i++)
-                            {
-                                if (EQUAL(*((__m256i*)request->resourceTestingSolution.computorPublicKey), *((__m256i*)computorPublicKeys[i])))
-                                {
-                                    for (unsigned int j = 0; j < NUMBER_OF_SOLUTION_NONCES; j++)
-                                    {
-                                        if (!EQUAL(*((__m256i*)request->resourceTestingSolution.nonces[j]), ZERO))
-                                        {
-                                            unsigned int k;
-                                            for (k = 0; k < NUMBER_OF_SOLUTION_NONCES; k++)
-                                            {
-                                                if (EQUAL(*((__m256i*)broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces[k]), *((__m256i*)request->resourceTestingSolution.nonces[j])))
-                                                {
-                                                    break;
-                                                }
-                                            }
-                                            if (k == NUMBER_OF_SOLUTION_NONCES)
-                                            {
-                                                for (k = 0; k < NUMBER_OF_SOLUTION_NONCES; k++)
-                                                {
-                                                    if (EQUAL(*((__m256i*)broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces[k]), ZERO))
-                                                    {
-                                                        *((__m256i*)broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces[k]) = *((__m256i*)request->resourceTestingSolution.nonces[j]);
-
-                                                        break;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-                break;*/
 
                 case BROADCAST_COMPUTORS:
                 {
@@ -6251,7 +6236,6 @@ static void requestProcessor(void* ProcedureArgument)
                                 if (mustBeStored)
                                 {
                                     bs->CopyMem(&ticks[offset], &request->tick, sizeof(Tick));
-                                    tickFlags[request->tick.tick - system.initialTick][request->tick.computorIndex >> 6] |= (1ULL << (request->tick.computorIndex & 63));
                                 }
                             }
 
@@ -6929,7 +6913,7 @@ static void tickerProcessor(void*)
 
             system.epoch++;
             system.initialTick = system.tick;
-            bs->SetMem(system.tickCounters, sizeof(system.tickCounters), 0);
+            bs->SetMem(system.revenueCounters, sizeof(system.revenueCounters), 0);
             systemMustBeSaved = true;
 
             SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 4] = system.epoch / 100 + L'0';
@@ -6956,19 +6940,14 @@ static void tickerProcessor(void*)
             if (broadcastedComputors.broadcastComputors.computors.epoch == system.epoch)
             {
                 {
-                    unsigned long long flags[(NUMBER_OF_COMPUTORS + 63) / 64];
-                    bs->SetMem(flags, sizeof(flags), 0);
-                    for (unsigned int i = system.tick + 1 - system.initialTick; i < MAX_NUMBER_OF_TICKS_PER_EPOCH; i++)
-                    {
-                        for (unsigned int j = 0; j < (NUMBER_OF_COMPUTORS + 63) / 64; j++)
-                        {
-                            flags[j] |= tickFlags[i][j];
-                        }
-                    }
+                    const unsigned int baseOffset = (system.tick + 1 - system.initialTick) * NUMBER_OF_COMPUTORS;
                     unsigned int futureTickTotalNumberOfComputors = 0;
-                    for (unsigned int i = 0; i < (NUMBER_OF_COMPUTORS + 63) / 64; i++)
+                    for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
                     {
-                        futureTickTotalNumberOfComputors += (unsigned int)__popcnt64(flags[i]);
+                        if (ticks[baseOffset + i].epoch == system.epoch)
+                        {
+                            futureTickTotalNumberOfComputors++;
+                        }
                     }
                     ::futureTickTotalNumberOfComputors = futureTickTotalNumberOfComputors;
                 }
@@ -7604,8 +7583,8 @@ static void tickerProcessor(void*)
                         }
                         else
                         {
-                            unsigned int counters[NUMBER_OF_COMPUTORS];
-                            bs->SetMem(counters, sizeof(counters), 0);
+                            unsigned int revenueCounters[NUMBER_OF_COMPUTORS];
+                            bs->SetMem(revenueCounters, sizeof(revenueCounters), 0);
 
                             unsigned int numberOfUniqueTickEssenceDigests = 0;
                             unsigned int numberOfEmptyTickEssences = 0;
@@ -7674,7 +7653,7 @@ static void tickerProcessor(void*)
                                                 if (EQUAL(tickEssenceDigests[i], etalonTickEssenceDigest))
                                                 {
                                                     tickNumberOfComputors++;
-                                                    counters[i] = 1;
+                                                    revenueCounters[i] = 1;
                                                 }
                                             }
                                         }
@@ -7701,7 +7680,7 @@ static void tickerProcessor(void*)
 
                                 RELEASE(tickLocks[i]);
                             }
-
+                            
                             if (etalonTick.tick == system.tick)
                             {
                                 if (tickNumberOfComputors >= QUORUM)
@@ -7717,7 +7696,7 @@ static void tickerProcessor(void*)
 
                                         for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
                                         {
-                                            system.tickCounters[i] += counters[i];
+                                            system.revenueCounters[i] += revenueCounters[i];
                                         }
                                     }
                                     else
@@ -7772,7 +7751,7 @@ static void tickerProcessor(void*)
                                                 unsigned int maxCounter = 0;
                                                 for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
                                                 {
-                                                    if (system.tickCounters[j] > maxCounter)
+                                                    if (system.revenueCounters[j] > maxCounter)
                                                     {
                                                         unsigned int k;
                                                         for (k = 0; k < numberOfOwnComputorIndices; k++)
@@ -7784,7 +7763,7 @@ static void tickerProcessor(void*)
                                                         }
                                                         if (k == numberOfOwnComputorIndices)
                                                         {
-                                                            maxCounter = system.tickCounters[j];
+                                                            maxCounter = system.revenueCounters[j];
                                                         }
                                                     }
                                                 }
@@ -7792,7 +7771,7 @@ static void tickerProcessor(void*)
                                                 {
                                                     for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
                                                     {
-                                                        broadcastFutureTickData.tickData.revenues[j] = (faultyComputorFlags[j >> 6] & (1ULL << (j & 63))) ? 0 : ((system.tickCounters[j] >= maxCounter) ? (ISSUANCE_RATE / NUMBER_OF_COMPUTORS) : (system.tickCounters[j] * ((unsigned long long)(ISSUANCE_RATE / NUMBER_OF_COMPUTORS)) / maxCounter));
+                                                        broadcastFutureTickData.tickData.revenues[j] = (faultyComputorFlags[j >> 6] & (1ULL << (j & 63))) ? 0 : ((system.revenueCounters[j] >= maxCounter) ? (ISSUANCE_RATE / NUMBER_OF_COMPUTORS) : (system.revenueCounters[j] * ((unsigned long long)(ISSUANCE_RATE / NUMBER_OF_COMPUTORS)) / maxCounter));
                                                         for (unsigned int k = 0; k < sizeof(computorSeeds) / sizeof(computorSeeds[0]); k++)
                                                         {
                                                             if (EQUAL(*((__m256i*)broadcastedComputors.broadcastComputors.computors.publicKeys[j]), *((__m256i*)computorPublicKeys[k])))
@@ -8011,47 +7990,6 @@ static void emptyCallback(EFI_EVENT Event, void* Context)
 {
 }
 
-static void saveSolutions()
-{
-    const unsigned long long beginningTick = __rdtsc();
-
-    EFI_FILE_PROTOCOL* dataFile;
-    EFI_STATUS status;
-    if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SOLUTION_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0))
-    {
-        logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status, __LINE__);
-    }
-    else
-    {
-        unsigned long long totalSize = 0;
-        for (unsigned int i = 0; i < sizeof(computorSeeds) / sizeof(computorSeeds[0]); i++)
-        {
-            DeprecatedResourceTestingSolution solution;
-            bs->CopyMem(solution.computorPublicKey, broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey, sizeof(solution.computorPublicKey));
-            bs->CopyMem(solution.nonces, broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces, sizeof(solution.nonces));
-            unsigned long long size = sizeof(DeprecatedResourceTestingSolution);
-            if (status = dataFile->Write(dataFile, &size, &solution))
-            {
-                break;
-            }
-            totalSize += size;
-        }
-        dataFile->Close(dataFile);
-        if (status)
-        {
-            logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status, __LINE__);
-        }
-        else
-        {
-            setNumber(message, totalSize, TRUE);
-            appendText(message, L" bytes of the solution data are saved (");
-            appendNumber(message, (__rdtsc() - beginningTick) * 1000000 / frequency, TRUE);
-            appendText(message, L" microseconds).");
-            log(message);
-        }
-    }
-}
-
 static void saveSpectrum()
 {
     const unsigned long long beginningTick = __rdtsc();
@@ -8228,12 +8166,6 @@ static BOOLEAN initialize()
     }
     bs->SetMem(&broadcastedComputors.broadcastComputors.computors.signature, sizeof(broadcastedComputors.broadcastComputors.computors.signature), 0);
 
-    for (unsigned int i = 0; i < sizeof(computorSeeds) / sizeof(computorSeeds[0]); i++)
-    {
-        broadcastedSolutions[i].header.setSize(sizeof(broadcastedSolutions[i]));
-        broadcastedSolutions[i].header.setProtocol();
-        broadcastedSolutions[i].header.setType(BROADCAST_RESOURCE_TESTING_SOLUTION);
-    }
     requestedComputors.header.setSize(sizeof(requestedComputors));
     requestedComputors.header.setProtocol();
     requestedComputors.header.setType(REQUEST_COMPUTORS);
@@ -8359,7 +8291,6 @@ static BOOLEAN initialize()
             return FALSE;
         }
         bs->SetMem(ticks, ((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * NUMBER_OF_COMPUTORS * sizeof(Tick), 0);
-        bs->SetMem(tickFlags, sizeof(tickFlags), 0);
         if ((status = bs->AllocatePool(EfiRuntimeServicesData, ((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * sizeof(TickData), (void**)&tickData))
             || (status = bs->AllocatePool(EfiRuntimeServicesData, FIRST_TICK_TRANSACTION_OFFSET + (((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * NUMBER_OF_TRANSACTIONS_PER_TICK * MAX_TRANSACTION_SIZE / TRANSACTION_SPARSENESS), (void**)&tickTransactions))
             || (status = bs->AllocatePool(EfiRuntimeServicesData, SPECTRUM_CAPACITY * MAX_TRANSACTION_SIZE, (void**)&entityPendingTransactions))
@@ -8547,50 +8478,6 @@ static BOOLEAN initialize()
         bs->SetMem(minerSolutionFlags, NUMBER_OF_MINER_SOLUTION_FLAGS / 8, 0);
 
         bs->SetMem(minerScores, sizeof(minerScores[0]) * NUMBER_OF_COMPUTORS, 0);
-
-        /*if (status = root->Open(root, (void**)&dataFile, (CHAR16*)SOLUTION_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, EFI_FILE_ARCHIVE))
-        {
-            logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status, __LINE__);
-
-            return FALSE;
-        }
-        else
-        {
-            for (unsigned int i = 0; i < sizeof(computorSeeds) / sizeof(computorSeeds[0]); i++)
-            {
-                DeprecatedResourceTestingSolution solution;
-                unsigned long long size = sizeof(DeprecatedResourceTestingSolution);
-                if (status = dataFile->Read(dataFile, &size, &solution))
-                {
-                    break;
-                }
-                bs->CopyMem(broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey, solution.computorPublicKey, sizeof(solution.computorPublicKey));
-                bs->CopyMem(broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces, solution.nonces, sizeof(solution.nonces));
-                if (size < sizeof(DeprecatedResourceTestingSolution))
-                {
-                    if (!size)
-                    {
-                        *((__m256i*)broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey) = *((__m256i*)computorPublicKeys[i]);
-                        bs->SetMem(&broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces, sizeof(broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces), 0);
-                    }
-                    else
-                    {
-                        dataFile->Close(dataFile);
-
-                        log(L"Solution data file is too small!");
-
-                        return FALSE;
-                    }
-                }
-            }
-            dataFile->Close(dataFile);
-            if (status)
-            {
-                logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status, __LINE__);
-
-                return FALSE;
-            }
-        }*/
     }
 
     if ((status = bs->AllocatePool(EfiRuntimeServicesData, 536870912, (void**)&dejavu0))
@@ -8748,93 +8635,6 @@ static void deinitialize()
     }
 }
 
-static void publishSolutions()
-{
-    for (unsigned int i = 0; i < sizeof(computorSeeds) / sizeof(computorSeeds[0]); i++)
-    {
-        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.millisecond = time.Nanosecond / 1000000;
-        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.second = time.Second;
-        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.minute = time.Minute;
-        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.hour = time.Hour;
-        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.day = time.Day;
-        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.month = time.Month;
-        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.year = time.Year - 2000;
-
-        for (unsigned int j = 0; j < NUMBER_OF_SOLUTION_NONCES; j++)
-        {
-            if (!EQUAL(*((__m256i*)broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces[j]), ZERO))
-            {
-                ::random(broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey, broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces[j], (unsigned char*)validationNeuronLinks, sizeof(validationNeuronLinks));
-                for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
-                {
-                    validationNeuronLinks[k][0] %= NUMBER_OF_NEURONS;
-                    validationNeuronLinks[k][1] %= NUMBER_OF_NEURONS;
-                }
-
-                bs->SetMem(validationNeuronValues, sizeof(validationNeuronValues), 0xFF);
-
-                unsigned int limiter = sizeof(miningData) / sizeof(miningData[0]);
-                int outputLength = 0;
-                while (outputLength < (sizeof(miningData) << 3))
-                {
-                    const unsigned int prevValue0 = validationNeuronValues[NUMBER_OF_NEURONS - 1];
-                    const unsigned int prevValue1 = validationNeuronValues[NUMBER_OF_NEURONS - 2];
-
-                    for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
-                    {
-                        validationNeuronValues[k] = ~(validationNeuronValues[validationNeuronLinks[k][0]] & validationNeuronValues[validationNeuronLinks[k][1]]);
-                    }
-
-                    if (validationNeuronValues[NUMBER_OF_NEURONS - 1] != prevValue0
-                        && validationNeuronValues[NUMBER_OF_NEURONS - 2] == prevValue1)
-                    {
-                        if (!((miningData[outputLength >> 6] >> (outputLength & 63)) & 1))
-                        {
-                            break;
-                        }
-
-                        outputLength++;
-                    }
-                    else
-                    {
-                        if (validationNeuronValues[NUMBER_OF_NEURONS - 2] != prevValue1
-                            && validationNeuronValues[NUMBER_OF_NEURONS - 1] == prevValue0)
-                        {
-                            if ((miningData[outputLength >> 6] >> (outputLength & 63)) & 1)
-                            {
-                                break;
-                            }
-
-                            outputLength++;
-                        }
-                        else
-                        {
-                            if (!(--limiter))
-                            {
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                if (outputLength < SOLUTION_THRESHOLD)
-                {
-                    *((__m256i*)broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces[j]) = ZERO;
-                    log(L"An invalid resource testing solution is removed!");
-                }
-            }
-        }
-
-        unsigned char digest[32];
-        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey[0] ^= BROADCAST_RESOURCE_TESTING_SOLUTION;
-        KangarooTwelve((unsigned char*)&broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution, sizeof(ResourceTestingSolution) - SIGNATURE_SIZE, digest, sizeof(digest));
-        broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.computorPublicKey[0] ^= BROADCAST_RESOURCE_TESTING_SOLUTION;
-        sign(computorSubseeds[i], computorPublicKeys[i], digest, broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.signature);
-
-        pushToAll(&broadcastedSolutions[i].header);
-    }
-}
-
 static void logInfo()
 {
     unsigned long long numberOfWaitingBytes = 0;
@@ -8914,24 +8714,7 @@ static void logInfo()
     appendNumber(message, tickDuration / frequency, FALSE);
     appendText(message, L".");
     appendNumber(message, (tickDuration % frequency) * 10 / frequency, FALSE);
-    appendText(message, L" s | Scores = ");
-    for (unsigned int i = 0; i < sizeof(computorSeeds) / sizeof(computorSeeds[0]); i++)
-    {
-        int score = 0;
-        for (unsigned int j = 0; j < NUMBER_OF_SOLUTION_NONCES; j++)
-        {
-            if (!EQUAL(*((__m256i*)broadcastedSolutions[i].broadcastResourceTestingSolution.resourceTestingSolution.nonces[j]), ZERO))
-            {
-                score++;
-            }
-        }
-        if (i)
-        {
-            appendText(message, L"+");
-        }
-        appendNumber(message, score, TRUE);
-    }
-    appendText(message, L" | Indices = ");
+    appendText(message, L" s | Indices = ");
     if (!numberOfOwnComputorIndices)
     {
         appendText(message, L"?.");
@@ -9136,7 +8919,7 @@ static void processKeyPresses()
             appendText(message, L"/");
             appendNumber(message, numberOfSolutions, TRUE);
             appendText(message, L" solutions.");
-            //log(message);
+            log(message);
         }
         break;
 
@@ -9303,7 +9086,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                     unsigned int salt;
                     _rdrand32_step(&salt);
 
-                    unsigned long long clockTick = 0, systemDataSavingTick = 0, loggingTick = 0, peerRefreshingTick = 0, resourceTestingSolutionPublicationTick = 0, tickRequestingTick = 0;
+                    unsigned long long clockTick = 0, systemDataSavingTick = 0, loggingTick = 0, peerRefreshingTick = 0, tickRequestingTick = 0;
                     unsigned int tickRequestingIndicator = 0, futureTickRequestingIndicator = 0;
                     unsigned long long mainLoopNumerator = 0, mainLoopDenominator = 0;
                     while (!state)
@@ -9522,113 +9305,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                                 {
                                                     if (receivedDataSize >= requestResponseHeader->size())
                                                     {
-                                                        /*case RESPOND_RESOURCE_TESTING_SOLUTION:
-                                                        {
-                                                            RespondResourceTestingSolution* request = (RespondResourceTestingSolution*)((char*)peers[i].receiveBuffer + sizeof(RequestResponseHeader));
-                                                            for (unsigned int j = 0; j < sizeof(computorSeeds) / sizeof(computorSeeds[0]); j++)
-                                                            {
-                                                                if (EQUAL(*((__m256i*)request->computorPublicKey), *((__m256i*)computorPublicKeys[j])))
-                                                                {
-                                                                    unsigned int k;
-                                                                    for (k = 0; k < numberOfSolutions; k++)
-                                                                    {
-                                                                        if (EQUAL(*((__m256i*)request->nonce), *((__m256i*)solutions[k].nonce))
-                                                                            && EQUAL(*((__m256i*)request->computorPublicKey), *((__m256i*)solutions[k].computorPublicKey)))
-                                                                        {
-                                                                            break;
-                                                                        }
-                                                                    }
-                                                                    if (k == numberOfSolutions)
-                                                                    {
-                                                                        random(request->computorPublicKey, request->nonce, (unsigned char*)validationNeuronLinks, sizeof(validationNeuronLinks));
-                                                                        for (k = 0; k < NUMBER_OF_NEURONS; k++)
-                                                                        {
-                                                                            validationNeuronLinks[k][0] %= NUMBER_OF_NEURONS;
-                                                                            validationNeuronLinks[k][1] %= NUMBER_OF_NEURONS;
-                                                                        }
-
-                                                                        bs->SetMem(validationNeuronValues, sizeof(validationNeuronValues), 0xFF);
-
-                                                                        unsigned int limiter = sizeof(miningData) / sizeof(miningData[0]);
-                                                                        int outputLength = 0;
-                                                                        while (outputLength < (sizeof(miningData) << 3))
-                                                                        {
-                                                                            const unsigned int prevValue0 = validationNeuronValues[NUMBER_OF_NEURONS - 1];
-                                                                            const unsigned int prevValue1 = validationNeuronValues[NUMBER_OF_NEURONS - 2];
-
-                                                                            for (k = 0; k < NUMBER_OF_NEURONS; k++)
-                                                                            {
-                                                                                validationNeuronValues[k] = ~(validationNeuronValues[validationNeuronLinks[k][0]] & validationNeuronValues[validationNeuronLinks[k][1]]);
-                                                                            }
-
-                                                                            if (validationNeuronValues[NUMBER_OF_NEURONS - 1] != prevValue0
-                                                                                && validationNeuronValues[NUMBER_OF_NEURONS - 2] == prevValue1)
-                                                                            {
-                                                                                if (!((miningData[outputLength >> 6] >> (outputLength & 63)) & 1))
-                                                                                {
-                                                                                    break;
-                                                                                }
-
-                                                                                outputLength++;
-                                                                            }
-                                                                            else
-                                                                            {
-                                                                                if (validationNeuronValues[NUMBER_OF_NEURONS - 2] != prevValue1
-                                                                                    && validationNeuronValues[NUMBER_OF_NEURONS - 1] == prevValue0)
-                                                                                {
-                                                                                    if ((miningData[outputLength >> 6] >> (outputLength & 63)) & 1)
-                                                                                    {
-                                                                                        break;
-                                                                                    }
-
-                                                                                    outputLength++;
-                                                                                }
-                                                                                else
-                                                                                {
-                                                                                    if (!(--limiter))
-                                                                                    {
-                                                                                        break;
-                                                                                    }
-                                                                                }
-                                                                            }
-                                                                        }
-
-                                                                        if (outputLength >= SOLUTION_THRESHOLD
-                                                                            && numberOfSolutions < MAX_NUMBER_OF_SOLUTIONS)
-                                                                        {
-                                                                            *((__m256i*)solutions[numberOfSolutions].computorPublicKey) = *((__m256i*)request->computorPublicKey);
-                                                                            *((__m256i*)solutions[numberOfSolutions++].nonce) = *((__m256i*)request->nonce);
-
-                                                                            for (k = 0; k < NUMBER_OF_SOLUTION_NONCES; k++)
-                                                                            {
-                                                                                if (EQUAL(*((__m256i*)broadcastedSolutions[j].broadcastResourceTestingSolution.resourceTestingSolution.nonces[k]), *((__m256i*)request->nonce)))
-                                                                                {
-                                                                                    break;
-                                                                                }
-                                                                            }
-                                                                            if (k == NUMBER_OF_SOLUTION_NONCES)
-                                                                            {
-                                                                                for (k = 0; k < NUMBER_OF_SOLUTION_NONCES; k++)
-                                                                                {
-                                                                                    if (EQUAL(*((__m256i*)broadcastedSolutions[j].broadcastResourceTestingSolution.resourceTestingSolution.nonces[k]), ZERO))
-                                                                                    {
-                                                                                        *((__m256i*)broadcastedSolutions[j].broadcastResourceTestingSolution.resourceTestingSolution.nonces[k]) = *((__m256i*)request->nonce);
-
-                                                                                        break;
-                                                                                    }
-                                                                                }
-                                                                            }
-                                                                        }
-                                                                    }
-
-                                                                    break;
-                                                                }
-                                                            }
-
-                                                            _InterlockedIncrement64(&numberOfProcessedRequests);
-                                                        }
-                                                        break;*/
-
                                                         unsigned int saltedId;
 
                                                         const unsigned int header = *((unsigned int*)requestResponseHeader);
@@ -9848,15 +9524,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             }
                         }
 
-                        /*if (curTimeTick - resourceTestingSolutionPublicationTick >= RESOURCE_TESTING_SOLUTION_PUBLICATION_PERIOD * frequency / 1000)
-                        {
-                            resourceTestingSolutionPublicationTick = curTimeTick;
-
-                            publishSolutions();
-
-                            saveSolutions();
-                        }*/
-
                         if (curTimeTick - tickRequestingTick >= TICK_REQUESTING_PERIOD * frequency / 1000)
                         {
                             tickRequestingTick = curTimeTick;
@@ -9961,7 +9628,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                     tcp4ServiceBindingProtocol->DestroyChild(tcp4ServiceBindingProtocol, peerChildHandle);
 
                     saveSystem();
-                    //saveSolutions();
 
                     setText(message, L"Qubic ");
                     appendNumber(message, VERSION_A, FALSE);
