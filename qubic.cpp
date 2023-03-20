@@ -19,7 +19,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 106
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -4807,7 +4807,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 
 #define BUFFER_SIZE 4194304
 #define TARGET_TICK_DURATION 5000
-#define TICK_REQUESTING_PERIOD 1000
+#define TICK_REQUESTING_PERIOD 200
 #define DEJAVU_SWAP_LIMIT 1000000
 #define DISSEMINATION_MULTIPLIER 10
 #define FIRST_TICK_TRANSACTION_OFFSET sizeof(unsigned long long)
@@ -7536,33 +7536,30 @@ static void tickerProcessor(void*)
                             {
                                 system.latestCreatedTick = system.tick;
 
-                                if (futureTickTotalNumberOfComputors <= NUMBER_OF_COMPUTORS - QUORUM)
+                                BroadcastTick broadcastTick;
+                                bs->CopyMem(&broadcastTick.tick, &etalonTick, sizeof(Tick));
+                                for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
                                 {
-                                    BroadcastTick broadcastTick;
-                                    bs->CopyMem(&broadcastTick.tick, &etalonTick, sizeof(Tick));
-                                    for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
-                                    {
-                                        broadcastTick.tick.computorIndex = ownComputorIndices[i] ^ BROADCAST_TICK;
-                                        unsigned char saltedData[32 + 32];
-                                        *((__m256i*) & saltedData[0]) = *((__m256i*)computorPublicKeys[ownComputorIndicesMapping[i]]);
-                                        *((__m256i*) & saltedData[32]) = *((__m256i*)etalonTick.saltedSpectrumDigest);
-                                        KangarooTwelve64To32(saltedData, broadcastTick.tick.saltedSpectrumDigest);
-                                        *((__m256i*) & saltedData[32]) = *((__m256i*)etalonTick.saltedUniverseDigest);
-                                        KangarooTwelve64To32(saltedData, broadcastTick.tick.saltedUniverseDigest);
-                                        *((__m256i*) & saltedData[32]) = *((__m256i*)etalonTick.saltedComputerDigest);
-                                        KangarooTwelve64To32(saltedData, broadcastTick.tick.saltedComputerDigest);
+                                    broadcastTick.tick.computorIndex = ownComputorIndices[i] ^ BROADCAST_TICK;
+                                    unsigned char saltedData[32 + 32];
+                                    *((__m256i*) & saltedData[0]) = *((__m256i*)computorPublicKeys[ownComputorIndicesMapping[i]]);
+                                    *((__m256i*) & saltedData[32]) = *((__m256i*)etalonTick.saltedSpectrumDigest);
+                                    KangarooTwelve64To32(saltedData, broadcastTick.tick.saltedSpectrumDigest);
+                                    *((__m256i*) & saltedData[32]) = *((__m256i*)etalonTick.saltedUniverseDigest);
+                                    KangarooTwelve64To32(saltedData, broadcastTick.tick.saltedUniverseDigest);
+                                    *((__m256i*) & saltedData[32]) = *((__m256i*)etalonTick.saltedComputerDigest);
+                                    KangarooTwelve64To32(saltedData, broadcastTick.tick.saltedComputerDigest);
 
-                                        unsigned char digest[32];
-                                        KangarooTwelve((unsigned char*)&broadcastTick.tick, sizeof(Tick) - SIGNATURE_SIZE, digest, sizeof(digest));
-                                        broadcastTick.tick.computorIndex ^= BROADCAST_TICK;
-                                        sign(computorSubseeds[ownComputorIndicesMapping[i]], computorPublicKeys[ownComputorIndicesMapping[i]], digest, broadcastTick.tick.signature);
+                                    unsigned char digest[32];
+                                    KangarooTwelve((unsigned char*)&broadcastTick.tick, sizeof(Tick) - SIGNATURE_SIZE, digest, sizeof(digest));
+                                    broadcastTick.tick.computorIndex ^= BROADCAST_TICK;
+                                    sign(computorSubseeds[ownComputorIndicesMapping[i]], computorPublicKeys[ownComputorIndicesMapping[i]], digest, broadcastTick.tick.signature);
 
-                                        enqueueResponse(NULL, false, BROADCAST_TICK, &broadcastTick, sizeof(broadcastTick));
+                                    enqueueResponse(NULL, false, BROADCAST_TICK, &broadcastTick, sizeof(broadcastTick));
 
-                                        ACQUIRE(tickLocks[ownComputorIndices[i]]);
-                                        bs->CopyMem(&ticks[(broadcastTick.tick.tick - system.initialTick) * NUMBER_OF_COMPUTORS + broadcastTick.tick.computorIndex], &broadcastTick.tick, sizeof(Tick));
-                                        RELEASE(tickLocks[ownComputorIndices[i]]);
-                                    }
+                                    ACQUIRE(tickLocks[ownComputorIndices[i]]);
+                                    bs->CopyMem(&ticks[(broadcastTick.tick.tick - system.initialTick) * NUMBER_OF_COMPUTORS + broadcastTick.tick.computorIndex], &broadcastTick.tick, sizeof(Tick));
+                                    RELEASE(tickLocks[ownComputorIndices[i]]);
                                 }
                             }
 
@@ -7745,8 +7742,7 @@ static void tickerProcessor(void*)
                                     }
                                     tickTicks[sizeof(tickTicks) / sizeof(tickTicks[0]) - 1] = __rdtsc();
 
-                                    if (system.tick > system.latestCreatedTick
-                                        && futureTickTotalNumberOfComputors <= NUMBER_OF_COMPUTORS - QUORUM)
+                                    if (system.tick > system.latestCreatedTick)
                                     {
                                         for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
                                         {
@@ -9308,6 +9304,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                     _rdrand32_step(&salt);
 
                     unsigned long long clockTick = 0, systemDataSavingTick = 0, loggingTick = 0, peerRefreshingTick = 0, resourceTestingSolutionPublicationTick = 0, tickRequestingTick = 0;
+                    unsigned int tickRequestingIndicator = 0, futureTickRequestingIndicator = 0;
                     unsigned long long mainLoopNumerator = 0, mainLoopDenominator = 0;
                     while (!state)
                     {
@@ -9507,8 +9504,18 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if (receivedDataSize >= sizeof(RequestResponseHeader))
                                             {
                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B - 1 || requestResponseHeader->protocol() > VERSION_B + 1)
+                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B || requestResponseHeader->protocol() > VERSION_B + 1)
                                                 {
+                                                    setText(message, L"Forgetting ");
+                                                    appendNumber(message, peers[i].address[0], FALSE);
+                                                    appendText(message, L".");
+                                                    appendNumber(message, peers[i].address[1], FALSE);
+                                                    appendText(message, L".");
+                                                    appendNumber(message, peers[i].address[2], FALSE);
+                                                    appendText(message, L".");
+                                                    appendNumber(message, peers[i].address[3], FALSE);
+                                                    appendText(message, L"...");
+                                                    forget(*((int*)peers[i].address));
                                                     closePeer(&peers[i]);
                                                 }
                                                 else
@@ -9854,21 +9861,24 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                         {
                             tickRequestingTick = curTimeTick;
 
-                            requestedQuorumTick.header.randomizeDejavu();
-                            requestedQuorumTick.requestQuorumTick.quorumTick.tick = system.tick;
-                            bs->SetMem(&requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags, sizeof(requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags), 0);
-                            const unsigned int baseOffset = (system.tick - system.initialTick) * NUMBER_OF_COMPUTORS;
-                            for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                            if (tickRequestingIndicator == tickTotalNumberOfComputors)
                             {
-                                const Tick* tick = &ticks[baseOffset + i];
-                                if (tick->epoch == system.epoch)
+                                requestedQuorumTick.header.randomizeDejavu();
+                                requestedQuorumTick.requestQuorumTick.quorumTick.tick = system.tick;
+                                bs->SetMem(&requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags, sizeof(requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags), 0);
+                                const unsigned int baseOffset = (system.tick - system.initialTick) * NUMBER_OF_COMPUTORS;
+                                for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
                                 {
-                                    requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags[i >> 2] |= ((EQUAL(*((__m256i*)tick->varStruct.nextTick.zero), ZERO)) ? 1 : 2) << ((i & 3) << 1);
+                                    const Tick* tick = &ticks[baseOffset + i];
+                                    if (tick->epoch == system.epoch)
+                                    {
+                                        requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags[i >> 2] |= ((EQUAL(*((__m256i*)tick->varStruct.nextTick.zero), ZERO)) ? 1 : 2) << ((i & 3) << 1);
+                                    }
                                 }
+                                pushToAny(&requestedQuorumTick.header);
                             }
-                            pushToAny(&requestedQuorumTick.header);
-
-                            if (futureTickTotalNumberOfComputors > NUMBER_OF_COMPUTORS - QUORUM)
+                            tickRequestingIndicator = tickTotalNumberOfComputors;
+                            if (futureTickRequestingIndicator == futureTickTotalNumberOfComputors)
                             {
                                 requestedQuorumTick.requestQuorumTick.quorumTick.tick = system.tick + 1;
                                 bs->SetMem(&requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags, sizeof(requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags), 0);
@@ -9883,6 +9893,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 }
                                 pushToAny(&requestedQuorumTick.header);
                             }
+                            futureTickRequestingIndicator = futureTickTotalNumberOfComputors;
 
                             if (tickData[system.tick + 1 - system.initialTick].epoch != system.epoch
                                 || targetNextTickDataDigestIsKnown)
