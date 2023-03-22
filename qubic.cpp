@@ -18,8 +18,8 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 106
-#define VERSION_C 2
+#define VERSION_B 107
+#define VERSION_C 0
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -4818,8 +4818,9 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define MAX_NUMBER_OF_PROCESSORS 1024
 #define MAX_NUMBER_OF_PUBLIC_PEERS 256
 #define MAX_NUMBER_OF_SMART_CONTRACTS 1024
-#define MAX_NUMBER_OF_SOLUTIONS 1048576 // Must be 2^N
+#define MAX_NUMBER_OF_SOLUTIONS 65536 // Must be 2^N
 #define MAX_TRANSACTION_SIZE 1024ULL
+#define MAX_MESSAGE_PAYLOAD_SIZE MAX_TRANSACTION_SIZE
 #define NUMBER_OF_COMPUTORS 676
 #define MAX_NUMBER_OF_TICKS_PER_EPOCH (((((60 * 60 * 24 * 7) / (TARGET_TICK_DURATION / 1000)) + NUMBER_OF_COMPUTORS - 1) / NUMBER_OF_COMPUTORS) * NUMBER_OF_COMPUTORS)
 #define MAX_SMART_CONTRACT_STATE_SIZE 1073741824
@@ -4961,6 +4962,15 @@ typedef struct
 {
     unsigned char peers[NUMBER_OF_EXCHANGED_PEERS][4];
 } ExchangePublicPeers;
+
+#define BROADCAST_MESSAGE 1
+
+typedef struct
+{
+    unsigned char sourcePublicKey[32];
+    unsigned char destinationPublicKey[32];
+    unsigned char gammingNonce[32];
+} Message;
 
 #define BROADCAST_COMPUTORS 2
 
@@ -5285,6 +5295,14 @@ static struct System
 
     ComputorProposal proposals[NUMBER_OF_COMPUTORS];
     ComputorBallot ballots[NUMBER_OF_COMPUTORS];
+
+    struct Solution
+    {
+        unsigned char computorPublicKey[32];
+        unsigned char nonce[32];
+    } solutions[MAX_NUMBER_OF_SOLUTIONS];
+    unsigned int numberOfSolutions;
+    int solutionPublicationTicks[MAX_NUMBER_OF_SOLUTIONS];
 } system;
 static unsigned long long faultyComputorFlags[(NUMBER_OF_COMPUTORS + 63) / 64];
 static unsigned short prevTickMillisecond;
@@ -5377,13 +5395,6 @@ static PublicPeer publicPeers[MAX_NUMBER_OF_PUBLIC_PEERS];
 static unsigned long long miningData[65536];
 static unsigned int validationNeuronLinks[NUMBER_OF_NEURONS][2];
 static unsigned char validationNeuronValues[NUMBER_OF_NEURONS];
-static struct Solution
-{
-    unsigned char computorPublicKey[32];
-    unsigned char nonce[32];
-} solutions[MAX_NUMBER_OF_SOLUTIONS];
-static unsigned int numberOfSolutions = 0;
-static int solutionPublicationTicks[MAX_NUMBER_OF_SOLUTIONS];
 
 static unsigned long long* minerSolutionFlags = NULL;
 static unsigned char minerPublicKeys[MAX_NUMBER_OF_MINERS][32];
@@ -5958,9 +5969,11 @@ static void requestProcessor(void* ProcedureArgument)
             {
                 const unsigned long long beginningTick = __rdtsc();
 
-                RequestResponseHeader* requestHeader = (RequestResponseHeader*)&requestQueueBuffer[requestQueueElements[requestQueueElementTail].offset];
-                bs->CopyMem(header, requestHeader, requestHeader->size());
-                requestQueueBufferTail += requestHeader->size();
+                {
+                    RequestResponseHeader* requestHeader = (RequestResponseHeader*)&requestQueueBuffer[requestQueueElements[requestQueueElementTail].offset];
+                    bs->CopyMem(header, requestHeader, requestHeader->size());
+                    requestQueueBufferTail += requestHeader->size();
+                }
 
                 Peer* peer = requestQueueElements[requestQueueElementTail].peer;
 
@@ -5982,15 +5995,15 @@ static void requestProcessor(void* ProcedureArgument)
                         if (EQUAL(*((__m256i*)request->computorPublicKey), *((__m256i*)computorPublicKeys[j])))
                         {
                             unsigned int k;
-                            for (k = 0; k < numberOfSolutions; k++)
+                            for (k = 0; k < system.numberOfSolutions; k++)
                             {
-                                if (EQUAL(*((__m256i*)request->nonce), *((__m256i*)solutions[k].nonce))
-                                    && EQUAL(*((__m256i*)request->computorPublicKey), *((__m256i*)solutions[k].computorPublicKey)))
+                                if (EQUAL(*((__m256i*)request->nonce), *((__m256i*)system.solutions[k].nonce))
+                                    && EQUAL(*((__m256i*)request->computorPublicKey), *((__m256i*)system.solutions[k].computorPublicKey)))
                                 {
                                     break;
                                 }
                             }
-                            if (k == numberOfSolutions)
+                            if (k == system.numberOfSolutions)
                             {
                                 random(request->computorPublicKey, request->nonce, (unsigned char*)validationNeuronLinks, sizeof(validationNeuronLinks));
                                 for (k = 0; k < NUMBER_OF_NEURONS; k++)
@@ -6046,14 +6059,48 @@ static void requestProcessor(void* ProcedureArgument)
                                 }
 
                                 if (outputLength >= SOLUTION_THRESHOLD
-                                    && numberOfSolutions < MAX_NUMBER_OF_SOLUTIONS)
+                                    && system.numberOfSolutions < MAX_NUMBER_OF_SOLUTIONS)
                                 {
-                                    *((__m256i*)solutions[numberOfSolutions].computorPublicKey) = *((__m256i*)request->computorPublicKey);
-                                    *((__m256i*)solutions[numberOfSolutions++].nonce) = *((__m256i*)request->nonce);
+                                    *((__m256i*)system.solutions[system.numberOfSolutions].computorPublicKey) = *((__m256i*)request->computorPublicKey);
+                                    *((__m256i*)system.solutions[system.numberOfSolutions++].nonce) = *((__m256i*)request->nonce);
                                 }
                             }
 
                             break;
+                        }
+                    }
+                }
+                break;
+
+                case BROADCAST_MESSAGE:
+                {
+                    Message* request = (Message*)((char*)processor->buffer + sizeof(RequestResponseHeader));
+                    if (header->size() <= sizeof(RequestResponseHeader) + sizeof(Message) + MAX_MESSAGE_PAYLOAD_SIZE + SIGNATURE_SIZE
+                        && header->size() >= sizeof(RequestResponseHeader) + sizeof(Message) + SIGNATURE_SIZE)
+                    {
+                        const unsigned int messageSize = header->size() - sizeof(RequestResponseHeader);
+
+                        bool ok;
+                        if (EQUAL(*((__m256i*)request->sourcePublicKey), ZERO))
+                        {
+                            ok = true;
+                        }
+                        else
+                        {
+                            unsigned char digest[32];
+                            KangarooTwelve((unsigned char*)request, messageSize - SIGNATURE_SIZE, digest, sizeof(digest));
+                            ok = verify(request->sourcePublicKey, digest, (((const unsigned char*)request) + (messageSize - SIGNATURE_SIZE)));
+                        }
+                        if (ok)
+                        {
+                            if (header->isDejavuZero())
+                            {
+                                const int spectrumIndex = ::spectrumIndex(request->sourcePublicKey);
+                                if (spectrumIndex >= 0)
+                                {
+                                    enqueueResponse(NULL, header);
+                                }
+                            }
                         }
                     }
                 }
@@ -6599,12 +6646,12 @@ static void requestProcessor(void* ProcedureArgument)
                 case PROCESS_SPECIAL_COMMAND:
                 {
                     SpecialCommand* request = (SpecialCommand*)((char*)processor->buffer + sizeof(RequestResponseHeader));
-                    if (requestHeader->size() >= sizeof(RequestResponseHeader) + sizeof(SpecialCommand) + SIGNATURE_SIZE
+                    if (header->size() >= sizeof(RequestResponseHeader) + sizeof(SpecialCommand) + SIGNATURE_SIZE
                         && (request->everIncreasingNonceAndCommandType & 0xFFFFFFFFFFFFFF) > system.latestOperatorNonce)
                     {
                         unsigned char digest[32];
-                        KangarooTwelve((unsigned char*)&request, requestHeader->size() - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
-                        if (verify(operatorPublicKey, digest, ((const unsigned char*)processor->buffer + (requestHeader->size() - SIGNATURE_SIZE))))
+                        KangarooTwelve((unsigned char*)&request, header->size() - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
+                        if (verify(operatorPublicKey, digest, ((const unsigned char*)processor->buffer + (header->size() - SIGNATURE_SIZE))))
                         {
                             system.latestOperatorNonce = request->everIncreasingNonceAndCommandType & 0xFFFFFFFFFFFFFF;
 
@@ -7061,22 +7108,22 @@ static void tickerProcessor(void*)
                                                             if (EQUAL(*((__m256i*)transaction->sourcePublicKey), *((__m256i*)computorPublicKeys[i])))
                                                             {
                                                                 unsigned int j;
-                                                                for (j = 0; j < numberOfSolutions; j++)
+                                                                for (j = 0; j < system.numberOfSolutions; j++)
                                                                 {
-                                                                    if (EQUAL(*((__m256i*)(((unsigned char*)transaction) + sizeof(Transaction))), *((__m256i*)solutions[j].nonce))
-                                                                        && EQUAL(*((__m256i*)transaction->sourcePublicKey), *((__m256i*)solutions[j].computorPublicKey)))
+                                                                    if (EQUAL(*((__m256i*)(((unsigned char*)transaction) + sizeof(Transaction))), *((__m256i*)system.solutions[j].nonce))
+                                                                        && EQUAL(*((__m256i*)transaction->sourcePublicKey), *((__m256i*)system.solutions[j].computorPublicKey)))
                                                                     {
-                                                                        solutionPublicationTicks[j] = -1;
+                                                                        system.solutionPublicationTicks[j] = -1;
 
                                                                         break;
                                                                     }
                                                                 }
-                                                                if (j == numberOfSolutions
-                                                                    && numberOfSolutions < MAX_NUMBER_OF_SOLUTIONS)
+                                                                if (j == system.numberOfSolutions
+                                                                    && system.numberOfSolutions < MAX_NUMBER_OF_SOLUTIONS)
                                                                 {
-                                                                    *((__m256i*)solutions[numberOfSolutions].computorPublicKey) = *((__m256i*)transaction->sourcePublicKey);
-                                                                    *((__m256i*)solutions[numberOfSolutions].nonce) = *((__m256i*)(((unsigned char*)transaction) + sizeof(Transaction)));
-                                                                    solutionPublicationTicks[numberOfSolutions++] = -1;
+                                                                    *((__m256i*)system.solutions[system.numberOfSolutions].computorPublicKey) = *((__m256i*)transaction->sourcePublicKey);
+                                                                    *((__m256i*)system.solutions[system.numberOfSolutions].nonce) = *((__m256i*)(((unsigned char*)transaction) + sizeof(Transaction)));
+                                                                    system.solutionPublicationTicks[system.numberOfSolutions++] = -1;
                                                                 }
 
                                                                 break;
@@ -7121,12 +7168,12 @@ static void tickerProcessor(void*)
                         int solutionIndexToPublish = -1;
 
                         unsigned int j;
-                        for (j = 0; j < numberOfSolutions; j++)
+                        for (j = 0; j < system.numberOfSolutions; j++)
                         {
-                            if (solutionPublicationTicks[j] > 0
-                                && EQUAL(*((__m256i*)solutions[j].computorPublicKey), *((__m256i*)computorPublicKeys[i])))
+                            if (system.solutionPublicationTicks[j] > 0
+                                && EQUAL(*((__m256i*)system.solutions[j].computorPublicKey), *((__m256i*)computorPublicKeys[i])))
                             {
-                                if (solutionPublicationTicks[j] <= (int)system.tick)
+                                if (system.solutionPublicationTicks[j] <= (int)system.tick)
                                 {
                                     solutionIndexToPublish = j;
                                 }
@@ -7134,12 +7181,12 @@ static void tickerProcessor(void*)
                                 break;
                             }
                         }
-                        if (j == numberOfSolutions)
+                        if (j == system.numberOfSolutions)
                         {
-                            for (j = 0; j < numberOfSolutions; j++)
+                            for (j = 0; j < system.numberOfSolutions; j++)
                             {
-                                if (!solutionPublicationTicks[j]
-                                    && EQUAL(*((__m256i*)solutions[j].computorPublicKey), *((__m256i*)computorPublicKeys[i])))
+                                if (!system.solutionPublicationTicks[j]
+                                    && EQUAL(*((__m256i*)system.solutions[j].computorPublicKey), *((__m256i*)computorPublicKeys[i])))
                                 {
                                     solutionIndexToPublish = j;
 
@@ -7159,10 +7206,10 @@ static void tickerProcessor(void*)
                             *((__m256i*)payload.transaction.sourcePublicKey) = *((__m256i*)computorPublicKeys[i]);
                             *((__m256i*)payload.transaction.destinationPublicKey) = *((__m256i*)adminPublicKey);
                             payload.transaction.amount = 0;
-                            solutionPublicationTicks[solutionIndexToPublish] = payload.transaction.tick = system.tick + MINING_SOLUTIONS_PUBLICATION_OFFSET;
+                            system.solutionPublicationTicks[solutionIndexToPublish] = payload.transaction.tick = system.tick + MINING_SOLUTIONS_PUBLICATION_OFFSET;
                             payload.transaction.inputType = 0;
                             payload.transaction.inputSize = sizeof(payload.nonce);
-                            *((__m256i*)payload.nonce) = *((__m256i*)solutions[solutionIndexToPublish].nonce);
+                            *((__m256i*)payload.nonce) = *((__m256i*)system.solutions[solutionIndexToPublish].nonce);
 
                             unsigned char digest[32];
                             KangarooTwelve((unsigned char*)&payload.transaction, sizeof(payload.transaction) + sizeof(payload.nonce), digest, sizeof(digest));
@@ -8343,7 +8390,7 @@ static BOOLEAN initialize()
             {
                 if (!size)
                 {
-                    system.epoch = 48;
+                    system.epoch = 49;
                     system.epochBeginningHour = 12;
                     system.epochBeginningDay = 13;
                     system.epochBeginningMonth = 4;
@@ -8351,9 +8398,9 @@ static BOOLEAN initialize()
                 }
 
                 system.version = VERSION_B;
-                if (system.epoch == 48)
+                if (system.epoch == 49)
                 {
-                    system.initialTick = system.tick = 5160000;
+                    system.initialTick = system.tick = 5170000;
                 }
                 else
                 {
@@ -8457,17 +8504,15 @@ static BOOLEAN initialize()
 
         unsigned char randomSeed[32];
         bs->SetMem(randomSeed, 32, 0);
-        randomSeed[0] = 114;
-        randomSeed[1] = 187;
-        randomSeed[2] = 115;
-        randomSeed[3] = 131;
-        randomSeed[4] = 133;
-        randomSeed[5] = 86;
-        randomSeed[6] = 13;
-        randomSeed[7] = 106;
+        randomSeed[0] = 247;
+        randomSeed[1] = 37;
+        randomSeed[2] = 9;
+        randomSeed[3] = 28;
+        randomSeed[4] = 137;
+        randomSeed[5] = 47;
+        randomSeed[6] = 17;
+        randomSeed[7] = 8;
         random(randomSeed, randomSeed, (unsigned char*)miningData, sizeof(miningData));
-
-        bs->SetMem(solutionPublicationTicks, sizeof(solutionPublicationTicks), 0);
 
         if (status = bs->AllocatePool(EfiRuntimeServicesData, NUMBER_OF_MINER_SOLUTION_FLAGS / 8, (void**)&minerSolutionFlags))
         {
@@ -8901,13 +8946,13 @@ static void processKeyPresses()
             log(message);
             
             unsigned int numberOfPublishedSolutions = 0, numberOfRecordedSolutions = 0;
-            for (unsigned int i = 0; i < numberOfSolutions; i++)
+            for (unsigned int i = 0; i < system.numberOfSolutions; i++)
             {
-                if (solutionPublicationTicks[i])
+                if (system.solutionPublicationTicks[i])
                 {
                     numberOfPublishedSolutions++;
 
-                    if (solutionPublicationTicks[i] < 0)
+                    if (system.solutionPublicationTicks[i] < 0)
                     {
                         numberOfRecordedSolutions++;
                     }
@@ -8917,7 +8962,7 @@ static void processKeyPresses()
             appendText(message, L"/");
             appendNumber(message, numberOfPublishedSolutions, TRUE);
             appendText(message, L"/");
-            appendNumber(message, numberOfSolutions, TRUE);
+            appendNumber(message, system.numberOfSolutions, TRUE);
             appendText(message, L" solutions.");
             log(message);
         }
