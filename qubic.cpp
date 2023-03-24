@@ -19,7 +19,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 107
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -6753,6 +6753,7 @@ static EFI_HANDLE getTcp4Protocol(const unsigned char* remoteAddress, const unsi
             bs->SetMem(&option, sizeof(option), 0);
             option.ReceiveBufferSize = BUFFER_SIZE;
             option.SendBufferSize = BUFFER_SIZE;
+            option.KeepAliveProbes = 1;
             option.EnableWindowScaling = TRUE;
             configData.ControlOption = &option;
 
@@ -7017,14 +7018,7 @@ static void tickerProcessor(void*)
                                     const int spectrumIndex = ::spectrumIndex(transaction->sourcePublicKey);
                                     if (spectrumIndex >= 0)
                                     {
-                                        if (entityPendingTransactionIndices[spectrumIndex])
-                                        {
-                                            while (true)
-                                            {
-                                                criticalSituation = 1;
-                                            }
-                                        }
-                                        else
+                                        if (!entityPendingTransactionIndices[spectrumIndex])
                                         {
                                             entityPendingTransactionIndices[spectrumIndex] = 1;
 
@@ -8832,8 +8826,6 @@ static void logInfo()
     {
         appendText(message, L"?");
     }
-    queueProcessingNumerator = 0;
-    queueProcessingDenominator = 0;
     appendText(message, L" microseconds.");
     log(message);
 }
