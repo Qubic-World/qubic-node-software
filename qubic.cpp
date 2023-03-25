@@ -19,7 +19,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 107
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -5253,6 +5253,7 @@ struct SpecialCommandSetProposalAndBallotResponse
 };
 
 static volatile int state = 0;
+static volatile bool isMain = true;
 static volatile char criticalSituation = 0;
 static volatile bool systemMustBeSaved = false, spectrumMustBeSaved = false;
 
@@ -7556,30 +7557,33 @@ static void tickerProcessor(void*)
                             {
                                 system.latestCreatedTick = system.tick;
 
-                                BroadcastTick broadcastTick;
-                                bs->CopyMem(&broadcastTick.tick, &etalonTick, sizeof(Tick));
-                                for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
+                                if (isMain)
                                 {
-                                    broadcastTick.tick.computorIndex = ownComputorIndices[i] ^ BROADCAST_TICK;
-                                    unsigned char saltedData[32 + 32];
-                                    *((__m256i*) & saltedData[0]) = *((__m256i*)computorPublicKeys[ownComputorIndicesMapping[i]]);
-                                    *((__m256i*) & saltedData[32]) = *((__m256i*)etalonTick.saltedSpectrumDigest);
-                                    KangarooTwelve64To32(saltedData, broadcastTick.tick.saltedSpectrumDigest);
-                                    *((__m256i*) & saltedData[32]) = *((__m256i*)etalonTick.saltedUniverseDigest);
-                                    KangarooTwelve64To32(saltedData, broadcastTick.tick.saltedUniverseDigest);
-                                    *((__m256i*) & saltedData[32]) = *((__m256i*)etalonTick.saltedComputerDigest);
-                                    KangarooTwelve64To32(saltedData, broadcastTick.tick.saltedComputerDigest);
+                                    BroadcastTick broadcastTick;
+                                    bs->CopyMem(&broadcastTick.tick, &etalonTick, sizeof(Tick));
+                                    for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
+                                    {
+                                        broadcastTick.tick.computorIndex = ownComputorIndices[i] ^ BROADCAST_TICK;
+                                        unsigned char saltedData[32 + 32];
+                                        *((__m256i*) & saltedData[0]) = *((__m256i*)computorPublicKeys[ownComputorIndicesMapping[i]]);
+                                        *((__m256i*) & saltedData[32]) = *((__m256i*)etalonTick.saltedSpectrumDigest);
+                                        KangarooTwelve64To32(saltedData, broadcastTick.tick.saltedSpectrumDigest);
+                                        *((__m256i*) & saltedData[32]) = *((__m256i*)etalonTick.saltedUniverseDigest);
+                                        KangarooTwelve64To32(saltedData, broadcastTick.tick.saltedUniverseDigest);
+                                        *((__m256i*) & saltedData[32]) = *((__m256i*)etalonTick.saltedComputerDigest);
+                                        KangarooTwelve64To32(saltedData, broadcastTick.tick.saltedComputerDigest);
 
-                                    unsigned char digest[32];
-                                    KangarooTwelve((unsigned char*)&broadcastTick.tick, sizeof(Tick) - SIGNATURE_SIZE, digest, sizeof(digest));
-                                    broadcastTick.tick.computorIndex ^= BROADCAST_TICK;
-                                    sign(computorSubseeds[ownComputorIndicesMapping[i]], computorPublicKeys[ownComputorIndicesMapping[i]], digest, broadcastTick.tick.signature);
+                                        unsigned char digest[32];
+                                        KangarooTwelve((unsigned char*)&broadcastTick.tick, sizeof(Tick) - SIGNATURE_SIZE, digest, sizeof(digest));
+                                        broadcastTick.tick.computorIndex ^= BROADCAST_TICK;
+                                        sign(computorSubseeds[ownComputorIndicesMapping[i]], computorPublicKeys[ownComputorIndicesMapping[i]], digest, broadcastTick.tick.signature);
 
-                                    enqueueResponse(NULL, false, BROADCAST_TICK, &broadcastTick, sizeof(broadcastTick));
+                                        enqueueResponse(NULL, false, BROADCAST_TICK, &broadcastTick, sizeof(broadcastTick));
 
-                                    ACQUIRE(tickLocks[ownComputorIndices[i]]);
-                                    bs->CopyMem(&ticks[(broadcastTick.tick.tick - system.initialTick) * NUMBER_OF_COMPUTORS + broadcastTick.tick.computorIndex], &broadcastTick.tick, sizeof(Tick));
-                                    RELEASE(tickLocks[ownComputorIndices[i]]);
+                                        ACQUIRE(tickLocks[ownComputorIndices[i]]);
+                                        bs->CopyMem(&ticks[(broadcastTick.tick.tick - system.initialTick) * NUMBER_OF_COMPUTORS + broadcastTick.tick.computorIndex], &broadcastTick.tick, sizeof(Tick));
+                                        RELEASE(tickLocks[ownComputorIndices[i]]);
+                                    }
                                 }
                             }
 
@@ -7762,7 +7766,8 @@ static void tickerProcessor(void*)
                                     }
                                     tickTicks[sizeof(tickTicks) / sizeof(tickTicks[0]) - 1] = __rdtsc();
 
-                                    if (system.tick > system.latestCreatedTick)
+                                    if (system.tick > system.latestCreatedTick
+                                        && isMain)
                                     {
                                         for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
                                         {
@@ -8957,6 +8962,8 @@ static void processKeyPresses()
             appendNumber(message, system.numberOfSolutions, TRUE);
             appendText(message, L" solutions.");
             log(message);
+
+            log(isMain ? L"MAIN   *   MAIN   *   MAIN   *   MAIN   *   MAIN" : L"aux   *   aux   *   aux   *   aux   *   aux");
         }
         break;
 
@@ -8993,6 +9000,13 @@ static void processKeyPresses()
         case 0x13:
         {
             log3 = !log3;
+        }
+        break;
+
+        case 0x16:
+        {
+            isMain = !isMain;
+            log(isMain ? L"MAIN   *   MAIN   *   MAIN   *   MAIN   *   MAIN" : L"aux   *   aux   *   aux   *   aux   *   aux");
         }
         break;
 
