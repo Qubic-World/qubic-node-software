@@ -19,7 +19,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 107
-#define VERSION_C 2
+#define VERSION_C 3
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -4842,6 +4842,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define SOLUTION_THRESHOLD 24
 #define SPECTRUM_CAPACITY 0x1000000ULL // Must be 2^N
 #define SPECTRUM_DEPTH 24 // Is derived from SPECTRUM_CAPACITY (=N)
+#define SPECTRUM_WRITING_CHUNK_SIZE 1048576 // Must be 2^N
 #define SYSTEM_DATA_SAVING_PERIOD 300000
 #define TICK_TRANSACTIONS_PUBLICATION_OFFSET 2 // Must be 2+
 #define MINING_SOLUTIONS_PUBLICATION_OFFSET 3 // Must be 2+
@@ -8050,16 +8051,24 @@ static void saveSpectrum()
     {
         ACQUIRE(spectrumLock);
 
-        unsigned long long size = SPECTRUM_CAPACITY * sizeof(Entity);
-        status = dataFile->Write(dataFile, &size, spectrum);
-        dataFile->Close(dataFile);
-        if (status)
+        unsigned long long writtenSize = 0;
+        while (writtenSize < SPECTRUM_CAPACITY * sizeof(Entity))
         {
-            logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status, __LINE__);
+            unsigned long long size = SPECTRUM_WRITING_CHUNK_SIZE;
+            status = dataFile->Write(dataFile, &size, &spectrum[writtenSize / sizeof(Entity)]);
+            if (status
+                || size != SPECTRUM_WRITING_CHUNK_SIZE)
+            {
+                logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status, __LINE__);
+
+                break;
+            }
+            writtenSize += size;
         }
-        else
+        dataFile->Close(dataFile);
+        if (writtenSize == SPECTRUM_CAPACITY * sizeof(Entity))
         {
-            setNumber(message, size, TRUE);
+            setNumber(message, writtenSize, TRUE);
             appendText(message, L" bytes of the spectrum data are saved (");
             appendNumber(message, (__rdtsc() - beginningTick) * 1000000 / frequency, TRUE);
             appendText(message, L" microseconds).");
