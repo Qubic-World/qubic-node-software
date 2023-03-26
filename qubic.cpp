@@ -8,6 +8,10 @@ static unsigned char computorSeeds[][55 + 1] = {
     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 };
 
+static unsigned char noRevenueComputorIdentities[][60 + 1] = {
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+};
+
 static const unsigned char knownPublicPeers[][4] = {
 };
 
@@ -19,7 +23,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 107
-#define VERSION_C 3
+#define VERSION_C 5
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -6103,6 +6107,44 @@ static void requestProcessor(void* ProcedureArgument)
                                     enqueueResponse(NULL, header);
                                 }
                             }
+
+                            for (unsigned int i = 0; i < sizeof(computorSeeds) / sizeof(computorSeeds[0]); i++)
+                            {
+                                if (EQUAL(*((__m256i*)request->destinationPublicKey), *((__m256i*)computorPublicKeys[i])))
+                                {
+                                    const unsigned int messagePayloadSize = messageSize - sizeof(Message) - SIGNATURE_SIZE;
+
+                                    if (!EQUAL(*((__m256i*)request->sourcePublicKey), ZERO)
+                                        && messagePayloadSize)
+                                    {
+                                        unsigned char sharedKeyAndGammingNonce[64];
+                                        if (getSharedKey(computorPrivateKeys[i], request->sourcePublicKey, sharedKeyAndGammingNonce))
+                                        {
+                                            bs->CopyMem(&sharedKeyAndGammingNonce[32], request->gammingNonce, 32);
+                                            unsigned char gammingKey[32];
+                                            KangarooTwelve64To32(sharedKeyAndGammingNonce, gammingKey);
+                                            bs->SetMem(sharedKeyAndGammingNonce, 32, 0); // Zero the shared key in case stack content could be leaked later
+                                            unsigned char gamma[MAX_MESSAGE_PAYLOAD_SIZE];
+                                            KangarooTwelve(gammingKey, sizeof(gammingKey), gamma, messagePayloadSize);
+                                            for (unsigned int j = 0; j < messagePayloadSize; j++)
+                                            {
+                                                ((unsigned char*)request)[sizeof(Message) + j] ^= gamma[j];
+                                            }
+                                        }
+                                        else
+                                        {
+                                            ok = false;
+                                        }
+                                    }
+
+                                    if (ok)
+                                    {
+                                        ////
+                                    }
+
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
@@ -7819,6 +7861,15 @@ static void tickerProcessor(void*)
                                                     for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
                                                     {
                                                         broadcastFutureTickData.tickData.revenues[j] = (faultyComputorFlags[j >> 6] & (1ULL << (j & 63))) ? 0 : ((system.revenueCounters[j] >= maxCounter) ? (ISSUANCE_RATE / NUMBER_OF_COMPUTORS) : (system.revenueCounters[j] * ((unsigned long long)(ISSUANCE_RATE / NUMBER_OF_COMPUTORS)) / maxCounter));
+                                                        for (unsigned int k = 0; k < sizeof(noRevenueComputorIdentities) / sizeof(noRevenueComputorIdentities[0]); k++)
+                                                        {
+                                                            if (EQUAL(*((__m256i*)broadcastedComputors.broadcastComputors.computors.publicKeys[j]), *((__m256i*)noRevenueComputorIdentities[k])))
+                                                            {
+                                                                broadcastFutureTickData.tickData.revenues[j] = 0;
+
+                                                                break;
+                                                            }
+                                                        }
                                                         for (unsigned int k = 0; k < sizeof(computorSeeds) / sizeof(computorSeeds[0]); k++)
                                                         {
                                                             if (EQUAL(*((__m256i*)broadcastedComputors.broadcastComputors.computors.publicKeys[j]), *((__m256i*)computorPublicKeys[k])))
@@ -8175,6 +8226,11 @@ static BOOLEAN initialize()
         }
         getPrivateKey(computorSubseeds[i], computorPrivateKeys[i]);
         getPublicKey(computorPrivateKeys[i], computorPublicKeys[i]);
+    }
+
+    for (unsigned int i = 0; i < sizeof(noRevenueComputorIdentities) / sizeof(noRevenueComputorIdentities[0]); i++)
+    {
+        getPublicKeyFromIdentity(noRevenueComputorIdentities[i], noRevenueComputorIdentities[i]);
     }
 
     getPublicKeyFromIdentity((const unsigned char*)ADMIN, adminPublicKey);
