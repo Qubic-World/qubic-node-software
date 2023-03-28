@@ -19,7 +19,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 108
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -7249,21 +7249,32 @@ static void tickerProcessor(void*)
                                                             }
                                                         }
 
-                                                        unsigned int i;
-                                                        for (i = 0; i < numberOfMiners; i++)
+                                                        unsigned int minerIndex;
+                                                        for (minerIndex = 0; minerIndex < numberOfMiners; minerIndex++)
                                                         {
-                                                            if (EQUAL(*((__m256i*)transaction->sourcePublicKey), *((__m256i*)minerPublicKeys[i])))
+                                                            if (EQUAL(*((__m256i*)transaction->sourcePublicKey), *((__m256i*)minerPublicKeys[minerIndex])))
                                                             {
-                                                                minerScores[i]++;
+                                                                minerScores[minerIndex]++;
 
                                                                 break;
                                                             }
                                                         }
-                                                        if (i == numberOfMiners
+                                                        if (minerIndex == numberOfMiners
                                                             && numberOfMiners < MAX_NUMBER_OF_MINERS)
                                                         {
-                                                            *((__m256i*)minerPublicKeys[numberOfMiners]) = *((__m256i*)transaction->sourcePublicKey);
+                                                            *((__m256i*)minerPublicKeys[minerIndex = numberOfMiners]) = *((__m256i*)transaction->sourcePublicKey);
                                                             minerScores[numberOfMiners++] = 1;
+                                                        }
+
+                                                        while (minerIndex > (minerIndex < NUMBER_OF_COMPUTORS ? 0 : NUMBER_OF_COMPUTORS)
+                                                            && minerScores[minerIndex - 1] < minerScores[minerIndex])
+                                                        {
+                                                            const __m256i tmpPublicKey = *((__m256i*)minerPublicKeys[minerIndex]);
+                                                            const unsigned int tmpScore = minerScores[minerIndex];
+                                                            *((__m256i*)minerPublicKeys[minerIndex]) = *((__m256i*)minerPublicKeys[minerIndex - 1]);
+                                                            minerScores[minerIndex] = minerScores[minerIndex - 1];
+                                                            *((__m256i*)minerPublicKeys[--minerIndex]) = tmpPublicKey;
+                                                            minerScores[minerIndex] = tmpScore;
                                                         }
                                                     }
                                                 }
@@ -9101,6 +9112,93 @@ static void processKeyPresses()
 
         case 0x0D:
         {
+            __m256i contenderPublicKeys[(NUMBER_OF_COMPUTORS - QUORUM) * 2];
+            unsigned int contenderScores[(NUMBER_OF_COMPUTORS - QUORUM) * 2];
+
+            for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS - QUORUM; i++)
+            {
+                contenderPublicKeys[i] = *((__m256i*)minerPublicKeys[QUORUM + i]);
+                contenderScores[i] = minerScores[QUORUM + i];
+
+                if (NUMBER_OF_COMPUTORS + i < numberOfMiners)
+                {
+                    contenderPublicKeys[i + (NUMBER_OF_COMPUTORS - QUORUM)] = *((__m256i*)minerPublicKeys[NUMBER_OF_COMPUTORS + i]);
+                    contenderScores[i + (NUMBER_OF_COMPUTORS - QUORUM)] = minerScores[NUMBER_OF_COMPUTORS + i];
+                }
+                else
+                {
+                    contenderScores[i + (NUMBER_OF_COMPUTORS - QUORUM)] = 0;
+                }
+            }
+            for (unsigned int i = NUMBER_OF_COMPUTORS - QUORUM; i < (NUMBER_OF_COMPUTORS - QUORUM) * 2; i++)
+            {
+                int j = i;
+                while (j
+                    && contenderScores[j - 1] < contenderScores[j])
+                {
+                    const __m256i tmpPublicKey = contenderPublicKeys[j];
+                    const unsigned int tmpScore = contenderScores[j];
+                    contenderPublicKeys[j] = contenderPublicKeys[j - 1];
+                    contenderScores[j] = contenderScores[j - 1];
+                    contenderPublicKeys[--j] = tmpPublicKey;
+                    contenderScores[j] = tmpScore;
+                }
+            }
+
+            for (unsigned int i = 0; i < sizeof(computorSeeds) / sizeof(computorSeeds[0]); i++)
+            {
+                unsigned int j;
+                for (j = 0; j < QUORUM; j++)
+                {
+                    if (EQUAL(*((__m256i*)minerPublicKeys[j]), *((__m256i*)computorPublicKeys[i])))
+                    {
+                        getIdentity(computorPublicKeys[i], message, false);
+                        appendText(message, L" (#");
+                        appendNumber(message, j, TRUE);
+                        appendText(message, L"/");
+                        appendNumber(message, minerScores[j], TRUE);
+                        appendText(message, L" solutions) = ");
+                        long long amount = 0;
+                        const int spectrumIndex = ::spectrumIndex(computorPublicKeys[i]);
+                        if (spectrumIndex >= 0)
+                        {
+                            amount = spectrum[spectrumIndex].incomingAmount - spectrum[spectrumIndex].outgoingAmount;
+                        }
+                        appendNumber(message, amount, TRUE);
+                        appendText(message, L" qus");
+                        log(message);
+
+                        break;
+                    }
+                }
+                if (j == QUORUM)
+                {
+                    for (j = 0; j < (NUMBER_OF_COMPUTORS - QUORUM) * 2; j++)
+                    {
+                        if (EQUAL(contenderPublicKeys[j], *((__m256i*)computorPublicKeys[i])))
+                        {
+                            getIdentity(computorPublicKeys[i], message, false);
+                            appendText(message, L" (#");
+                            appendNumber(message, j + QUORUM, TRUE);
+                            appendText(message, L"/");
+                            appendNumber(message, contenderScores[j], TRUE);
+                            appendText(message, L" solutions) = ");
+                            long long amount = 0;
+                            const int spectrumIndex = ::spectrumIndex(computorPublicKeys[i]);
+                            if (spectrumIndex >= 0)
+                            {
+                                amount = spectrum[spectrumIndex].incomingAmount - spectrum[spectrumIndex].outgoingAmount;
+                            }
+                            appendNumber(message, amount, TRUE);
+                            appendText(message, L" qus");
+                            log(message);
+
+                            break;
+                        }
+                    }
+                }
+            }
+
             unsigned int numberOfSolutions = 0;
             for (unsigned int i = 0; i < numberOfMiners; i++)
             {
@@ -9109,7 +9207,9 @@ static void processKeyPresses()
             setNumber(message, numberOfMiners, TRUE);
             appendText(message, L" miners with ");
             appendNumber(message, numberOfSolutions, TRUE);
-            appendText(message, L" solutions.");
+            appendText(message, L" solutions (min score = ");
+            appendNumber(message, contenderScores[NUMBER_OF_COMPUTORS - QUORUM - 1], TRUE);
+            appendText(message, L").");
             log(message);
         }
         break;
