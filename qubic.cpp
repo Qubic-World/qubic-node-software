@@ -19,7 +19,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 108
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -5324,6 +5324,7 @@ static unsigned char triggerSignature[SIGNATURE_SIZE];
 static volatile char tickTransactionsLock = 0;
 static unsigned char* tickTransactions = NULL;
 static unsigned long long tickTransactionOffsets[MAX_NUMBER_OF_TICKS_PER_EPOCH][NUMBER_OF_TRANSACTIONS_PER_TICK];
+static __m256i tickTransactionDigests[NUMBER_OF_TRANSACTIONS_PER_TICK];
 static unsigned long long nextTickTransactionOffset = FIRST_TICK_TRANSACTION_OFFSET;
 
 static __m256i tickEssenceDigests[NUMBER_OF_COMPUTORS];
@@ -6559,6 +6560,7 @@ static void requestProcessor(void* ProcedureArgument)
                                             if (nextTickTransactionOffset + transactionSize <= FIRST_TICK_TRANSACTION_OFFSET + (((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * NUMBER_OF_TRANSACTIONS_PER_TICK * MAX_TRANSACTION_SIZE / TRANSACTION_SPARSENESS))
                                             {
                                                 tickTransactionOffsets[request->tick - system.initialTick][i] = nextTickTransactionOffset;
+                                                tickTransactionDigests[i] = *((__m256i*)digest);
                                                 bs->CopyMem(&tickTransactions[nextTickTransactionOffset], request, transactionSize);
                                                 nextTickTransactionOffset += transactionSize;
                                             }
@@ -7129,6 +7131,8 @@ static void tickerProcessor(void*)
                 {
                     latestOwnTick = system.tick;
 
+                    bs->SetMem(tickTransactionDigests, sizeof(tickTransactionDigests), 0);
+
                     if (curTickData.epoch)
                     {
                         bs->SetMem(entityPendingTransactionIndices, sizeof(entityPendingTransactionIndices), 0);
@@ -7391,6 +7395,8 @@ static void tickerProcessor(void*)
                     numberOfKnownNextTickTransactions = 0;
                     bs->SetMem(requestedTickTransactions.requestedTickTransactions.transactionFlags, sizeof(requestedTickTransactions.requestedTickTransactions.transactionFlags), 0);
 
+                    bool countNextTickTransactions = false;
+
                     if (EQUAL(*((__m256i*)triggerSignature), ZERO))
                     {
                         *((__m256i*)etalonTick.varStruct.nextTick.zero) = ZERO;
@@ -7413,75 +7419,7 @@ static void tickerProcessor(void*)
                                     KangarooTwelve((unsigned char*)&nextTickData, sizeof(TickData), etalonTick.varStruct.nextTick.digestOfTransactions, 32);
                                     if (EQUAL(*((__m256i*)etalonTick.varStruct.nextTick.digestOfTransactions), targetNextTickDataDigest))
                                     {
-                                        for (unsigned int i = 0; i < NUMBER_OF_TRANSACTIONS_PER_TICK; i++)
-                                        {
-                                            if (!EQUAL(*((__m256i*)nextTickData.transactionDigests[i]), ZERO))
-                                            {
-                                                numberOfNextTickTransactions++;
-
-                                                bool isKnown = false;
-
-                                                ACQUIRE(tickTransactionsLock);
-                                                if (tickTransactionOffsets[system.tick + 1 - system.initialTick][i])
-                                                {
-                                                    unsigned char digest[32];
-                                                    const Transaction* transaction = (Transaction*)&tickTransactions[tickTransactionOffsets[system.tick + 1 - system.initialTick][i]];
-                                                    KangarooTwelve((unsigned char*)transaction, sizeof(Transaction) + transaction->inputSize + SIGNATURE_SIZE, digest, sizeof(digest));
-                                                    if (EQUAL(*((__m256i*)digest), *((__m256i*)nextTickData.transactionDigests[i])))
-                                                    {
-                                                        numberOfKnownNextTickTransactions++;
-                                                        isKnown = true;
-                                                    }
-                                                }
-                                                RELEASE(tickTransactionsLock);
-
-                                                if (!isKnown)
-                                                {
-                                                    for (unsigned int j = 0; j < SPECTRUM_CAPACITY; j++)
-                                                    {
-                                                        Transaction* pendingTransaction = (Transaction*)&entityPendingTransactions[j * MAX_TRANSACTION_SIZE];
-                                                        if (pendingTransaction->tick == system.tick + 1)
-                                                        {
-                                                            ACQUIRE(entityPendingTransactionsLock);
-
-                                                            if (EQUAL(*((__m256i*) & entityPendingTransactionDigests[j * 32ULL]), *((__m256i*)nextTickData.transactionDigests[i])))
-                                                            {
-                                                                unsigned char transactionBuffer[MAX_TRANSACTION_SIZE];
-                                                                const unsigned int transactionSize = sizeof(Transaction) + pendingTransaction->inputSize + SIGNATURE_SIZE;
-                                                                bs->CopyMem(transactionBuffer, (void*)pendingTransaction, transactionSize);
-
-                                                                RELEASE(entityPendingTransactionsLock);
-
-                                                                pendingTransaction = (Transaction*)transactionBuffer;
-                                                                ACQUIRE(tickTransactionsLock);
-                                                                if (!tickTransactionOffsets[pendingTransaction->tick - system.initialTick][i])
-                                                                {
-                                                                    if (nextTickTransactionOffset + transactionSize <= FIRST_TICK_TRANSACTION_OFFSET + (((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * NUMBER_OF_TRANSACTIONS_PER_TICK * MAX_TRANSACTION_SIZE / TRANSACTION_SPARSENESS))
-                                                                    {
-                                                                        tickTransactionOffsets[pendingTransaction->tick - system.initialTick][i] = nextTickTransactionOffset;
-                                                                        bs->CopyMem(&tickTransactions[nextTickTransactionOffset], pendingTransaction, transactionSize);
-                                                                        nextTickTransactionOffset += transactionSize;
-                                                                    }
-                                                                }
-                                                                RELEASE(tickTransactionsLock);
-
-                                                                numberOfKnownNextTickTransactions++;
-                                                                isKnown = true;
-                                                            }
-                                                            else
-                                                            {
-                                                                RELEASE(entityPendingTransactionsLock);
-                                                            }
-                                                        }
-                                                    }
-                                                }
-
-                                                if (isKnown)
-                                                {
-                                                    requestedTickTransactions.requestedTickTransactions.transactionFlags[i >> 3] |= (1 << (i & 7));
-                                                }
-                                            }
-                                        }
+                                        countNextTickTransactions = true;
                                     }
                                     else
                                     {
@@ -7496,75 +7434,8 @@ static void tickerProcessor(void*)
                             {
                                 bs->CopyMem(&nextTickData, &tickData[system.tick + 1 - system.initialTick], sizeof(TickData));
                                 KangarooTwelve((unsigned char*)&nextTickData, sizeof(TickData), etalonTick.varStruct.nextTick.digestOfTransactions, 32);
-                                for (unsigned int i = 0; i < NUMBER_OF_TRANSACTIONS_PER_TICK; i++)
-                                {
-                                    if (!EQUAL(*((__m256i*)nextTickData.transactionDigests[i]), ZERO))
-                                    {
-                                        numberOfNextTickTransactions++;
 
-                                        bool isKnown = false;
-
-                                        ACQUIRE(tickTransactionsLock);
-                                        if (tickTransactionOffsets[system.tick + 1 - system.initialTick][i])
-                                        {
-                                            unsigned char digest[32];
-                                            const Transaction* transaction = (Transaction*)&tickTransactions[tickTransactionOffsets[system.tick + 1 - system.initialTick][i]];
-                                            KangarooTwelve((unsigned char*)transaction, sizeof(Transaction) + transaction->inputSize + SIGNATURE_SIZE, digest, sizeof(digest));
-                                            if (EQUAL(*((__m256i*)digest), *((__m256i*)nextTickData.transactionDigests[i])))
-                                            {
-                                                numberOfKnownNextTickTransactions++;
-                                                isKnown = true;
-                                            }
-                                        }
-                                        RELEASE(tickTransactionsLock);
-
-                                        if (!isKnown)
-                                        {
-                                            for (unsigned int j = 0; j < SPECTRUM_CAPACITY; j++)
-                                            {
-                                                Transaction* pendingTransaction = (Transaction*)&entityPendingTransactions[j * MAX_TRANSACTION_SIZE];
-                                                if (pendingTransaction->tick == system.tick + 1)
-                                                {
-                                                    ACQUIRE(entityPendingTransactionsLock);
-
-                                                    if (EQUAL(*((__m256i*) & entityPendingTransactionDigests[j * 32ULL]), *((__m256i*)nextTickData.transactionDigests[i])))
-                                                    {
-                                                        unsigned char transactionBuffer[MAX_TRANSACTION_SIZE];
-                                                        const unsigned int transactionSize = sizeof(Transaction) + pendingTransaction->inputSize + SIGNATURE_SIZE;
-                                                        bs->CopyMem(transactionBuffer, (void*)pendingTransaction, transactionSize);
-
-                                                        RELEASE(entityPendingTransactionsLock);
-
-                                                        pendingTransaction = (Transaction*)transactionBuffer;
-                                                        ACQUIRE(tickTransactionsLock);
-                                                        if (!tickTransactionOffsets[pendingTransaction->tick - system.initialTick][i])
-                                                        {
-                                                            if (nextTickTransactionOffset + transactionSize <= FIRST_TICK_TRANSACTION_OFFSET + (((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * NUMBER_OF_TRANSACTIONS_PER_TICK * MAX_TRANSACTION_SIZE / TRANSACTION_SPARSENESS))
-                                                            {
-                                                                tickTransactionOffsets[pendingTransaction->tick - system.initialTick][i] = nextTickTransactionOffset;
-                                                                bs->CopyMem(&tickTransactions[nextTickTransactionOffset], pendingTransaction, transactionSize);
-                                                                nextTickTransactionOffset += transactionSize;
-                                                            }
-                                                        }
-                                                        RELEASE(tickTransactionsLock);
-
-                                                        numberOfKnownNextTickTransactions++;
-                                                        isKnown = true;
-                                                    }
-                                                    else
-                                                    {
-                                                        RELEASE(entityPendingTransactionsLock);
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        if (isKnown)
-                                        {
-                                            requestedTickTransactions.requestedTickTransactions.transactionFlags[i >> 3] |= (1 << (i & 7));
-                                        }
-                                    }
-                                }
+                                countNextTickTransactions = true;
                             }
                             else
                             {
@@ -7575,6 +7446,82 @@ static void tickerProcessor(void*)
                     else
                     {
                         bs->CopyMem(etalonTick.varStruct.trigger.signature, triggerSignature, SIGNATURE_SIZE);
+                    }
+
+                    if (countNextTickTransactions)
+                    {
+                        for (unsigned int i = 0; i < NUMBER_OF_TRANSACTIONS_PER_TICK; i++)
+                        {
+                            if (!EQUAL(*((__m256i*)nextTickData.transactionDigests[i]), ZERO))
+                            {
+                                numberOfNextTickTransactions++;
+
+                                bool isKnown = false;
+
+                                ACQUIRE(tickTransactionsLock);
+                                if (tickTransactionOffsets[system.tick + 1 - system.initialTick][i])
+                                {
+                                    const Transaction* transaction = (Transaction*)&tickTransactions[tickTransactionOffsets[system.tick + 1 - system.initialTick][i]];
+                                    if (EQUAL(tickTransactionDigests[i], ZERO))
+                                    {
+                                        KangarooTwelve((unsigned char*)transaction, sizeof(Transaction) + transaction->inputSize + SIGNATURE_SIZE, (unsigned char*)&tickTransactionDigests[i], sizeof(tickTransactionDigests[i]));
+                                    }
+                                    if (EQUAL(tickTransactionDigests[i], *((__m256i*)nextTickData.transactionDigests[i])))
+                                    {
+                                        numberOfKnownNextTickTransactions++;
+                                        isKnown = true;
+                                    }
+                                }
+                                RELEASE(tickTransactionsLock);
+
+                                if (!isKnown)
+                                {
+                                    for (unsigned int j = 0; j < SPECTRUM_CAPACITY; j++)
+                                    {
+                                        Transaction* pendingTransaction = (Transaction*)&entityPendingTransactions[j * MAX_TRANSACTION_SIZE];
+                                        if (pendingTransaction->tick == system.tick + 1)
+                                        {
+                                            ACQUIRE(entityPendingTransactionsLock);
+
+                                            if (EQUAL(*((__m256i*)&entityPendingTransactionDigests[j * 32ULL]), *((__m256i*)nextTickData.transactionDigests[i])))
+                                            {
+                                                unsigned char transactionBuffer[MAX_TRANSACTION_SIZE];
+                                                const unsigned int transactionSize = sizeof(Transaction) + pendingTransaction->inputSize + SIGNATURE_SIZE;
+                                                bs->CopyMem(transactionBuffer, (void*)pendingTransaction, transactionSize);
+
+                                                RELEASE(entityPendingTransactionsLock);
+
+                                                pendingTransaction = (Transaction*)transactionBuffer;
+                                                ACQUIRE(tickTransactionsLock);
+                                                if (!tickTransactionOffsets[pendingTransaction->tick - system.initialTick][i])
+                                                {
+                                                    if (nextTickTransactionOffset + transactionSize <= FIRST_TICK_TRANSACTION_OFFSET + (((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * NUMBER_OF_TRANSACTIONS_PER_TICK * MAX_TRANSACTION_SIZE / TRANSACTION_SPARSENESS))
+                                                    {
+                                                        tickTransactionOffsets[pendingTransaction->tick - system.initialTick][i] = nextTickTransactionOffset;
+                                                        tickTransactionDigests[i] = *((__m256i*)&entityPendingTransactionDigests[j * 32ULL]);
+                                                        bs->CopyMem(&tickTransactions[nextTickTransactionOffset], pendingTransaction, transactionSize);
+                                                        nextTickTransactionOffset += transactionSize;
+                                                    }
+                                                }
+                                                RELEASE(tickTransactionsLock);
+
+                                                numberOfKnownNextTickTransactions++;
+                                                isKnown = true;
+                                            }
+                                            else
+                                            {
+                                                RELEASE(entityPendingTransactionsLock);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if (isKnown)
+                                {
+                                    requestedTickTransactions.requestedTickTransactions.transactionFlags[i >> 3] |= (1 << (i & 7));
+                                }
+                            }
+                        }
                     }
 
                     if (numberOfKnownNextTickTransactions != numberOfNextTickTransactions)
@@ -7657,7 +7604,7 @@ static void tickerProcessor(void*)
                         if ((dayIndex == 738570 + system.epoch * 7 && etalonTick.hour >= 12)
                             || dayIndex > 738570 + system.epoch * 7)
                         {
-                            epochMustBeTerminated = true;
+                            epochMustBeTerminated = true; // TODO: Move
 
                             system.epochBeginningMillisecond = etalonTick.millisecond;
                             system.epochBeginningSecond = etalonTick.second;
@@ -7975,7 +7922,7 @@ static void tickerProcessor(void*)
                                                     entityPendingTransactionIndices[numberOfEntityPendingTransactionIndices] = numberOfEntityPendingTransactionIndices;
                                                 }
                                                 unsigned int j = 0;
-                                                while (j < /*NUMBER_OF_TRANSACTIONS_PER_TICK*/64 && numberOfEntityPendingTransactionIndices)
+                                                while (j < /*NUMBER_OF_TRANSACTIONS_PER_TICK*/128 && numberOfEntityPendingTransactionIndices)
                                                 {
                                                     unsigned int random;
                                                     _rdrand32_step(&random);
@@ -8061,7 +8008,7 @@ static void tickerProcessor(void*)
                                                                 {
                                                                     tickTransactionOffsets[pendingTransaction->tick - system.initialTick][j] = nextTickTransactionOffset;
                                                                     bs->CopyMem(&tickTransactions[nextTickTransactionOffset], (void*)pendingTransaction, transactionSize);
-                                                                    *((__m256i*)broadcastFutureTickData.tickData.transactionDigests[j]) = *((__m256i*) & entityPendingTransactionDigests[entityPendingTransactionIndices[index] * 32ULL]);
+                                                                    *((__m256i*)broadcastFutureTickData.tickData.transactionDigests[j]) = *((__m256i*)&entityPendingTransactionDigests[entityPendingTransactionIndices[index] * 32ULL]);
                                                                     j++;
                                                                     nextTickTransactionOffset += transactionSize;
                                                                 }
