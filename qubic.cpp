@@ -8,10 +8,6 @@ static unsigned char computorSeeds[][55 + 1] = {
     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 };
 
-static unsigned char noRevenueComputorIdentities[][60 + 1] = {
-    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-};
-
 static const unsigned char knownPublicPeers[][4] = {
 };
 
@@ -22,8 +18,8 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 107
-#define VERSION_C 5
+#define VERSION_B 108
+#define VERSION_C 0
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -4829,6 +4825,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define MAX_NUMBER_OF_TICKS_PER_EPOCH (((((60 * 60 * 24 * 7) / (TARGET_TICK_DURATION / 1000)) + NUMBER_OF_COMPUTORS - 1) / NUMBER_OF_COMPUTORS) * NUMBER_OF_COMPUTORS)
 #define MAX_SMART_CONTRACT_STATE_SIZE 1073741824
 #define MAX_UNIVERSE_SIZE 1073741824
+#define MESSAGE_TYPE_SOLUTION 0
 #define NUMBER_OF_EXCHANGED_PEERS 4
 #define NUMBER_OF_OUTGOING_CONNECTIONS 4
 #define NUMBER_OF_INCOMING_CONNECTIONS 60
@@ -6102,7 +6099,7 @@ static void requestProcessor(void* ProcedureArgument)
                             if (header->isDejavuZero())
                             {
                                 const int spectrumIndex = ::spectrumIndex(request->sourcePublicKey);
-                                if (spectrumIndex >= 0)
+                                //if (spectrumIndex >= 0)
                                 {
                                     enqueueResponse(NULL, header);
                                 }
@@ -6113,12 +6110,23 @@ static void requestProcessor(void* ProcedureArgument)
                                 if (EQUAL(*((__m256i*)request->destinationPublicKey), *((__m256i*)computorPublicKeys[i])))
                                 {
                                     const unsigned int messagePayloadSize = messageSize - sizeof(Message) - SIGNATURE_SIZE;
-
-                                    if (!EQUAL(*((__m256i*)request->sourcePublicKey), ZERO)
-                                        && messagePayloadSize)
+                                    if (messagePayloadSize)
                                     {
                                         unsigned char sharedKeyAndGammingNonce[64];
-                                        if (getSharedKey(computorPrivateKeys[i], request->sourcePublicKey, sharedKeyAndGammingNonce))
+
+                                        if (EQUAL(*((__m256i*)request->sourcePublicKey), ZERO))
+                                        {
+                                            bs->SetMem(sharedKeyAndGammingNonce, 32, 0);
+                                        }
+                                        else
+                                        {
+                                            if (!getSharedKey(computorPrivateKeys[i], request->sourcePublicKey, sharedKeyAndGammingNonce))
+                                            {
+                                                ok = false;
+                                            }
+                                        }
+
+                                        if (ok)
                                         {
                                             bs->CopyMem(&sharedKeyAndGammingNonce[32], request->gammingNonce, 32);
                                             unsigned char gammingKey[32];
@@ -6130,16 +6138,89 @@ static void requestProcessor(void* ProcedureArgument)
                                             {
                                                 ((unsigned char*)request)[sizeof(Message) + j] ^= gamma[j];
                                             }
-                                        }
-                                        else
-                                        {
-                                            ok = false;
-                                        }
-                                    }
 
-                                    if (ok)
-                                    {
-                                        ////
+                                            switch (gammingKey[0])
+                                            {
+                                            case MESSAGE_TYPE_SOLUTION:
+                                            {
+                                                if (messagePayloadSize >= 32)
+                                                {
+                                                    unsigned int k;
+                                                    for (k = 0; k < system.numberOfSolutions; k++)
+                                                    {
+                                                        if (EQUAL(*((__m256i*)&((unsigned char*)request)[sizeof(Message)]), *((__m256i*)system.solutions[k].nonce))
+                                                            && EQUAL(*((__m256i*)request->destinationPublicKey), *((__m256i*)system.solutions[k].computorPublicKey)))
+                                                        {
+                                                            break;
+                                                        }
+                                                    }
+                                                    if (k == system.numberOfSolutions)
+                                                    {
+                                                        random(request->destinationPublicKey, &((unsigned char*)request)[sizeof(Message)], (unsigned char*)validationNeuronLinks, sizeof(validationNeuronLinks));
+                                                        for (k = 0; k < NUMBER_OF_NEURONS; k++)
+                                                        {
+                                                            validationNeuronLinks[k][0] %= NUMBER_OF_NEURONS;
+                                                            validationNeuronLinks[k][1] %= NUMBER_OF_NEURONS;
+                                                        }
+
+                                                        bs->SetMem(validationNeuronValues, sizeof(validationNeuronValues), 0xFF);
+
+                                                        unsigned int limiter = sizeof(miningData) / sizeof(miningData[0]);
+                                                        int outputLength = 0;
+                                                        while (outputLength < (sizeof(miningData) << 3))
+                                                        {
+                                                            const unsigned int prevValue0 = validationNeuronValues[NUMBER_OF_NEURONS - 1];
+                                                            const unsigned int prevValue1 = validationNeuronValues[NUMBER_OF_NEURONS - 2];
+
+                                                            for (k = 0; k < NUMBER_OF_NEURONS; k++)
+                                                            {
+                                                                validationNeuronValues[k] = ~(validationNeuronValues[validationNeuronLinks[k][0]] & validationNeuronValues[validationNeuronLinks[k][1]]);
+                                                            }
+
+                                                            if (validationNeuronValues[NUMBER_OF_NEURONS - 1] != prevValue0
+                                                                && validationNeuronValues[NUMBER_OF_NEURONS - 2] == prevValue1)
+                                                            {
+                                                                if (!((miningData[outputLength >> 6] >> (outputLength & 63)) & 1))
+                                                                {
+                                                                    break;
+                                                                }
+
+                                                                outputLength++;
+                                                            }
+                                                            else
+                                                            {
+                                                                if (validationNeuronValues[NUMBER_OF_NEURONS - 2] != prevValue1
+                                                                    && validationNeuronValues[NUMBER_OF_NEURONS - 1] == prevValue0)
+                                                                {
+                                                                    if ((miningData[outputLength >> 6] >> (outputLength & 63)) & 1)
+                                                                    {
+                                                                        break;
+                                                                    }
+
+                                                                    outputLength++;
+                                                                }
+                                                                else
+                                                                {
+                                                                    if (!(--limiter))
+                                                                    {
+                                                                        break;
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+
+                                                        if (outputLength >= SOLUTION_THRESHOLD
+                                                            && system.numberOfSolutions < MAX_NUMBER_OF_SOLUTIONS)
+                                                        {
+                                                            *((__m256i*)system.solutions[system.numberOfSolutions].computorPublicKey) = *((__m256i*)request->destinationPublicKey);
+                                                            *((__m256i*)system.solutions[system.numberOfSolutions++].nonce) = *((__m256i*)&((unsigned char*)request)[sizeof(Message)]);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            break;
+                                            }
+                                        }
                                     }
 
                                     break;
@@ -7490,7 +7571,7 @@ static void tickerProcessor(void*)
                         etalonTickMustBeCreated = true;
 
                         if (!targetNextTickDataDigestIsKnown
-                            && __rdtsc() - tickTicks[sizeof(tickTicks) / sizeof(tickTicks[0]) - 1] > TARGET_TICK_DURATION * frequency / 1000)
+                            && __rdtsc() - tickTicks[sizeof(tickTicks) / sizeof(tickTicks[0]) - 1] > TARGET_TICK_DURATION * 100 * frequency / 1000)
                         {
                             tickData[system.tick + 1 - system.initialTick].epoch = 0;
                         }
@@ -7861,15 +7942,6 @@ static void tickerProcessor(void*)
                                                     for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
                                                     {
                                                         broadcastFutureTickData.tickData.revenues[j] = (faultyComputorFlags[j >> 6] & (1ULL << (j & 63))) ? 0 : ((system.revenueCounters[j] >= maxCounter) ? (ISSUANCE_RATE / NUMBER_OF_COMPUTORS) : (system.revenueCounters[j] * ((unsigned long long)(ISSUANCE_RATE / NUMBER_OF_COMPUTORS)) / maxCounter));
-                                                        for (unsigned int k = 0; k < sizeof(noRevenueComputorIdentities) / sizeof(noRevenueComputorIdentities[0]); k++)
-                                                        {
-                                                            if (EQUAL(*((__m256i*)broadcastedComputors.broadcastComputors.computors.publicKeys[j]), *((__m256i*)noRevenueComputorIdentities[k])))
-                                                            {
-                                                                broadcastFutureTickData.tickData.revenues[j] = 0;
-
-                                                                break;
-                                                            }
-                                                        }
                                                         for (unsigned int k = 0; k < sizeof(computorSeeds) / sizeof(computorSeeds[0]); k++)
                                                         {
                                                             if (EQUAL(*((__m256i*)broadcastedComputors.broadcastComputors.computors.publicKeys[j]), *((__m256i*)computorPublicKeys[k])))
@@ -7892,7 +7964,7 @@ static void tickerProcessor(void*)
                                                     entityPendingTransactionIndices[numberOfEntityPendingTransactionIndices] = numberOfEntityPendingTransactionIndices;
                                                 }
                                                 unsigned int j = 0;
-                                                while (j < NUMBER_OF_TRANSACTIONS_PER_TICK && numberOfEntityPendingTransactionIndices)
+                                                while (j < /*NUMBER_OF_TRANSACTIONS_PER_TICK*/64 && numberOfEntityPendingTransactionIndices)
                                                 {
                                                     unsigned int random;
                                                     _rdrand32_step(&random);
@@ -8228,11 +8300,6 @@ static BOOLEAN initialize()
         getPublicKey(computorPrivateKeys[i], computorPublicKeys[i]);
     }
 
-    for (unsigned int i = 0; i < sizeof(noRevenueComputorIdentities) / sizeof(noRevenueComputorIdentities[0]); i++)
-    {
-        getPublicKeyFromIdentity(noRevenueComputorIdentities[i], noRevenueComputorIdentities[i]);
-    }
-
     getPublicKeyFromIdentity((const unsigned char*)ADMIN, adminPublicKey);
 
     int cpuInfo[4];
@@ -8504,7 +8571,7 @@ static BOOLEAN initialize()
 
                 return FALSE;
             }
-            if (size && size != SPECTRUM_CAPACITY * sizeof(Entity))
+            if (size != SPECTRUM_CAPACITY * sizeof(Entity))
             {
                 logStatus(L"EFI_FILE_PROTOCOL.Read() reads invalid number of bytes", size, __LINE__);
 
@@ -9032,6 +9099,21 @@ static void processKeyPresses()
         }
         break;
 
+        case 0x0D:
+        {
+            unsigned int numberOfSolutions = 0;
+            for (unsigned int i = 0; i < numberOfMiners; i++)
+            {
+                numberOfSolutions += minerScores[i];
+            }
+            setNumber(message, numberOfMiners, TRUE);
+            appendText(message, L" miners with ");
+            appendNumber(message, numberOfSolutions, TRUE);
+            appendText(message, L" solutions.");
+            log(message);
+        }
+        break;
+
         case 0x0E:
         {
             for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
@@ -9403,7 +9485,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if (receivedDataSize >= sizeof(RequestResponseHeader))
                                             {
                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B || requestResponseHeader->protocol() > VERSION_B + 1)
+                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B - 1 || requestResponseHeader->protocol() > VERSION_B + 1)
                                                 {
                                                     setText(message, L"Forgetting ");
                                                     appendNumber(message, peers[i].address[0], FALSE);
