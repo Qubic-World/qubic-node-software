@@ -18,8 +18,8 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 109
-#define VERSION_C 1
+#define VERSION_B 110
+#define VERSION_C 0
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
 
@@ -6874,6 +6874,7 @@ static void tickerProcessor(void*)
     enableAVX();
 
     __m256i prevTickSpectrumDigest = initSpectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1];
+    unsigned int latestOwnTick = 0;
     curTickData.epoch = 0;
     etalonTick.tick = 0;
     __m256i etalonTickEssenceDigest;
@@ -7033,6 +7034,266 @@ static void tickerProcessor(void*)
                         }
                     }
                     ::futureTickTotalNumberOfComputors = futureTickTotalNumberOfComputors;
+                }
+
+                if (latestOwnTick != system.tick)
+                {
+                    latestOwnTick = system.tick;
+
+                    bs->SetMem(tickTransactionDigests, sizeof(tickTransactionDigests), 0);
+
+                    if (curTickData.epoch)
+                    {
+                        bs->SetMem(entityPendingTransactionIndices, sizeof(entityPendingTransactionIndices), 0);
+
+                        for (unsigned int transactionIndex = 0; transactionIndex < NUMBER_OF_TRANSACTIONS_PER_TICK; transactionIndex++)
+                        {
+                            if (!EQUAL(*((__m256i*)curTickData.transactionDigests[transactionIndex]), ZERO))
+                            {
+                                if (tickTransactionOffsets[system.tick - system.initialTick][transactionIndex])
+                                {
+                                    Transaction* transaction = (Transaction*)&tickTransactions[tickTransactionOffsets[system.tick - system.initialTick][transactionIndex]];
+                                    const int spectrumIndex = ::spectrumIndex(transaction->sourcePublicKey);
+                                    if (spectrumIndex >= 0)
+                                    {
+                                        if (!entityPendingTransactionIndices[spectrumIndex])
+                                        {
+                                            entityPendingTransactionIndices[spectrumIndex] = 1;
+
+                                            numberOfTransactions++;
+                                            if (decreaseEnergy(spectrumIndex, transaction->amount, system.tick))
+                                            {
+                                                increaseEnergy(transaction->destinationPublicKey, transaction->amount, system.tick);
+                                            }
+
+                                            if (!transaction->amount
+                                                && transaction->inputSize == 32
+                                                && !transaction->inputType
+                                                && EQUAL(*((__m256i*)transaction->destinationPublicKey), *((__m256i*)adminPublicKey)))
+                                            {
+                                                random(transaction->sourcePublicKey, ((unsigned char*)transaction) + sizeof(Transaction), (unsigned char*)validationNeuronLinks, sizeof(validationNeuronLinks));
+                                                for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
+                                                {
+                                                    validationNeuronLinks[k][0] %= NUMBER_OF_NEURONS;
+                                                    validationNeuronLinks[k][1] %= NUMBER_OF_NEURONS;
+                                                }
+
+                                                bs->SetMem(validationNeuronValues, sizeof(validationNeuronValues), 0xFF);
+
+                                                unsigned int limiter = sizeof(miningData) / sizeof(miningData[0]);
+                                                int outputLength = 0;
+                                                while (outputLength < (sizeof(miningData) << 3))
+                                                {
+                                                    const unsigned int prevValue0 = validationNeuronValues[NUMBER_OF_NEURONS - 1];
+                                                    const unsigned int prevValue1 = validationNeuronValues[NUMBER_OF_NEURONS - 2];
+
+                                                    for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
+                                                    {
+                                                        validationNeuronValues[k] = ~(validationNeuronValues[validationNeuronLinks[k][0]] & validationNeuronValues[validationNeuronLinks[k][1]]);
+                                                    }
+
+                                                    if (validationNeuronValues[NUMBER_OF_NEURONS - 1] != prevValue0
+                                                        && validationNeuronValues[NUMBER_OF_NEURONS - 2] == prevValue1)
+                                                    {
+                                                        if (!((miningData[outputLength >> 6] >> (outputLength & 63)) & 1))
+                                                        {
+                                                            break;
+                                                        }
+
+                                                        outputLength++;
+                                                    }
+                                                    else
+                                                    {
+                                                        if (validationNeuronValues[NUMBER_OF_NEURONS - 2] != prevValue1
+                                                            && validationNeuronValues[NUMBER_OF_NEURONS - 1] == prevValue0)
+                                                        {
+                                                            if ((miningData[outputLength >> 6] >> (outputLength & 63)) & 1)
+                                                            {
+                                                                break;
+                                                            }
+
+                                                            outputLength++;
+                                                        }
+                                                        else
+                                                        {
+                                                            if (!(--limiter))
+                                                            {
+                                                                break;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
+                                                if (outputLength >= SOLUTION_THRESHOLD)
+                                                {
+                                                    unsigned char data[32 + 32];
+                                                    *((__m256i*) & data[0]) = *((__m256i*)transaction->sourcePublicKey);
+                                                    *((__m256i*) & data[32]) = *((__m256i*)(((unsigned char*)transaction) + sizeof(Transaction)));
+                                                    unsigned int flagIndex;
+                                                    KangarooTwelve(data, sizeof(data), (unsigned char*)&flagIndex, sizeof(flagIndex));
+                                                    if (!(minerSolutionFlags[flagIndex >> 6] & (1ULL << (flagIndex & 63))))
+                                                    {
+                                                        minerSolutionFlags[flagIndex >> 6] |= (1ULL << (flagIndex & 63));
+
+                                                        for (unsigned int i = 0; i < sizeof(computorSeeds) / sizeof(computorSeeds[0]); i++)
+                                                        {
+                                                            if (EQUAL(*((__m256i*)transaction->sourcePublicKey), *((__m256i*)computorPublicKeys[i])))
+                                                            {
+                                                                unsigned int j;
+                                                                for (j = 0; j < system.numberOfSolutions; j++)
+                                                                {
+                                                                    if (EQUAL(*((__m256i*)(((unsigned char*)transaction) + sizeof(Transaction))), *((__m256i*)system.solutions[j].nonce))
+                                                                        && EQUAL(*((__m256i*)transaction->sourcePublicKey), *((__m256i*)system.solutions[j].computorPublicKey)))
+                                                                    {
+                                                                        system.solutionPublicationTicks[j] = -1;
+
+                                                                        break;
+                                                                    }
+                                                                }
+                                                                if (j == system.numberOfSolutions
+                                                                    && system.numberOfSolutions < MAX_NUMBER_OF_SOLUTIONS)
+                                                                {
+                                                                    *((__m256i*)system.solutions[system.numberOfSolutions].computorPublicKey) = *((__m256i*)transaction->sourcePublicKey);
+                                                                    *((__m256i*)system.solutions[system.numberOfSolutions].nonce) = *((__m256i*)(((unsigned char*)transaction) + sizeof(Transaction)));
+                                                                    system.solutionPublicationTicks[system.numberOfSolutions++] = -1;
+                                                                }
+
+                                                                break;
+                                                            }
+                                                        }
+
+                                                        unsigned int minerIndex;
+                                                        for (minerIndex = 0; minerIndex < numberOfMiners; minerIndex++)
+                                                        {
+                                                            if (EQUAL(*((__m256i*)transaction->sourcePublicKey), *((__m256i*)minerPublicKeys[minerIndex])))
+                                                            {
+                                                                minerScores[minerIndex]++;
+
+                                                                break;
+                                                            }
+                                                        }
+                                                        if (minerIndex == numberOfMiners
+                                                            && numberOfMiners < MAX_NUMBER_OF_MINERS)
+                                                        {
+                                                            *((__m256i*)minerPublicKeys[minerIndex = numberOfMiners]) = *((__m256i*)transaction->sourcePublicKey);
+                                                            minerScores[numberOfMiners++] = 1;
+                                                        }
+
+                                                        while (minerIndex > (unsigned int)(minerIndex < NUMBER_OF_COMPUTORS ? 0 : NUMBER_OF_COMPUTORS)
+                                                            && minerScores[minerIndex - 1] < minerScores[minerIndex])
+                                                        {
+                                                            const __m256i tmpPublicKey = *((__m256i*)minerPublicKeys[minerIndex]);
+                                                            const unsigned int tmpScore = minerScores[minerIndex];
+                                                            *((__m256i*)minerPublicKeys[minerIndex]) = *((__m256i*)minerPublicKeys[minerIndex - 1]);
+                                                            minerScores[minerIndex] = minerScores[minerIndex - 1];
+                                                            *((__m256i*)minerPublicKeys[--minerIndex]) = tmpPublicKey;
+                                                            minerScores[minerIndex] = tmpScore;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                else
+                                {
+                                    while (true)
+                                    {
+                                        criticalSituation = 2;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    for (unsigned int i = 0; i < sizeof(computorSeeds) / sizeof(computorSeeds[0]); i++)
+                    {
+                        int solutionIndexToPublish = -1;
+
+                        unsigned int j;
+                        for (j = 0; j < system.numberOfSolutions; j++)
+                        {
+                            if (system.solutionPublicationTicks[j] > 0
+                                && EQUAL(*((__m256i*)system.solutions[j].computorPublicKey), *((__m256i*)computorPublicKeys[i])))
+                            {
+                                if (system.solutionPublicationTicks[j] <= (int)system.tick)
+                                {
+                                    solutionIndexToPublish = j;
+                                }
+
+                                break;
+                            }
+                        }
+                        if (j == system.numberOfSolutions)
+                        {
+                            for (j = 0; j < system.numberOfSolutions; j++)
+                            {
+                                if (!system.solutionPublicationTicks[j]
+                                    && EQUAL(*((__m256i*)system.solutions[j].computorPublicKey), *((__m256i*)computorPublicKeys[i])))
+                                {
+                                    solutionIndexToPublish = j;
+
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (solutionIndexToPublish >= 0)
+                        {
+                            struct
+                            {
+                                Transaction transaction;
+                                unsigned char nonce[32];
+                                unsigned char signature[SIGNATURE_SIZE];
+                            } payload;
+                            *((__m256i*)payload.transaction.sourcePublicKey) = *((__m256i*)computorPublicKeys[i]);
+                            *((__m256i*)payload.transaction.destinationPublicKey) = *((__m256i*)adminPublicKey);
+                            payload.transaction.amount = 0;
+                            system.solutionPublicationTicks[solutionIndexToPublish] = payload.transaction.tick = system.tick + MINING_SOLUTIONS_PUBLICATION_OFFSET;
+                            payload.transaction.inputType = 0;
+                            payload.transaction.inputSize = sizeof(payload.nonce);
+                            *((__m256i*)payload.nonce) = *((__m256i*)system.solutions[solutionIndexToPublish].nonce);
+
+                            unsigned char digest[32];
+                            KangarooTwelve((unsigned char*)&payload.transaction, sizeof(payload.transaction) + sizeof(payload.nonce), digest, sizeof(digest));
+                            sign(computorSubseeds[i], computorPublicKeys[i], digest, payload.signature);
+
+                            enqueueResponse(NULL, false, BROADCAST_TRANSACTION, &payload, sizeof(payload));
+                        }
+                    }
+
+                    unsigned int digestIndex;
+
+                    for (digestIndex = 0; digestIndex < SPECTRUM_CAPACITY; digestIndex++)
+                    {
+                        if (spectrum[digestIndex].latestIncomingTransferTick == system.tick || spectrum[digestIndex].latestOutgoingTransferTick == system.tick)
+                        {
+                            KangarooTwelve64To32((unsigned char*)&spectrum[digestIndex], (unsigned char*)&spectrumDigests[digestIndex]);
+                            spectrumChangeFlags[digestIndex >> 6] |= (1ULL << (digestIndex & 63));
+                        }
+                    }
+
+                    unsigned int previousLevelBeginning = 0;
+                    unsigned int numberOfLeafs = SPECTRUM_CAPACITY;
+                    while (numberOfLeafs > 1)
+                    {
+                        for (unsigned int i = 0; i < numberOfLeafs; i += 2)
+                        {
+                            if (spectrumChangeFlags[i >> 6] & (3ULL << (i & 63)))
+                            {
+                                KangarooTwelve64To32((unsigned char*)&spectrumDigests[previousLevelBeginning + i], (unsigned char*)&spectrumDigests[digestIndex]);
+                                spectrumChangeFlags[i >> 6] &= ~(3ULL << (i & 63));
+                                spectrumChangeFlags[i >> 7] |= (1ULL << ((i >> 1) & 63));
+                            }
+                            digestIndex++;
+                        }
+
+                        previousLevelBeginning += numberOfLeafs;
+                        numberOfLeafs >>= 1;
+                    }
+                    spectrumChangeFlags[0] = 0;
+
+                    etalonTickMustBeCreated = true;
                 }
 
                 if (etalonTickMustBeCreated)
@@ -7473,263 +7734,11 @@ static void tickerProcessor(void*)
                                         {
                                             system.revenueCounters[i] += revenueCounters[i];
                                         }
-
-                                        bs->SetMem(entityPendingTransactionIndices, sizeof(entityPendingTransactionIndices), 0);
-
-                                        for (unsigned int transactionIndex = 0; transactionIndex < NUMBER_OF_TRANSACTIONS_PER_TICK; transactionIndex++)
-                                        {
-                                            if (!EQUAL(*((__m256i*)curTickData.transactionDigests[transactionIndex]), ZERO))
-                                            {
-                                                if (tickTransactionOffsets[system.tick - system.initialTick][transactionIndex])
-                                                {
-                                                    Transaction* transaction = (Transaction*)&tickTransactions[tickTransactionOffsets[system.tick - system.initialTick][transactionIndex]];
-                                                    const int spectrumIndex = ::spectrumIndex(transaction->sourcePublicKey);
-                                                    if (spectrumIndex >= 0)
-                                                    {
-                                                        if (!entityPendingTransactionIndices[spectrumIndex])
-                                                        {
-                                                            entityPendingTransactionIndices[spectrumIndex] = 1;
-
-                                                            numberOfTransactions++;
-                                                            if (decreaseEnergy(spectrumIndex, transaction->amount, system.tick))
-                                                            {
-                                                                increaseEnergy(transaction->destinationPublicKey, transaction->amount, system.tick);
-                                                            }
-
-                                                            if (!transaction->amount
-                                                                && transaction->inputSize == 32
-                                                                && !transaction->inputType
-                                                                && EQUAL(*((__m256i*)transaction->destinationPublicKey), *((__m256i*)adminPublicKey)))
-                                                            {
-                                                                random(transaction->sourcePublicKey, ((unsigned char*)transaction) + sizeof(Transaction), (unsigned char*)validationNeuronLinks, sizeof(validationNeuronLinks));
-                                                                for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
-                                                                {
-                                                                    validationNeuronLinks[k][0] %= NUMBER_OF_NEURONS;
-                                                                    validationNeuronLinks[k][1] %= NUMBER_OF_NEURONS;
-                                                                }
-
-                                                                bs->SetMem(validationNeuronValues, sizeof(validationNeuronValues), 0xFF);
-
-                                                                unsigned int limiter = sizeof(miningData) / sizeof(miningData[0]);
-                                                                int outputLength = 0;
-                                                                while (outputLength < (sizeof(miningData) << 3))
-                                                                {
-                                                                    const unsigned int prevValue0 = validationNeuronValues[NUMBER_OF_NEURONS - 1];
-                                                                    const unsigned int prevValue1 = validationNeuronValues[NUMBER_OF_NEURONS - 2];
-
-                                                                    for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
-                                                                    {
-                                                                        validationNeuronValues[k] = ~(validationNeuronValues[validationNeuronLinks[k][0]] & validationNeuronValues[validationNeuronLinks[k][1]]);
-                                                                    }
-
-                                                                    if (validationNeuronValues[NUMBER_OF_NEURONS - 1] != prevValue0
-                                                                        && validationNeuronValues[NUMBER_OF_NEURONS - 2] == prevValue1)
-                                                                    {
-                                                                        if (!((miningData[outputLength >> 6] >> (outputLength & 63)) & 1))
-                                                                        {
-                                                                            break;
-                                                                        }
-
-                                                                        outputLength++;
-                                                                    }
-                                                                    else
-                                                                    {
-                                                                        if (validationNeuronValues[NUMBER_OF_NEURONS - 2] != prevValue1
-                                                                            && validationNeuronValues[NUMBER_OF_NEURONS - 1] == prevValue0)
-                                                                        {
-                                                                            if ((miningData[outputLength >> 6] >> (outputLength & 63)) & 1)
-                                                                            {
-                                                                                break;
-                                                                            }
-
-                                                                            outputLength++;
-                                                                        }
-                                                                        else
-                                                                        {
-                                                                            if (!(--limiter))
-                                                                            {
-                                                                                break;
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                }
-
-                                                                if (outputLength >= SOLUTION_THRESHOLD)
-                                                                {
-                                                                    unsigned char data[32 + 32];
-                                                                    *((__m256i*) & data[0]) = *((__m256i*)transaction->sourcePublicKey);
-                                                                    *((__m256i*) & data[32]) = *((__m256i*)(((unsigned char*)transaction) + sizeof(Transaction)));
-                                                                    unsigned int flagIndex;
-                                                                    KangarooTwelve(data, sizeof(data), (unsigned char*)&flagIndex, sizeof(flagIndex));
-                                                                    if (!(minerSolutionFlags[flagIndex >> 6] & (1ULL << (flagIndex & 63))))
-                                                                    {
-                                                                        minerSolutionFlags[flagIndex >> 6] |= (1ULL << (flagIndex & 63));
-
-                                                                        for (unsigned int i = 0; i < sizeof(computorSeeds) / sizeof(computorSeeds[0]); i++)
-                                                                        {
-                                                                            if (EQUAL(*((__m256i*)transaction->sourcePublicKey), *((__m256i*)computorPublicKeys[i])))
-                                                                            {
-                                                                                unsigned int j;
-                                                                                for (j = 0; j < system.numberOfSolutions; j++)
-                                                                                {
-                                                                                    if (EQUAL(*((__m256i*)(((unsigned char*)transaction) + sizeof(Transaction))), *((__m256i*)system.solutions[j].nonce))
-                                                                                        && EQUAL(*((__m256i*)transaction->sourcePublicKey), *((__m256i*)system.solutions[j].computorPublicKey)))
-                                                                                    {
-                                                                                        system.solutionPublicationTicks[j] = -1;
-
-                                                                                        break;
-                                                                                    }
-                                                                                }
-                                                                                if (j == system.numberOfSolutions
-                                                                                    && system.numberOfSolutions < MAX_NUMBER_OF_SOLUTIONS)
-                                                                                {
-                                                                                    *((__m256i*)system.solutions[system.numberOfSolutions].computorPublicKey) = *((__m256i*)transaction->sourcePublicKey);
-                                                                                    *((__m256i*)system.solutions[system.numberOfSolutions].nonce) = *((__m256i*)(((unsigned char*)transaction) + sizeof(Transaction)));
-                                                                                    system.solutionPublicationTicks[system.numberOfSolutions++] = -1;
-                                                                                }
-
-                                                                                break;
-                                                                            }
-                                                                        }
-
-                                                                        unsigned int minerIndex;
-                                                                        for (minerIndex = 0; minerIndex < numberOfMiners; minerIndex++)
-                                                                        {
-                                                                            if (EQUAL(*((__m256i*)transaction->sourcePublicKey), *((__m256i*)minerPublicKeys[minerIndex])))
-                                                                            {
-                                                                                minerScores[minerIndex]++;
-
-                                                                                break;
-                                                                            }
-                                                                        }
-                                                                        if (minerIndex == numberOfMiners
-                                                                            && numberOfMiners < MAX_NUMBER_OF_MINERS)
-                                                                        {
-                                                                            *((__m256i*)minerPublicKeys[minerIndex = numberOfMiners]) = *((__m256i*)transaction->sourcePublicKey);
-                                                                            minerScores[numberOfMiners++] = 1;
-                                                                        }
-
-                                                                        while (minerIndex > (unsigned int)(minerIndex < NUMBER_OF_COMPUTORS ? 0 : NUMBER_OF_COMPUTORS)
-                                                                            && minerScores[minerIndex - 1] < minerScores[minerIndex])
-                                                                        {
-                                                                            const __m256i tmpPublicKey = *((__m256i*)minerPublicKeys[minerIndex]);
-                                                                            const unsigned int tmpScore = minerScores[minerIndex];
-                                                                            *((__m256i*)minerPublicKeys[minerIndex]) = *((__m256i*)minerPublicKeys[minerIndex - 1]);
-                                                                            minerScores[minerIndex] = minerScores[minerIndex - 1];
-                                                                            *((__m256i*)minerPublicKeys[--minerIndex]) = tmpPublicKey;
-                                                                            minerScores[minerIndex] = tmpScore;
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                                else
-                                                {
-                                                    while (true)
-                                                    {
-                                                        criticalSituation = 2;
-                                                    }
-                                                }
-                                            }
-                                        }
                                     }
                                     else
                                     {
                                         curTickData.epoch = tickData[system.tick - system.initialTick].epoch = 0;
                                     }
-
-                                    bs->SetMem(tickTransactionDigests, sizeof(tickTransactionDigests), 0);
-
-                                    for (unsigned int i = 0; i < sizeof(computorSeeds) / sizeof(computorSeeds[0]); i++)
-                                    {
-                                        int solutionIndexToPublish = -1;
-
-                                        unsigned int j;
-                                        for (j = 0; j < system.numberOfSolutions; j++)
-                                        {
-                                            if (system.solutionPublicationTicks[j] > 0
-                                                && EQUAL(*((__m256i*)system.solutions[j].computorPublicKey), *((__m256i*)computorPublicKeys[i])))
-                                            {
-                                                if (system.solutionPublicationTicks[j] <= (int)system.tick)
-                                                {
-                                                    solutionIndexToPublish = j;
-                                                }
-
-                                                break;
-                                            }
-                                        }
-                                        if (j == system.numberOfSolutions)
-                                        {
-                                            for (j = 0; j < system.numberOfSolutions; j++)
-                                            {
-                                                if (!system.solutionPublicationTicks[j]
-                                                    && EQUAL(*((__m256i*)system.solutions[j].computorPublicKey), *((__m256i*)computorPublicKeys[i])))
-                                                {
-                                                    solutionIndexToPublish = j;
-
-                                                    break;
-                                                }
-                                            }
-                                        }
-
-                                        if (solutionIndexToPublish >= 0)
-                                        {
-                                            struct
-                                            {
-                                                Transaction transaction;
-                                                unsigned char nonce[32];
-                                                unsigned char signature[SIGNATURE_SIZE];
-                                            } payload;
-                                            *((__m256i*)payload.transaction.sourcePublicKey) = *((__m256i*)computorPublicKeys[i]);
-                                            *((__m256i*)payload.transaction.destinationPublicKey) = *((__m256i*)adminPublicKey);
-                                            payload.transaction.amount = 0;
-                                            system.solutionPublicationTicks[solutionIndexToPublish] = payload.transaction.tick = system.tick + MINING_SOLUTIONS_PUBLICATION_OFFSET;
-                                            payload.transaction.inputType = 0;
-                                            payload.transaction.inputSize = sizeof(payload.nonce);
-                                            *((__m256i*)payload.nonce) = *((__m256i*)system.solutions[solutionIndexToPublish].nonce);
-
-                                            unsigned char digest[32];
-                                            KangarooTwelve((unsigned char*)&payload.transaction, sizeof(payload.transaction) + sizeof(payload.nonce), digest, sizeof(digest));
-                                            sign(computorSubseeds[i], computorPublicKeys[i], digest, payload.signature);
-
-                                            enqueueResponse(NULL, false, BROADCAST_TRANSACTION, &payload, sizeof(payload));
-                                        }
-                                    }
-
-                                    unsigned int digestIndex;
-
-                                    for (digestIndex = 0; digestIndex < SPECTRUM_CAPACITY; digestIndex++)
-                                    {
-                                        if (spectrum[digestIndex].latestIncomingTransferTick == system.tick || spectrum[digestIndex].latestOutgoingTransferTick == system.tick)
-                                        {
-                                            KangarooTwelve64To32((unsigned char*)&spectrum[digestIndex], (unsigned char*)&spectrumDigests[digestIndex]);
-                                            spectrumChangeFlags[digestIndex >> 6] |= (1ULL << (digestIndex & 63));
-                                        }
-                                    }
-
-                                    unsigned int previousLevelBeginning = 0;
-                                    unsigned int numberOfLeafs = SPECTRUM_CAPACITY;
-                                    while (numberOfLeafs > 1)
-                                    {
-                                        for (unsigned int i = 0; i < numberOfLeafs; i += 2)
-                                        {
-                                            if (spectrumChangeFlags[i >> 6] & (3ULL << (i & 63)))
-                                            {
-                                                KangarooTwelve64To32((unsigned char*)&spectrumDigests[previousLevelBeginning + i], (unsigned char*)&spectrumDigests[digestIndex]);
-                                                spectrumChangeFlags[i >> 6] &= ~(3ULL << (i & 63));
-                                                spectrumChangeFlags[i >> 7] |= (1ULL << ((i >> 1) & 63));
-                                            }
-                                            digestIndex++;
-                                        }
-
-                                        previousLevelBeginning += numberOfLeafs;
-                                        numberOfLeafs >>= 1;
-                                    }
-                                    spectrumChangeFlags[0] = 0;
-
-                                    etalonTickMustBeCreated = true;
 
                                     prevTickMillisecond = etalonTick.millisecond;
                                     prevTickSecond = etalonTick.second;
@@ -8389,7 +8398,7 @@ static BOOLEAN initialize()
                 system.version = VERSION_B;
                 if (system.epoch == 50)
                 {
-                    system.initialTick = system.tick = 5180000;
+                    system.initialTick = system.tick = 5190000;
                 }
                 else
                 {
