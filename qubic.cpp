@@ -18,7 +18,7 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 110
+#define VERSION_B 111
 #define VERSION_C 0
 
 #define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
@@ -4808,7 +4808,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define TARGET_TICK_DURATION 5000
 #define TICK_REQUESTING_PERIOD 200
 #define DEJAVU_SWAP_LIMIT 1000000
-#define DISSEMINATION_MULTIPLIER 10
+#define DISSEMINATION_MULTIPLIER 7
 #define FIRST_TICK_TRANSACTION_OFFSET sizeof(unsigned long long)
 #define ISSUANCE_RATE 1000000000000LL
 #define MAX_AMOUNT (ISSUANCE_RATE * 1000ULL)
@@ -6153,7 +6153,7 @@ static void requestProcessor(void* ProcedureArgument)
                             {
                                 if (*((int*)peer->address) == *((int*)publicPeers[j].address))
                                 {
-                                    publicPeers[j].isVerified = true;
+                                    //publicPeers[j].isVerified = true;
 
                                     break;
                                 }
@@ -7721,6 +7721,15 @@ static void tickerProcessor(void*)
                             {
                                 if (tickNumberOfComputors >= QUORUM)
                                 {
+                                    const unsigned int baseOffset = (system.tick - system.initialTick) * NUMBER_OF_COMPUTORS;
+                                    for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                                    {
+                                        if (!revenueCounters[i])
+                                        {
+                                            ticks[baseOffset + i].epoch = 0;
+                                        }
+                                    }
+
                                     system.tick++;
 
                                     targetNextTickDataDigestIsKnown = false;
@@ -7831,7 +7840,7 @@ static void tickerProcessor(void*)
                                                     entityPendingTransactionIndices[numberOfEntityPendingTransactionIndices] = numberOfEntityPendingTransactionIndices;
                                                 }
                                                 unsigned int j = 0;
-                                                while (j < /*NUMBER_OF_TRANSACTIONS_PER_TICK*/128 && numberOfEntityPendingTransactionIndices)
+                                                while (j < NUMBER_OF_TRANSACTIONS_PER_TICK && numberOfEntityPendingTransactionIndices)
                                                 {
                                                     unsigned int random;
                                                     _rdrand32_step(&random);
@@ -8388,7 +8397,7 @@ static BOOLEAN initialize()
             {
                 if (!size)
                 {
-                    system.epoch = 50;
+                    system.epoch = 51;
                     system.epochBeginningHour = 12;
                     system.epochBeginningDay = 13;
                     system.epochBeginningMonth = 4;
@@ -8396,9 +8405,9 @@ static BOOLEAN initialize()
                 }
 
                 system.version = VERSION_B;
-                if (system.epoch == 50)
+                if (system.epoch == 51)
                 {
-                    system.initialTick = system.tick = 5190000;
+                    system.initialTick = system.tick = 5200000;
                 }
                 else
                 {
@@ -8502,14 +8511,14 @@ static BOOLEAN initialize()
 
         unsigned char randomSeed[32];
         bs->SetMem(randomSeed, 32, 0);
-        randomSeed[0] = 247;
-        randomSeed[1] = 37;
-        randomSeed[2] = 79;
-        randomSeed[3] = 29;
-        randomSeed[4] = 137;
-        randomSeed[5] = 47;
+        randomSeed[0] = 147;
+        randomSeed[1] = 17;
+        randomSeed[2] = 19;
+        randomSeed[3] = 19;
+        randomSeed[4] = 117;
+        randomSeed[5] = 17;
         randomSeed[6] = 17;
-        randomSeed[7] = 8;
+        randomSeed[7] = 81;
         random(randomSeed, randomSeed, (unsigned char*)miningData, sizeof(miningData));
 
         if (status = bs->AllocatePool(EfiRuntimeServicesData, NUMBER_OF_MINER_SOLUTION_FLAGS / 8, (void**)&minerSolutionFlags))
@@ -9451,7 +9460,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if (receivedDataSize >= sizeof(RequestResponseHeader))
                                             {
                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B - 1 || requestResponseHeader->protocol() > VERSION_B + 1)
+                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B || requestResponseHeader->protocol() > VERSION_B + 1)
                                                 {
                                                     setText(message, L"Forgetting ");
                                                     appendNumber(message, peers[i].address[0], FALSE);
