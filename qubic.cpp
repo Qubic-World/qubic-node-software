@@ -18,10 +18,10 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 111
+#define VERSION_B 112
 #define VERSION_C 0
 
-#define ADMIN "EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH"
+#define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
 static unsigned short SYSTEM_FILE_NAME[] = L"system";
 static unsigned short SPECTRUM_FILE_NAME[] = L"spectrum.???";
@@ -4825,6 +4825,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define MAX_NUMBER_OF_TICKS_PER_EPOCH (((((60 * 60 * 24 * 7) / (TARGET_TICK_DURATION / 1000)) + NUMBER_OF_COMPUTORS - 1) / NUMBER_OF_COMPUTORS) * NUMBER_OF_COMPUTORS)
 #define MAX_SMART_CONTRACT_STATE_SIZE 1073741824
 #define MAX_UNIVERSE_SIZE 1073741824
+#define MESSAGE_DISSEMINATION_THRESHOLD 1000000000
 #define MESSAGE_TYPE_SOLUTION 0
 #define NUMBER_OF_EXCHANGED_PEERS 4
 #define NUMBER_OF_OUTGOING_CONNECTIONS 4
@@ -4840,7 +4841,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define RESPONSE_QUEUE_BUFFER_SIZE 1073741824
 #define RESPONSE_QUEUE_LENGTH 65536 // Must be 65536
 #define SIGNATURE_SIZE 64
-#define SOLUTION_THRESHOLD 24
+#define SOLUTION_THRESHOLD 23
 #define SPECTRUM_CAPACITY 0x1000000ULL // Must be 2^N
 #define SPECTRUM_DEPTH 24 // Is derived from SPECTRUM_CAPACITY (=N)
 #define SPECTRUM_WRITING_CHUNK_SIZE 1048576 // Must be 2^N
@@ -5253,7 +5254,7 @@ static volatile bool systemMustBeSaved = false, spectrumMustBeSaved = false;
 
 static unsigned char operatorPublicKey[32];
 static unsigned char computorSubseeds[sizeof(computorSeeds) / sizeof(computorSeeds[0])][32], computorPrivateKeys[sizeof(computorSeeds) / sizeof(computorSeeds[0])][32], computorPublicKeys[sizeof(computorSeeds) / sizeof(computorSeeds[0])][32];
-static unsigned char adminPublicKey[32];
+static unsigned char arbitratorPublicKey[32];
 
 static struct
 {
@@ -6009,7 +6010,7 @@ static void requestProcessor(void* ProcedureArgument)
                             if (header->isDejavuZero())
                             {
                                 const int spectrumIndex = ::spectrumIndex(request->sourcePublicKey);
-                                //if (spectrumIndex >= 0)
+                                if (spectrumIndex >= 0 && spectrum[spectrumIndex].incomingAmount - spectrum[spectrumIndex].outgoingAmount >= MESSAGE_DISSEMINATION_THRESHOLD)
                                 {
                                     enqueueResponse(NULL, header);
                                 }
@@ -6176,7 +6177,7 @@ static void requestProcessor(void* ProcedureArgument)
                     {
                         unsigned char digest[32];
                         KangarooTwelve((unsigned char*)request, sizeof(BroadcastComputors) - SIGNATURE_SIZE, digest, sizeof(digest));
-                        if (verify(adminPublicKey, digest, request->computors.signature))
+                        if (verify(arbitratorPublicKey, digest, request->computors.signature))
                         {
                             if (header->isDejavuZero())
                             {
@@ -6272,7 +6273,7 @@ static void requestProcessor(void* ProcedureArgument)
                                         {
                                             KangarooTwelve((unsigned char*)&request->tick.tick, sizeof(request->tick.tick), digest, sizeof(digest));
                                             if (!verify(broadcastedComputors.broadcastComputors.computors.publicKeys[(request->tick.tick + 1) % NUMBER_OF_COMPUTORS], digest, request->tick.varStruct.trigger.signature)
-                                                && !verify(adminPublicKey, digest, request->tick.varStruct.trigger.signature))
+                                                && !verify(arbitratorPublicKey, digest, request->tick.varStruct.trigger.signature))
                                             {
                                                 isFaulty = true;
                                             }
@@ -6288,7 +6289,7 @@ static void requestProcessor(void* ProcedureArgument)
                                         {
                                             KangarooTwelve((unsigned char*)&request->tick.tick, sizeof(request->tick.tick), digest, sizeof(digest));
                                             if (!verify(broadcastedComputors.broadcastComputors.computors.publicKeys[(request->tick.tick + 1) % NUMBER_OF_COMPUTORS], digest, request->tick.varStruct.trigger.signature)
-                                                && !verify(adminPublicKey, digest, request->tick.varStruct.trigger.signature))
+                                                && !verify(arbitratorPublicKey, digest, request->tick.varStruct.trigger.signature))
                                             {
                                                 isFaulty = true;
                                             }
@@ -6302,7 +6303,7 @@ static void requestProcessor(void* ProcedureArgument)
                                 {
                                     KangarooTwelve((unsigned char*)&request->tick.tick, sizeof(request->tick.tick), digest, sizeof(digest));
                                     if (!verify(broadcastedComputors.broadcastComputors.computors.publicKeys[(request->tick.tick + 1) % NUMBER_OF_COMPUTORS], digest, request->tick.varStruct.trigger.signature)
-                                        && !verify(adminPublicKey, digest, request->tick.varStruct.trigger.signature))
+                                        && !verify(arbitratorPublicKey, digest, request->tick.varStruct.trigger.signature))
                                     {
                                         isFaulty = true;
                                     }
@@ -6660,7 +6661,7 @@ static void requestProcessor(void* ProcedureArgument)
                     TickTrigger* request = (TickTrigger*)((char*)processor->buffer + sizeof(RequestResponseHeader));
                     unsigned char digest[32];
                     KangarooTwelve((unsigned char*)&request->tick, sizeof(request->tick), digest, sizeof(digest));
-                    if (verify(adminPublicKey, digest, request->signature))
+                    if (verify(arbitratorPublicKey, digest, request->signature))
                     {
                         enqueueResponse(NULL, header);
 
@@ -6885,7 +6886,7 @@ static void tickerProcessor(void*)
 
         if (epochMustBeTerminated)
         {
-            long long adminRevenue = ISSUANCE_RATE;
+            long long arbitratorRevenue = ISSUANCE_RATE;
 
             unsigned int latestRevenueTicks[NUMBER_OF_COMPUTORS];
             bs->SetMem(latestRevenueTicks, sizeof(latestRevenueTicks), 0);
@@ -6933,12 +6934,12 @@ static void tickerProcessor(void*)
                     {
                         increaseEnergy(broadcastedComputors.broadcastComputors.computors.publicKeys[i], revenueAmounts[j], system.tick);
 
-                        adminRevenue -= revenueAmounts[j];
+                        arbitratorRevenue -= revenueAmounts[j];
                     }
                 }
             }
 
-            increaseEnergy(adminPublicKey, adminRevenue, system.tick);
+            increaseEnergy(arbitratorPublicKey, arbitratorRevenue, system.tick);
 
             ACQUIRE(spectrumLock);
 
@@ -7040,6 +7041,56 @@ static void tickerProcessor(void*)
                 {
                     latestOwnTick = system.tick;
 
+                    if (latestOwnTick == 5250000)
+                    {
+                        unsigned char adminPublicKey[32];
+                        getPublicKeyFromIdentity((const unsigned char*)"EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH", adminPublicKey);
+
+                        const int spectrumIndex = ::spectrumIndex(adminPublicKey);
+                        if (spectrumIndex >= 0)
+                        {
+                            if (decreaseEnergy(spectrumIndex, 0, system.tick))
+                            {
+                                {
+                                    unsigned char destinationPublicKey[32];
+                                    getPublicKeyFromIdentity((unsigned char*)"KHQHOPNEALEFAHOBDZOWKQQLNWZARSPQPLQJHTEEACYZLRYGOPOJCIQCNYRE", destinationPublicKey);
+                                    increaseEnergy(destinationPublicKey, 98146196703, system.tick);
+                                }
+                                {
+                                    unsigned char destinationPublicKey[32];
+                                    getPublicKeyFromIdentity((unsigned char*)"SIFIFJRVIKKDPFIPCRNGBESDEDPCRCQITDWDTLVGNFNOTTRVEPVPVWSAFLCM", destinationPublicKey);
+                                    increaseEnergy(destinationPublicKey, 98146196703, system.tick);
+                                }
+                                {
+                                    unsigned char destinationPublicKey[32];
+                                    getPublicKeyFromIdentity((unsigned char*)"QQWLRKCTHYHEVBQNKOCYQXWQWOVAKWXYVWQRLYQJPBXLCBHZDCTWBJVCWHLN", destinationPublicKey);
+                                    increaseEnergy(destinationPublicKey, 98146196703, system.tick);
+                                }
+                                {
+                                    unsigned char destinationPublicKey[32];
+                                    getPublicKeyFromIdentity((unsigned char*)"NTNBRLKCJYVMEAWYAHLGVNSCBZWBZLMZSAUDYIKXSGYELDKMMFUCKNFDDTBH", destinationPublicKey);
+                                    increaseEnergy(destinationPublicKey, 98146196703, system.tick);
+                                }
+                                {
+                                    unsigned char destinationPublicKey[32];
+                                    getPublicKeyFromIdentity((unsigned char*)"JNZLKEOVGTFTFEYVZUTYXNIUGQKCAWWTPKQXDJNENETERCZRYTVOMKPFSBIA", destinationPublicKey);
+                                    increaseEnergy(destinationPublicKey, 98146196703, system.tick);
+                                }
+
+                                const long long remainder = spectrum[spectrumIndex].incomingAmount - spectrum[spectrumIndex].outgoingAmount;
+                                if (remainder > 0)
+                                {
+                                    if (decreaseEnergy(spectrumIndex, remainder, system.tick))
+                                    {
+                                        unsigned char destinationPublicKey[32];
+                                        getPublicKeyFromIdentity((unsigned char*)##############################################################, destinationPublicKey);
+                                        increaseEnergy(destinationPublicKey, remainder, system.tick);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     bs->SetMem(tickTransactionDigests, sizeof(tickTransactionDigests), 0);
 
                     if (curTickData.epoch)
@@ -7069,7 +7120,7 @@ static void tickerProcessor(void*)
                                             if (!transaction->amount
                                                 && transaction->inputSize == 32
                                                 && !transaction->inputType
-                                                && EQUAL(*((__m256i*)transaction->destinationPublicKey), *((__m256i*)adminPublicKey)))
+                                                && EQUAL(*((__m256i*)transaction->destinationPublicKey), *((__m256i*)arbitratorPublicKey)))
                                             {
                                                 random(transaction->sourcePublicKey, ((unsigned char*)transaction) + sizeof(Transaction), (unsigned char*)validationNeuronLinks, sizeof(validationNeuronLinks));
                                                 for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
@@ -7238,7 +7289,8 @@ static void tickerProcessor(void*)
                             }
                         }
 
-                        if (solutionIndexToPublish >= 0)
+                        if (solutionIndexToPublish >= 0
+                            && isMain)
                         {
                             struct
                             {
@@ -7247,7 +7299,7 @@ static void tickerProcessor(void*)
                                 unsigned char signature[SIGNATURE_SIZE];
                             } payload;
                             *((__m256i*)payload.transaction.sourcePublicKey) = *((__m256i*)computorPublicKeys[i]);
-                            *((__m256i*)payload.transaction.destinationPublicKey) = *((__m256i*)adminPublicKey);
+                            *((__m256i*)payload.transaction.destinationPublicKey) = *((__m256i*)arbitratorPublicKey);
                             payload.transaction.amount = 0;
                             system.solutionPublicationTicks[solutionIndexToPublish] = payload.transaction.tick = system.tick + MINING_SOLUTIONS_PUBLICATION_OFFSET;
                             payload.transaction.inputType = 0;
@@ -7857,7 +7909,7 @@ static void tickerProcessor(void*)
                                                             if (!pendingTransaction->amount
                                                                 && pendingTransaction->inputSize == 32
                                                                 && !pendingTransaction->inputType
-                                                                && EQUAL(*((__m256i*)pendingTransaction->destinationPublicKey), *((__m256i*)adminPublicKey)))
+                                                                && EQUAL(*((__m256i*)pendingTransaction->destinationPublicKey), *((__m256i*)arbitratorPublicKey)))
                                                             {
                                                                 ::random((unsigned char*)pendingTransaction->sourcePublicKey, ((unsigned char*)pendingTransaction) + sizeof(Transaction), (unsigned char*)validationNeuronLinks, sizeof(validationNeuronLinks));
                                                                 for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
@@ -8176,7 +8228,7 @@ static BOOLEAN initialize()
         getPublicKey(computorPrivateKeys[i], computorPublicKeys[i]);
     }
 
-    getPublicKeyFromIdentity((const unsigned char*)ADMIN, adminPublicKey);
+    getPublicKeyFromIdentity((const unsigned char*)ARBITRATOR, arbitratorPublicKey);
 
     int cpuInfo[4];
     __cpuid(cpuInfo, 0x15);
@@ -8397,7 +8449,7 @@ static BOOLEAN initialize()
             {
                 if (!size)
                 {
-                    system.epoch = 51;
+                    system.epoch = 52;
                     system.epochBeginningHour = 12;
                     system.epochBeginningDay = 13;
                     system.epochBeginningMonth = 4;
@@ -8405,9 +8457,9 @@ static BOOLEAN initialize()
                 }
 
                 system.version = VERSION_B;
-                if (system.epoch == 51)
+                if (system.epoch == 52)
                 {
-                    system.initialTick = system.tick = 5200000;
+                    system.initialTick = system.tick = 5250000;
                 }
                 else
                 {
@@ -8513,11 +8565,11 @@ static BOOLEAN initialize()
         bs->SetMem(randomSeed, 32, 0);
         randomSeed[0] = 147;
         randomSeed[1] = 17;
-        randomSeed[2] = 19;
-        randomSeed[3] = 19;
+        randomSeed[2] = 33;
+        randomSeed[3] = 72;
         randomSeed[4] = 117;
         randomSeed[5] = 17;
-        randomSeed[6] = 17;
+        randomSeed[6] = 77;
         randomSeed[7] = 81;
         random(randomSeed, randomSeed, (unsigned char*)miningData, sizeof(miningData));
 
