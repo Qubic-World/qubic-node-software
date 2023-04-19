@@ -18,7 +18,7 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 112
+#define VERSION_B 113
 #define VERSION_C 0
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
@@ -5076,6 +5076,7 @@ typedef struct
     unsigned char month;
     unsigned char year;
 
+    unsigned char computorKPIs[((NUMBER_OF_COMPUTORS - 1) * 10 + 7) / 8];
     unsigned int revenues[NUMBER_OF_COMPUTORS];
 
     union
@@ -6154,7 +6155,7 @@ static void requestProcessor(void* ProcedureArgument)
                             {
                                 if (*((int*)peer->address) == *((int*)publicPeers[j].address))
                                 {
-                                    //publicPeers[j].isVerified = true;
+                                    publicPeers[j].isVerified = true;
 
                                     break;
                                 }
@@ -7041,56 +7042,6 @@ static void tickerProcessor(void*)
                 {
                     latestOwnTick = system.tick;
 
-                    if (latestOwnTick == 5250000)
-                    {
-                        unsigned char adminPublicKey[32];
-                        getPublicKeyFromIdentity((const unsigned char*)"EWVQXREUTMLMDHXINHYJKSLTNIFBMZQPYNIFGFXGJBODGJHCFSSOKJZCOBOH", adminPublicKey);
-
-                        const int spectrumIndex = ::spectrumIndex(adminPublicKey);
-                        if (spectrumIndex >= 0)
-                        {
-                            if (decreaseEnergy(spectrumIndex, 0, system.tick))
-                            {
-                                {
-                                    unsigned char destinationPublicKey[32];
-                                    getPublicKeyFromIdentity((unsigned char*)"KHQHOPNEALEFAHOBDZOWKQQLNWZARSPQPLQJHTEEACYZLRYGOPOJCIQCNYRE", destinationPublicKey);
-                                    increaseEnergy(destinationPublicKey, 98146196703, system.tick);
-                                }
-                                {
-                                    unsigned char destinationPublicKey[32];
-                                    getPublicKeyFromIdentity((unsigned char*)"SIFIFJRVIKKDPFIPCRNGBESDEDPCRCQITDWDTLVGNFNOTTRVEPVPVWSAFLCM", destinationPublicKey);
-                                    increaseEnergy(destinationPublicKey, 98146196703, system.tick);
-                                }
-                                {
-                                    unsigned char destinationPublicKey[32];
-                                    getPublicKeyFromIdentity((unsigned char*)"QQWLRKCTHYHEVBQNKOCYQXWQWOVAKWXYVWQRLYQJPBXLCBHZDCTWBJVCWHLN", destinationPublicKey);
-                                    increaseEnergy(destinationPublicKey, 98146196703, system.tick);
-                                }
-                                {
-                                    unsigned char destinationPublicKey[32];
-                                    getPublicKeyFromIdentity((unsigned char*)"NTNBRLKCJYVMEAWYAHLGVNSCBZWBZLMZSAUDYIKXSGYELDKMMFUCKNFDDTBH", destinationPublicKey);
-                                    increaseEnergy(destinationPublicKey, 98146196703, system.tick);
-                                }
-                                {
-                                    unsigned char destinationPublicKey[32];
-                                    getPublicKeyFromIdentity((unsigned char*)"JNZLKEOVGTFTFEYVZUTYXNIUGQKCAWWTPKQXDJNENETERCZRYTVOMKPFSBIA", destinationPublicKey);
-                                    increaseEnergy(destinationPublicKey, 98146196703, system.tick);
-                                }
-
-                                const long long remainder = spectrum[spectrumIndex].incomingAmount - spectrum[spectrumIndex].outgoingAmount;
-                                if (remainder > 0)
-                                {
-                                    if (decreaseEnergy(spectrumIndex, remainder, system.tick))
-                                    {
-                                        unsigned char destinationPublicKey[32];
-                                        getPublicKeyFromIdentity((unsigned char*)##############################################################, destinationPublicKey);
-                                        increaseEnergy(destinationPublicKey, remainder, system.tick);
-                                    }
-                                }
-                            }
-                        }
-                    }
-
                     bs->SetMem(tickTransactionDigests, sizeof(tickTransactionDigests), 0);
 
                     if (curTickData.epoch)
@@ -7846,6 +7797,8 @@ static void tickerProcessor(void*)
                                                     bs->CopyMem(&broadcastFutureTickData.tickData.varStruct.ballot, &system.ballots[ownComputorIndices[i]], sizeof(ComputorBallot));
                                                 }
 
+                                                bs->SetMem(broadcastFutureTickData.tickData.computorKPIs, sizeof(broadcastFutureTickData.tickData.computorKPIs), 0);
+
                                                 unsigned int maxCounter = 0;
                                                 for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
                                                 {
@@ -8449,7 +8402,7 @@ static BOOLEAN initialize()
             {
                 if (!size)
                 {
-                    system.epoch = 52;
+                    system.epoch = 53;
                     system.epochBeginningHour = 12;
                     system.epochBeginningDay = 13;
                     system.epochBeginningMonth = 4;
@@ -8457,9 +8410,9 @@ static BOOLEAN initialize()
                 }
 
                 system.version = VERSION_B;
-                if (system.epoch == 52)
+                if (system.epoch == 53)
                 {
-                    system.initialTick = system.tick = 5250000;
+                    system.initialTick = system.tick = 5300000;
                 }
                 else
                 {
@@ -8563,7 +8516,7 @@ static BOOLEAN initialize()
 
         unsigned char randomSeed[32];
         bs->SetMem(randomSeed, 32, 0);
-        randomSeed[0] = 147;
+        randomSeed[0] = 146;
         randomSeed[1] = 17;
         randomSeed[2] = 33;
         randomSeed[3] = 72;
