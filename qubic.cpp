@@ -19,7 +19,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 113
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -7044,6 +7044,37 @@ static void tickerProcessor(void*)
 
                     bs->SetMem(tickTransactionDigests, sizeof(tickTransactionDigests), 0);
 
+                    unsigned int digestIndex;
+
+                    for (digestIndex = 0; digestIndex < SPECTRUM_CAPACITY; digestIndex++)
+                    {
+                        if (spectrum[digestIndex].latestIncomingTransferTick == system.tick || spectrum[digestIndex].latestOutgoingTransferTick == system.tick)
+                        {
+                            KangarooTwelve64To32((unsigned char*)&spectrum[digestIndex], (unsigned char*)&spectrumDigests[digestIndex]);
+                            spectrumChangeFlags[digestIndex >> 6] |= (1ULL << (digestIndex & 63));
+                        }
+                    }
+
+                    unsigned int previousLevelBeginning = 0;
+                    unsigned int numberOfLeafs = SPECTRUM_CAPACITY;
+                    while (numberOfLeafs > 1)
+                    {
+                        for (unsigned int i = 0; i < numberOfLeafs; i += 2)
+                        {
+                            if (spectrumChangeFlags[i >> 6] & (3ULL << (i & 63)))
+                            {
+                                KangarooTwelve64To32((unsigned char*)&spectrumDigests[previousLevelBeginning + i], (unsigned char*)&spectrumDigests[digestIndex]);
+                                spectrumChangeFlags[i >> 6] &= ~(3ULL << (i & 63));
+                                spectrumChangeFlags[i >> 7] |= (1ULL << ((i >> 1) & 63));
+                            }
+                            digestIndex++;
+                        }
+
+                        previousLevelBeginning += numberOfLeafs;
+                        numberOfLeafs >>= 1;
+                    }
+                    spectrumChangeFlags[0] = 0;
+
                     etalonTickMustBeCreated = true;
                 }
 
@@ -7703,37 +7734,6 @@ static void tickerProcessor(void*)
                                             enqueueResponse(NULL, false, BROADCAST_TRANSACTION, &payload, sizeof(payload));
                                         }
                                     }
-
-                                    unsigned int digestIndex;
-
-                                    for (digestIndex = 0; digestIndex < SPECTRUM_CAPACITY; digestIndex++)
-                                    {
-                                        if (spectrum[digestIndex].latestIncomingTransferTick == system.tick || spectrum[digestIndex].latestOutgoingTransferTick == system.tick)
-                                        {
-                                            KangarooTwelve64To32((unsigned char*)&spectrum[digestIndex], (unsigned char*)&spectrumDigests[digestIndex]);
-                                            spectrumChangeFlags[digestIndex >> 6] |= (1ULL << (digestIndex & 63));
-                                        }
-                                    }
-
-                                    unsigned int previousLevelBeginning = 0;
-                                    unsigned int numberOfLeafs = SPECTRUM_CAPACITY;
-                                    while (numberOfLeafs > 1)
-                                    {
-                                        for (unsigned int i = 0; i < numberOfLeafs; i += 2)
-                                        {
-                                            if (spectrumChangeFlags[i >> 6] & (3ULL << (i & 63)))
-                                            {
-                                                KangarooTwelve64To32((unsigned char*)&spectrumDigests[previousLevelBeginning + i], (unsigned char*)&spectrumDigests[digestIndex]);
-                                                spectrumChangeFlags[i >> 6] &= ~(3ULL << (i & 63));
-                                                spectrumChangeFlags[i >> 7] |= (1ULL << ((i >> 1) & 63));
-                                            }
-                                            digestIndex++;
-                                        }
-
-                                        previousLevelBeginning += numberOfLeafs;
-                                        numberOfLeafs >>= 1;
-                                    }
-                                    spectrumChangeFlags[0] = 0;
 
                                     targetNextTickDataDigestIsKnown = false;
                                     bs->SetMem(triggerSignature, sizeof(triggerSignature), 0);
