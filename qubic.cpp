@@ -19,7 +19,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 113
-#define VERSION_C 5
+#define VERSION_C 6
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -5401,6 +5401,7 @@ static unsigned long long* minerSolutionFlags = NULL;
 static unsigned char minerPublicKeys[MAX_NUMBER_OF_MINERS][32];
 static unsigned int minerScores[MAX_NUMBER_OF_MINERS];
 static unsigned int numberOfMiners = NUMBER_OF_COMPUTORS;
+/**/static unsigned int numberOfSeenMinerSolutions = 0;
 
 BroadcastFutureTickData broadcastFutureTickData;
 
@@ -7653,6 +7654,10 @@ static void tickerProcessor(void*)
                                                                             minerScores[minerIndex] = tmpScore;
                                                                         }
                                                                     }
+                                                                    else
+                                                                    {
+                                                                        numberOfSeenMinerSolutions++;
+                                                                    }
                                                                 }
                                                             }
                                                         }
@@ -9102,7 +9107,8 @@ static void processKeyPresses()
             appendNumber(message, numberOfSolutions, TRUE);
             appendText(message, L" solutions (min score = ");
             appendNumber(message, contenderScores[NUMBER_OF_COMPUTORS - QUORUM - 1], TRUE);
-            appendText(message, L").");
+            appendText(message, L") / ");
+            appendNumber(message, numberOfSeenMinerSolutions, TRUE);
             log(message);
         }
         break;
