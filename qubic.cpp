@@ -19,7 +19,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 113
-#define VERSION_C 4
+#define VERSION_C 5
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -5307,7 +5307,8 @@ static unsigned long long faultyComputorFlags[(NUMBER_OF_COMPUTORS + 63) / 64];
 static unsigned short prevTickMillisecond;
 static unsigned char prevTickSecond, prevTickMinute, prevTickHour, prevTickDay, prevTickMonth, prevTickYear;
 static unsigned int tickNumberOfComputors = 0, tickTotalNumberOfComputors = 0, futureTickTotalNumberOfComputors = 0;
-static unsigned int numberOfNextTickTransactions = 0, numberOfKnownNextTickTransactions = 0;
+static unsigned int nextTickTransactionsSemaphore = 0, numberOfNextTickTransactions = 0, numberOfKnownNextTickTransactions = 0;
+static unsigned int cachedNumberOfNextTickTransactions, cachedNumberOfKnownNextTickTransactions;
 static unsigned short numberOfOwnComputorIndices = 0;
 static short ownComputorIndices[NUMBER_OF_COMPUTORS / 3];
 static short ownComputorIndicesMapping[sizeof(computorSeeds) / sizeof(computorSeeds[0])];
@@ -7051,10 +7052,6 @@ static void tickerProcessor(void*)
                 {
                     etalonTickMustBeCreated = false;
 
-                    numberOfNextTickTransactions = 0;
-                    numberOfKnownNextTickTransactions = 0;
-                    bs->SetMem(requestedTickTransactions.requestedTickTransactions.transactionFlags, sizeof(requestedTickTransactions.requestedTickTransactions.transactionFlags), 0);
-
                     bool countNextTickTransactions = false;
 
                     if (EQUAL(*((__m256i*)triggerSignature), ZERO))
@@ -7107,6 +7104,11 @@ static void tickerProcessor(void*)
                     {
                         bs->CopyMem(etalonTick.varStruct.trigger.signature, triggerSignature, SIGNATURE_SIZE);
                     }
+
+                    nextTickTransactionsSemaphore = 1;
+                    numberOfNextTickTransactions = 0;
+                    numberOfKnownNextTickTransactions = 0;
+                    bs->SetMem(requestedTickTransactions.requestedTickTransactions.transactionFlags, sizeof(requestedTickTransactions.requestedTickTransactions.transactionFlags), 0);
 
                     if (countNextTickTransactions)
                     {
@@ -7183,16 +7185,19 @@ static void tickerProcessor(void*)
                             }
                         }
                     }
+                    nextTickTransactionsSemaphore = 0;
 
                     if (numberOfKnownNextTickTransactions != numberOfNextTickTransactions)
                     {
-                        etalonTickMustBeCreated = true;
+                        cachedNumberOfNextTickTransactions = numberOfNextTickTransactions;
+                        cachedNumberOfKnownNextTickTransactions = numberOfKnownNextTickTransactions;
+                        requestedTickTransactions.requestedTickTransactions.tick = system.tick + 1;
 
-                        if (!targetNextTickDataDigestIsKnown
-                            && __rdtsc() - tickTicks[sizeof(tickTicks) / sizeof(tickTicks[0]) - 1] > TARGET_TICK_DURATION * 100 * frequency / 1000)
-                        {
-                            tickData[system.tick + 1 - system.initialTick].epoch = 0;
-                        }
+                        etalonTickMustBeCreated = true;
+                    }
+                    else
+                    {
+                        requestedTickTransactions.requestedTickTransactions.tick = 0;
                     }
 
                     if (!etalonTickMustBeCreated)
@@ -8237,6 +8242,7 @@ static BOOLEAN initialize()
     requestedTickTransactions.header.setSize(sizeof(requestedTickTransactions));
     requestedTickTransactions.header.setProtocol();
     requestedTickTransactions.header.setType(REQUEST_TICK_TRANSACTIONS);
+    requestedTickTransactions.requestedTickTransactions.tick = 0;
 
     EFI_STATUS status;
 
@@ -8812,9 +8818,16 @@ static void logInfo()
             numberOfPendingTransactions++;
         }
     }
-    setNumber(message, numberOfKnownNextTickTransactions, TRUE);
-    appendText(message, L"/");
-    appendNumber(message, numberOfNextTickTransactions, TRUE);
+    if (nextTickTransactionsSemaphore)
+    {
+        setText(message, L"?/?");
+    }
+    else
+    {
+        setNumber(message, numberOfKnownNextTickTransactions, TRUE);
+        appendText(message, L"/");
+        appendNumber(message, numberOfNextTickTransactions, TRUE);
+    }
     appendText(message, L" next tick transactions are known. ");
     appendNumber(message, numberOfPendingTransactions, TRUE);
     appendText(message, L" pending transactions. The tick arbiter is ");
@@ -9754,11 +9767,13 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 pushToAny(&requestedTickData.header);
                             }
 
-                            if (numberOfKnownNextTickTransactions != numberOfNextTickTransactions)
+                            if (requestedTickTransactions.requestedTickTransactions.tick)
                             {
+                                /**/setText(message, L">>>>>>>>>> "); appendNumber(message, cachedNumberOfKnownNextTickTransactions, TRUE); appendText(message, L" / "); appendNumber(message, cachedNumberOfNextTickTransactions, TRUE); log(message);
                                 requestedTickTransactions.header.randomizeDejavu();
-                                requestedTickTransactions.requestedTickTransactions.tick = system.tick + 1;
                                 pushToAny(&requestedTickTransactions.header);
+
+                                requestedTickTransactions.requestedTickTransactions.tick = 0;
                             }
                         }
 
