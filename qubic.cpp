@@ -19,7 +19,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 113
-#define VERSION_C 6
+#define VERSION_C 7
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -4813,7 +4813,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define ISSUANCE_RATE 1000000000000LL
 #define MAX_AMOUNT (ISSUANCE_RATE * 1000ULL)
 #define MAX_INPUT_SIZE (MAX_TRANSACTION_SIZE - (sizeof(Transaction) + SIGNATURE_SIZE))
-#define MAX_NUMBER_OF_MINERS 1000000
+#define MAX_NUMBER_OF_MINERS 100000
 #define NUMBER_OF_MINER_SOLUTION_FLAGS 0x100000000
 #define MAX_NUMBER_OF_PROCESSORS 1024
 #define MAX_NUMBER_OF_PUBLIC_PEERS 256
@@ -5398,10 +5398,9 @@ static unsigned int validationNeuronLinks[NUMBER_OF_NEURONS][2];
 static unsigned char validationNeuronValues[NUMBER_OF_NEURONS];
 
 static unsigned long long* minerSolutionFlags = NULL;
-static unsigned char minerPublicKeys[MAX_NUMBER_OF_MINERS][32];
-static unsigned int minerScores[MAX_NUMBER_OF_MINERS];
-static unsigned int numberOfMiners = NUMBER_OF_COMPUTORS;
-/**/static unsigned int numberOfSeenMinerSolutions = 0;
+static volatile unsigned char minerPublicKeys[MAX_NUMBER_OF_MINERS][32];
+static volatile unsigned int minerScores[MAX_NUMBER_OF_MINERS];
+static volatile unsigned int numberOfMiners = NUMBER_OF_COMPUTORS;
 
 BroadcastFutureTickData broadcastFutureTickData;
 
@@ -7195,6 +7194,12 @@ static void tickerProcessor(void*)
                         requestedTickTransactions.requestedTickTransactions.tick = system.tick + 1;
 
                         etalonTickMustBeCreated = true;
+
+                        if (!targetNextTickDataDigestIsKnown
+                            && __rdtsc() - tickTicks[sizeof(tickTicks) / sizeof(tickTicks[0]) - 1] > TARGET_TICK_DURATION * 5 * frequency / 1000)
+                        {
+                            tickData[system.tick + 1 - system.initialTick].epoch = 0;
+                        }
                     }
                     else
                     {
@@ -7639,24 +7644,20 @@ static void tickerProcessor(void*)
                                                                         if (minerIndex == numberOfMiners
                                                                             && numberOfMiners < MAX_NUMBER_OF_MINERS)
                                                                         {
-                                                                            *((__m256i*)minerPublicKeys[minerIndex = numberOfMiners]) = *((__m256i*)transaction->sourcePublicKey);
+                                                                            *((__m256i*)minerPublicKeys[numberOfMiners]) = *((__m256i*)transaction->sourcePublicKey);
                                                                             minerScores[numberOfMiners++] = 1;
                                                                         }
 
+                                                                        const __m256i tmpPublicKey = *((__m256i*)minerPublicKeys[minerIndex]);
+                                                                        const unsigned int tmpScore = minerScores[minerIndex];
                                                                         while (minerIndex > (unsigned int)(minerIndex < NUMBER_OF_COMPUTORS ? 0 : NUMBER_OF_COMPUTORS)
                                                                             && minerScores[minerIndex - 1] < minerScores[minerIndex])
                                                                         {
-                                                                            const __m256i tmpPublicKey = *((__m256i*)minerPublicKeys[minerIndex]);
-                                                                            const unsigned int tmpScore = minerScores[minerIndex];
                                                                             *((__m256i*)minerPublicKeys[minerIndex]) = *((__m256i*)minerPublicKeys[minerIndex - 1]);
                                                                             minerScores[minerIndex] = minerScores[minerIndex - 1];
                                                                             *((__m256i*)minerPublicKeys[--minerIndex]) = tmpPublicKey;
                                                                             minerScores[minerIndex] = tmpScore;
                                                                         }
-                                                                    }
-                                                                    else
-                                                                    {
-                                                                        numberOfSeenMinerSolutions++;
                                                                     }
                                                                 }
                                                             }
@@ -8545,7 +8546,7 @@ static BOOLEAN initialize()
         }
         bs->SetMem(minerSolutionFlags, NUMBER_OF_MINER_SOLUTION_FLAGS / 8, 0);
 
-        bs->SetMem(minerScores, sizeof(minerScores[0]) * NUMBER_OF_COMPUTORS, 0);
+        bs->SetMem((void*)minerScores, sizeof(minerScores[0]) * NUMBER_OF_COMPUTORS, 0);
     }
 
     if ((status = bs->AllocatePool(EfiRuntimeServicesData, 536870912, (void**)&dejavu0))
@@ -9107,8 +9108,7 @@ static void processKeyPresses()
             appendNumber(message, numberOfSolutions, TRUE);
             appendText(message, L" solutions (min score = ");
             appendNumber(message, contenderScores[NUMBER_OF_COMPUTORS - QUORUM - 1], TRUE);
-            appendText(message, L") / ");
-            appendNumber(message, numberOfSeenMinerSolutions, TRUE);
+            appendText(message, L").");
             log(message);
         }
         break;
