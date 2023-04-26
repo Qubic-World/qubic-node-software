@@ -19,7 +19,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 114
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -6670,12 +6670,12 @@ static void requestProcessor(void* ProcedureArgument)
                         {
                             bs->CopyMem(triggerSignature, (void*)request->signature, SIGNATURE_SIZE);
 
-                            etalonTickMustBeCreated = true;
-                            etalonTick.tick = 0;
                             if (system.latestCreatedTick == system.tick)
                             {
                                 system.latestCreatedTick--;
                             }
+                            etalonTick.tick = 0;
+                            etalonTickMustBeCreated = true;
                         }
                     }
                 }
@@ -7403,12 +7403,12 @@ static void tickerProcessor(void*)
 
                                         RELEASE(tickLocks[i]);
 
-                                        etalonTickMustBeCreated = true;
-                                        etalonTick.tick = 0;
                                         if (system.latestCreatedTick == system.tick)
                                         {
                                             system.latestCreatedTick--;
                                         }
+                                        etalonTick.tick = 0;
+                                        etalonTickMustBeCreated = true;
 
                                         break;
                                     }
@@ -8013,12 +8013,12 @@ static void tickerProcessor(void*)
                                                         KangarooTwelve((unsigned char*)&system.tick, sizeof(system.tick), digest, sizeof(digest));
                                                         sign(computorSubseeds[ownComputorIndicesMapping[i]], computorPublicKeys[ownComputorIndicesMapping[i]], digest, triggerSignature);
 
-                                                        etalonTickMustBeCreated = true;
-                                                        etalonTick.tick = 0;
                                                         if (system.latestCreatedTick == system.tick)
                                                         {
                                                             system.latestCreatedTick--;
                                                         }
+                                                        etalonTick.tick = 0;
+                                                        etalonTickMustBeCreated = true;
 
                                                         break;
                                                     }
@@ -9152,6 +9152,15 @@ static void processKeyPresses()
         {
             isMain = !isMain;
             log(isMain ? L"MAIN   *   MAIN   *   MAIN   *   MAIN   *   MAIN" : L"aux   *   aux   *   aux   *   aux   *   aux");
+            if (isMain)
+            {
+                if (system.latestCreatedTick == system.tick)
+                {
+                    system.latestCreatedTick--;
+                }
+                etalonTick.tick = 0;
+                etalonTickMustBeCreated = true;
+            }
         }
         break;
 
