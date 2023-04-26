@@ -18,8 +18,8 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 113
-#define VERSION_C 7
+#define VERSION_B 114
+#define VERSION_C 0
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -4841,7 +4841,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define RESPONSE_QUEUE_BUFFER_SIZE 1073741824
 #define RESPONSE_QUEUE_LENGTH 65536 // Must be 65536
 #define SIGNATURE_SIZE 64
-#define SOLUTION_THRESHOLD 23
+#define SOLUTION_THRESHOLD 24
 #define SPECTRUM_CAPACITY 0x1000000ULL // Must be 2^N
 #define SPECTRUM_DEPTH 24 // Is derived from SPECTRUM_CAPACITY (=N)
 #define SPECTRUM_WRITING_CHUNK_SIZE 1048576 // Must be 2^N
@@ -5077,7 +5077,6 @@ typedef struct
     unsigned char year;
 
     unsigned char computorKPIs[((NUMBER_OF_COMPUTORS - 1) * 10 + 7) / 8];
-    unsigned int revenues[NUMBER_OF_COMPUTORS];
 
     union
     {
@@ -6345,14 +6344,14 @@ static void requestProcessor(void* ProcedureArgument)
                         && ms(request->tickData.year, request->tickData.month, request->tickData.day, request->tickData.hour, request->tickData.minute, request->tickData.second, request->tickData.millisecond) <= ms(time.Year - 2000, time.Month, time.Day, time.Hour, time.Minute, time.Second, time.Nanosecond / 1000000) + TIME_ACCURACY)
                     {
                         unsigned int i;
-                        for (i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                        /*for (i = 0; i < NUMBER_OF_COMPUTORS; i++)
                         {
                             if (request->tickData.revenues[i] > ISSUANCE_RATE / NUMBER_OF_COMPUTORS)
                             {
                                 break;
                             }
                         }
-                        if (i == NUMBER_OF_COMPUTORS)
+                        if (i == NUMBER_OF_COMPUTORS)*/
                         {
                             bool ok = true;
                             for (i = 0; i < NUMBER_OF_TRANSACTIONS_PER_TICK && ok; i++)
@@ -6907,7 +6906,7 @@ static void tickerProcessor(void*)
                 {
                     if (latestRevenueTicks[j])
                     {
-                        revenueAmounts[numberOfRevenueAmounts++] = tickData[latestRevenueTicks[j] - system.initialTick].revenues[i];
+                        revenueAmounts[numberOfRevenueAmounts++] = ISSUANCE_RATE / NUMBER_OF_COMPUTORS/*tickData[latestRevenueTicks[j] - system.initialTick].revenues[i]*/;
                     }
                 }
                 if (numberOfRevenueAmounts)
@@ -7831,7 +7830,7 @@ static void tickerProcessor(void*)
                                                 }
                                                 if (maxCounter)
                                                 {
-                                                    for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
+                                                    /*for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
                                                     {
                                                         broadcastFutureTickData.tickData.revenues[j] = (faultyComputorFlags[j >> 6] & (1ULL << (j & 63))) ? 0 : ((system.revenueCounters[j] >= maxCounter) ? (ISSUANCE_RATE / NUMBER_OF_COMPUTORS) : (system.revenueCounters[j] * ((unsigned long long)(ISSUANCE_RATE / NUMBER_OF_COMPUTORS)) / maxCounter));
                                                         for (unsigned int k = 0; k < sizeof(computorSeeds) / sizeof(computorSeeds[0]); k++)
@@ -7843,11 +7842,11 @@ static void tickerProcessor(void*)
                                                                 break;
                                                             }
                                                         }
-                                                    }
+                                                    }*/
                                                 }
                                                 else
                                                 {
-                                                    bs->SetMem(broadcastFutureTickData.tickData.revenues, sizeof(broadcastFutureTickData.tickData.revenues), 0);
+                                                    /*bs->SetMem(broadcastFutureTickData.tickData.revenues, sizeof(broadcastFutureTickData.tickData.revenues), 0);*/
                                                 }
 
                                                 unsigned int numberOfEntityPendingTransactionIndices;
@@ -8414,7 +8413,7 @@ static BOOLEAN initialize()
             {
                 if (!size)
                 {
-                    system.epoch = 53;
+                    system.epoch = 54;
                     system.epochBeginningHour = 12;
                     system.epochBeginningDay = 13;
                     system.epochBeginningMonth = 4;
@@ -8422,9 +8421,9 @@ static BOOLEAN initialize()
                 }
 
                 system.version = VERSION_B;
-                if (system.epoch == 53)
+                if (system.epoch == 54)
                 {
-                    system.initialTick = system.tick = 5300000;
+                    system.initialTick = system.tick = 5400000;
                 }
                 else
                 {
@@ -8528,14 +8527,14 @@ static BOOLEAN initialize()
 
         unsigned char randomSeed[32];
         bs->SetMem(randomSeed, 32, 0);
-        randomSeed[0] = 146;
+        randomSeed[0] = 140;
         randomSeed[1] = 17;
         randomSeed[2] = 33;
         randomSeed[3] = 72;
         randomSeed[4] = 117;
         randomSeed[5] = 17;
         randomSeed[6] = 77;
-        randomSeed[7] = 81;
+        randomSeed[7] = 82;
         random(randomSeed, randomSeed, (unsigned char*)miningData, sizeof(miningData));
 
         if (status = bs->AllocatePool(EfiRuntimeServicesData, NUMBER_OF_MINER_SOLUTION_FLAGS / 8, (void**)&minerSolutionFlags))
