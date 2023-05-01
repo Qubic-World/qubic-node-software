@@ -19,7 +19,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 114
-#define VERSION_C 2
+#define VERSION_C 3
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -4805,7 +4805,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 ////////// Qubic \\\\\\\\\\
 
 #define BUFFER_SIZE 4194304
-#define TARGET_TICK_DURATION 5000
+#define TARGET_TICK_DURATION 10000
 #define TICK_REQUESTING_PERIOD 200
 #define DEJAVU_SWAP_LIMIT 1000000
 #define DISSEMINATION_MULTIPLIER 7
@@ -4852,13 +4852,18 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define TRANSACTION_SPARSENESS 4
 #define VOLUME_LABEL L"Qubic"
 
-typedef struct
+struct Entity
 {
     unsigned char publicKey[32];
     long long incomingAmount, outgoingAmount;
     unsigned int numberOfIncomingTransfers, numberOfOutgoingTransfers;
     unsigned int latestIncomingTransferTick, latestOutgoingTransferTick;
-} Entity;
+};
+
+struct Asset
+{
+    unsigned int symbol; // 6-letter encoded
+};
 
 typedef struct
 {
@@ -5323,6 +5328,8 @@ static unsigned char* tickTransactions = NULL;
 static unsigned long long tickTransactionOffsets[MAX_NUMBER_OF_TICKS_PER_EPOCH][NUMBER_OF_TRANSACTIONS_PER_TICK];
 static unsigned long long nextTickTransactionOffset = FIRST_TICK_TRANSACTION_OFFSET;
 
+static __m256i uniqueNextTickTransactionDigests[NUMBER_OF_COMPUTORS];
+static unsigned int uniqueNextTickTransactionDigestCounters[NUMBER_OF_COMPUTORS];
 static __m256i tickEssenceDigests[NUMBER_OF_COMPUTORS];
 static __m256i uniqueTickEssenceDigests[NUMBER_OF_COMPUTORS];
 static unsigned int uniqueTickEssenceDigestCounters[NUMBER_OF_COMPUTORS];
@@ -7031,21 +7038,11 @@ static void tickerProcessor(void*)
                     {
                         log(L"Recatching-up is initiated.");
 
-                        tickData[system.tick + 1 - system.initialTick].epoch = 0;
                         tickData[system.tick - system.initialTick].epoch = 0;
+                        const unsigned int baseOffset = (system.tick - 1 - system.initialTick) * NUMBER_OF_COMPUTORS;
+                        for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
                         {
-                            const unsigned int baseOffset = (system.tick - system.initialTick) * NUMBER_OF_COMPUTORS;
-                            for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
-                            {
-                                ticks[baseOffset + i].epoch = 0;
-                            }
-                        }
-                        {
-                            const unsigned int baseOffset = (system.tick - 1 - system.initialTick) * NUMBER_OF_COMPUTORS;
-                            for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
-                            {
-                                ticks[baseOffset + i].epoch = 0;
-                            }
+                            ticks[baseOffset + i].epoch = 0;
                         }
 
                         system.tick = system.initialTick;
@@ -7237,7 +7234,7 @@ static void tickerProcessor(void*)
                             etalonTickMustBeCreated = true;
 
                             if (!targetNextTickDataDigestIsKnown
-                                && __rdtsc() - tickTicks[sizeof(tickTicks) / sizeof(tickTicks[0]) - 1] > TARGET_TICK_DURATION * 5 * frequency / 1000)
+                                && __rdtsc() - tickTicks[sizeof(tickTicks) / sizeof(tickTicks[0]) - 1] > TARGET_TICK_DURATION * 100 * frequency / 1000)
                             {
                                 tickData[system.tick + 1 - system.initialTick].epoch = 0;
                             }
@@ -7404,11 +7401,47 @@ static void tickerProcessor(void*)
                         const unsigned int baseOffset = (system.tick - system.initialTick) * NUMBER_OF_COMPUTORS;
 
                         unsigned int tickNumberOfComputors = ::tickNumberOfComputors, tickTotalNumberOfComputors = 0;
+                        unsigned int numberOfUniqueNextTickTransactionDigests = 0;
                         for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
                         {
                             if (ticks[baseOffset + i].epoch == system.epoch)
                             {
                                 tickTotalNumberOfComputors++;
+
+                                const __m256i nextTickTransactionDigest = EQUAL(*((__m256i*)ticks[baseOffset + i].varStruct.nextTick.zero), ZERO) ? *((__m256i*)ticks[baseOffset + i].varStruct.nextTick.digestOfTransactions) : ZERO;
+                                unsigned int j;
+                                for (j = 0; j < numberOfUniqueNextTickTransactionDigests; j++)
+                                {
+                                    if (EQUAL(nextTickTransactionDigest, uniqueNextTickTransactionDigests[j]))
+                                    {
+                                        break;
+                                    }
+                                }
+                                if (j == numberOfUniqueNextTickTransactionDigests)
+                                {
+                                    uniqueNextTickTransactionDigests[numberOfUniqueNextTickTransactionDigests] = nextTickTransactionDigest;
+                                    uniqueNextTickTransactionDigestCounters[numberOfUniqueNextTickTransactionDigests++] = 1;
+                                }
+                                else
+                                {
+                                    uniqueNextTickTransactionDigestCounters[j]++;
+                                }
+                            }
+                        }
+                        if (numberOfUniqueNextTickTransactionDigests)
+                        {
+                            unsigned int mostPopularUniqueNextTickTransactionDigestIndex = 0;
+                            for (unsigned int i = 1; i < numberOfUniqueNextTickTransactionDigests; i++)
+                            {
+                                if (uniqueNextTickTransactionDigestCounters[i] > uniqueNextTickTransactionDigestCounters[mostPopularUniqueNextTickTransactionDigestIndex])
+                                {
+                                    mostPopularUniqueNextTickTransactionDigestIndex = i;
+                                }
+                            }
+                            if (uniqueNextTickTransactionDigestCounters[mostPopularUniqueNextTickTransactionDigestIndex] >= QUORUM)
+                            {
+                                targetNextTickDataDigest = uniqueNextTickTransactionDigests[mostPopularUniqueNextTickTransactionDigestIndex];
+                                targetNextTickDataDigestIsKnown = true;
                             }
                         }
 
@@ -7577,7 +7610,7 @@ static void tickerProcessor(void*)
                                                                     increaseEnergy(transaction->destinationPublicKey, transaction->amount, system.tick);
                                                                 }
 
-                                                                if (!transaction->amount
+                                                                /*if (!transaction->amount
                                                                     && transaction->inputSize == 32
                                                                     && !transaction->inputType
                                                                     && EQUAL(*((__m256i*)transaction->destinationPublicKey), *((__m256i*)arbitratorPublicKey)))
@@ -7702,7 +7735,7 @@ static void tickerProcessor(void*)
                                                                             }
                                                                         }
                                                                     }
-                                                                }
+                                                                }*/
                                                             }
                                                         }
                                                     }
@@ -7912,7 +7945,7 @@ static void tickerProcessor(void*)
                                                             {
                                                                 bool ok;
 
-                                                                if (!pendingTransaction->amount
+                                                                /*if (!pendingTransaction->amount
                                                                     && pendingTransaction->inputSize == 32
                                                                     && !pendingTransaction->inputType
                                                                     && EQUAL(*((__m256i*)pendingTransaction->destinationPublicKey), *((__m256i*)arbitratorPublicKey)))
@@ -7972,7 +8005,7 @@ static void tickerProcessor(void*)
 
                                                                     ok = (outputLength >= SOLUTION_THRESHOLD);
                                                                 }
-                                                                else
+                                                                else*/
                                                                 {
                                                                     ok = true;
                                                                 }
