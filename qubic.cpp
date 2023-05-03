@@ -18,8 +18,8 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 114
-#define VERSION_C 4
+#define VERSION_B 115
+#define VERSION_C 0
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -8470,7 +8470,7 @@ static BOOLEAN initialize()
             {
                 if (!size)
                 {
-                    system.epoch = 54;
+                    system.epoch = 55;
                     system.epochBeginningHour = 12;
                     system.epochBeginningDay = 13;
                     system.epochBeginningMonth = 4;
@@ -8478,9 +8478,9 @@ static BOOLEAN initialize()
                 }
 
                 system.version = VERSION_B;
-                if (system.epoch == 54)
+                if (system.epoch == 55)
                 {
-                    system.initialTick = system.tick = 5400000;
+                    system.initialTick = system.tick = 5500000;
                 }
                 else
                 {
@@ -8589,8 +8589,8 @@ static BOOLEAN initialize()
         randomSeed[2] = 33;
         randomSeed[3] = 72;
         randomSeed[4] = 117;
-        randomSeed[5] = 17;
-        randomSeed[6] = 77;
+        randomSeed[5] = 3;
+        randomSeed[6] = 3;
         randomSeed[7] = 82;
         random(randomSeed, randomSeed, (unsigned char*)miningData, sizeof(miningData));
 
