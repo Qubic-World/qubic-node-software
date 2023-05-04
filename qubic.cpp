@@ -19,7 +19,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 115
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -7442,22 +7442,6 @@ static void tickerProcessor(void*)
                                     const Tick* tick = &ticks[baseOffset + i];
                                     if (tick->epoch == system.epoch)
                                     {
-                                        if (!EQUAL(*((__m256i*)tick->varStruct.nextTick.zero), ZERO) && EQUAL(*((__m256i*)triggerSignature), ZERO))
-                                        {
-                                            bs->CopyMem(triggerSignature, (void*)tick->varStruct.trigger.signature, SIGNATURE_SIZE);
-
-                                            RELEASE(tickLocks[i]);
-
-                                            if (system.latestCreatedTick == system.tick)
-                                            {
-                                                system.latestCreatedTick--;
-                                            }
-                                            etalonTick.tick = 0;
-                                            etalonTickMustBeCreated = true;
-
-                                            break;
-                                        }
-
                                         _rdrand64_step((unsigned long long*) & tickEssenceDigests[i]);
                                         _rdrand64_step(((unsigned long long*) & tickEssenceDigests[i]) + 1);
                                         _rdrand64_step(((unsigned long long*) & tickEssenceDigests[i]) + 2);
@@ -8058,27 +8042,17 @@ static void tickerProcessor(void*)
                                             }
                                             else
                                             {
-                                                if (EQUAL(*((__m256i*)triggerSignature), ZERO)
-                                                    && (numberOfEmptyTickEssences > NUMBER_OF_COMPUTORS - QUORUM || uniqueTickEssenceDigestCounters[mostPopularUniqueTickEssenceDigestIndex] + (NUMBER_OF_COMPUTORS - totalUniqueTickEssenceDigestCounter) < QUORUM))
+                                                if ((numberOfEmptyTickEssences > NUMBER_OF_COMPUTORS - QUORUM || uniqueTickEssenceDigestCounters[mostPopularUniqueTickEssenceDigestIndex] + (NUMBER_OF_COMPUTORS - totalUniqueTickEssenceDigestCounter) < QUORUM)
+                                                    && !EQUAL(*((__m256i*)etalonTick.varStruct.nextTick.transactionDigest), ZERO))
                                                 {
-                                                    for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
+                                                    if (system.latestCreatedTick == system.tick)
                                                     {
-                                                        if ((system.tick + 1) % NUMBER_OF_COMPUTORS == ownComputorIndices[i])
-                                                        {
-                                                            unsigned char digest[32];
-                                                            KangarooTwelve((unsigned char*)&system.tick, sizeof(system.tick), digest, sizeof(digest));
-                                                            sign(computorSubseeds[ownComputorIndicesMapping[i]], computorPublicKeys[ownComputorIndicesMapping[i]], digest, triggerSignature);
-
-                                                            if (system.latestCreatedTick == system.tick)
-                                                            {
-                                                                system.latestCreatedTick--;
-                                                            }
-                                                            etalonTick.tick = 0;
-                                                            etalonTickMustBeCreated = true;
-
-                                                            break;
-                                                        }
+                                                        system.latestCreatedTick--;
+                                                        targetNextTickDataDigest = ZERO;
+                                                        targetNextTickDataDigestIsKnown = true;
                                                     }
+                                                    etalonTick.tick = 0;
+                                                    etalonTickMustBeCreated = true;
                                                 }
                                             }
                                         }
@@ -8892,8 +8866,7 @@ static void logInfo()
     }
     appendText(message, L" next tick transactions are known. ");
     appendNumber(message, numberOfPendingTransactions, TRUE);
-    appendText(message, L" pending transactions. The tick arbiter is ");
-    appendText(message, ticks[(system.tick - system.initialTick) * NUMBER_OF_COMPUTORS + (system.tick + 1) % NUMBER_OF_COMPUTORS].epoch == system.epoch ? L"ON-line." : L"OFF-line.");
+    appendText(message, L" pending transactions.");
     if (log3)
     {
         log(message);
@@ -9216,8 +9189,6 @@ static void processKeyPresses()
             if (system.latestCreatedTick == system.tick)
             {
                 system.latestCreatedTick--;
-                targetNextTickDataDigest = ZERO;
-                targetNextTickDataDigestIsKnown = true;
             }
             etalonTick.tick = 0;
             etalonTickMustBeCreated = true;
