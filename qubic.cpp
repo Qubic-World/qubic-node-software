@@ -19,7 +19,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 115
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -6224,12 +6224,49 @@ static void requestProcessor(void* ProcedureArgument)
                                 enqueueResponse(NULL, header);
                             }
 
-                            ACQUIRE(tickLocks[request->tick.computorIndex]);
-
                             bool isFaulty = false, mustBeStored = true;
+
+                            ACQUIRE(tickLocks[request->tick.computorIndex]);
 
                             const unsigned int offset = ((request->tick.tick - system.initialTick) * NUMBER_OF_COMPUTORS) + request->tick.computorIndex;
                             if (ticks[offset].epoch == system.epoch)
+                            {
+                                if (*((unsigned long long*)&request->tick.millisecond) != *((unsigned long long*)&ticks[offset].millisecond)
+                                    || !EQUAL(*((__m256i*)request->tick.initSpectrumDigest), *((__m256i*)ticks[offset].initSpectrumDigest))
+                                    || !EQUAL(*((__m256i*)request->tick.initUniverseDigest), *((__m256i*)ticks[offset].initUniverseDigest))
+                                    || !EQUAL(*((__m256i*)request->tick.initComputerDigest), *((__m256i*)ticks[offset].initComputerDigest))
+                                    || !EQUAL(*((__m256i*)request->tick.prevSpectrumDigest), *((__m256i*)ticks[offset].prevSpectrumDigest))
+                                    || !EQUAL(*((__m256i*)request->tick.prevUniverseDigest), *((__m256i*)ticks[offset].prevUniverseDigest))
+                                    || !EQUAL(*((__m256i*)request->tick.prevComputerDigest), *((__m256i*)ticks[offset].prevComputerDigest))
+                                    || !EQUAL(*((__m256i*)request->tick.saltedSpectrumDigest), *((__m256i*)ticks[offset].saltedSpectrumDigest))
+                                    || !EQUAL(*((__m256i*)request->tick.saltedUniverseDigest), *((__m256i*)ticks[offset].saltedUniverseDigest))
+                                    || !EQUAL(*((__m256i*)request->tick.saltedComputerDigest), *((__m256i*)ticks[offset].saltedComputerDigest)))
+                                {
+                                    isFaulty = true;
+                                }
+                                else
+                                {
+                                    if (EQUAL(*((__m256i*)ticks[offset].varStruct.nextTick.transactionDigest), ZERO))
+                                    {
+                                        mustBeStored = false;
+                                    }
+                                    else
+                                    {
+                                        if (!EQUAL(*((__m256i*)request->tick.varStruct.nextTick.transactionDigest), ZERO))
+                                        {
+                                            if (EQUAL(*((__m256i*)request->tick.varStruct.nextTick.transactionDigest), *((__m256i*)ticks[offset].varStruct.nextTick.transactionDigest)))
+                                            {
+                                                mustBeStored = false;
+                                            }
+                                            else
+                                            {
+                                                isFaulty = true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            /*if (ticks[offset].epoch == system.epoch)
                             {
                                 if (*((unsigned long long*) & request->tick.millisecond) != *((unsigned long long*) & ticks[offset].millisecond)
                                     || !EQUAL(*((__m256i*)request->tick.initSpectrumDigest), *((__m256i*)ticks[offset].initSpectrumDigest))
@@ -6298,7 +6335,7 @@ static void requestProcessor(void* ProcedureArgument)
                                         isFaulty = true;
                                     }
                                 }
-                            }
+                            }*/
 
                             if (isFaulty)
                             {
