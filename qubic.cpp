@@ -18,7 +18,7 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 117
+#define VERSION_B 118
 #define VERSION_C 0
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
@@ -7282,7 +7282,7 @@ static void tickerProcessor(void*)
                                 *((__m256i*)etalonTick.expectedNextTickTransactionDigest) = ZERO;
                             }
 
-                            if (system.tick > system.latestCreatedTick)
+                            if (system.tick > system.latestCreatedTick || system.tick == system.initialTick)
                             {
                                 if (isMain)
                                 {
@@ -8138,7 +8138,7 @@ static BOOLEAN initialize()
                 system.version = VERSION_B;
                 if (system.epoch == 57)
                 {
-                    system.initialTick = system.tick = 5700000;
+                    system.initialTick = system.tick = 5710000;
                 }
                 else
                 {
@@ -9199,7 +9199,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if (receivedDataSize >= sizeof(RequestResponseHeader))
                                             {
                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B - 1 || requestResponseHeader->protocol() > VERSION_B + 1)
+                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B || requestResponseHeader->protocol() > VERSION_B + 1)
                                                 {
                                                     setText(message, L"Forgetting ");
                                                     appendNumber(message, peers[i].address[0], FALSE);
