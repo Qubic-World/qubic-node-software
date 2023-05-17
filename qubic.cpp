@@ -18,8 +18,8 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 118
-#define VERSION_C 1
+#define VERSION_B 119
+#define VERSION_C 0
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -4828,8 +4828,8 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define SPECTRUM_DEPTH 24 // Is derived from SPECTRUM_CAPACITY (=N)
 #define SPECTRUM_WRITING_CHUNK_SIZE 1048576 // Must be 2^N
 #define SYSTEM_DATA_SAVING_PERIOD 300000
-#define TICK_TRANSACTIONS_PUBLICATION_OFFSET 2 // Must be 2+
-#define MINING_SOLUTIONS_PUBLICATION_OFFSET 3 // Must be 2+
+#define TICK_TRANSACTIONS_PUBLICATION_OFFSET 3 // Must be 2+
+#define MINING_SOLUTIONS_PUBLICATION_OFFSET 4 // Must be 2+
 #define TIME_ACCURACY 60000
 #define TRANSACTION_SPARSENESS 4
 #define VOLUME_LABEL L"Qubic"
@@ -7130,7 +7130,15 @@ static void tickerProcessor(void*)
                     bool tickDataSuits;
                     if (!targetNextTickDataDigestIsKnown)
                     {
-                        tickDataSuits = true;
+                        if (tickData[system.tick + 1 - system.initialTick].epoch != system.epoch
+                            && __rdtsc() - tickTicks[sizeof(tickTicks) / sizeof(tickTicks[0]) - 1] < TARGET_TICK_DURATION * frequency / 1000)
+                        {
+                            tickDataSuits = false;
+                        }
+                        else
+                        {
+                            tickDataSuits = true;
+                        }
                     }
                     else
                     {
@@ -8138,7 +8146,7 @@ static BOOLEAN initialize()
                 system.version = VERSION_B;
                 if (system.epoch == 57)
                 {
-                    system.initialTick = system.tick = 5710000;
+                    system.initialTick = system.tick = 5720000;
                 }
                 else
                 {
@@ -9199,7 +9207,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if (receivedDataSize >= sizeof(RequestResponseHeader))
                                             {
                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B || requestResponseHeader->protocol() > VERSION_B + 1)
+                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B - 1 || requestResponseHeader->protocol() > VERSION_B + 1)
                                                 {
                                                     setText(message, L"Forgetting ");
                                                     appendNumber(message, peers[i].address[0], FALSE);
