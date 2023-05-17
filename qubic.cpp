@@ -19,7 +19,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 118
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -4823,7 +4823,7 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define RESPONSE_QUEUE_BUFFER_SIZE 1073741824
 #define RESPONSE_QUEUE_LENGTH 65536 // Must be 65536
 #define SIGNATURE_SIZE 64
-#define SOLUTION_THRESHOLD 230
+#define SOLUTION_THRESHOLD 23
 #define SPECTRUM_CAPACITY 0x1000000ULL // Must be 2^N
 #define SPECTRUM_DEPTH 24 // Is derived from SPECTRUM_CAPACITY (=N)
 #define SPECTRUM_WRITING_CHUNK_SIZE 1048576 // Must be 2^N
@@ -8244,14 +8244,14 @@ static BOOLEAN initialize()
 
         unsigned char randomSeed[32];
         bs->SetMem(randomSeed, 32, 0);
-        randomSeed[0] = 140;
-        randomSeed[1] = 17;
-        randomSeed[2] = 33;
-        randomSeed[3] = 72;
-        randomSeed[4] = 117;
-        randomSeed[5] = 6;
-        randomSeed[6] = 0;
-        randomSeed[7] = 82;
+        randomSeed[0] = 8;
+        randomSeed[1] = 8;
+        randomSeed[2] = 8;
+        randomSeed[3] = 8;
+        randomSeed[4] = 8;
+        randomSeed[5] = 8;
+        randomSeed[6] = 8;
+        randomSeed[7] = 8;
         random(randomSeed, randomSeed, (unsigned char*)miningData, sizeof(miningData));
 
         if (status = bs->AllocatePool(EfiRuntimeServicesData, NUMBER_OF_MINER_SOLUTION_FLAGS / 8, (void**)&minerSolutionFlags))
