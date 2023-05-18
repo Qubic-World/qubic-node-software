@@ -19,7 +19,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 120
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -7749,9 +7749,13 @@ static void tickerProcessor(void*)
                                     }
                                 }
 
-                                targetNextTickDataDigestIsKnown = false;
-
                                 system.tick++;
+
+                                ::tickNumberOfComputors = 0;
+                                ::tickTotalNumberOfComputors = 0;
+                                targetNextTickDataDigestIsKnown = false;
+                                numberOfNextTickTransactions = 0;
+                                numberOfKnownNextTickTransactions = 0;
 
                                 for (unsigned int i = 0; i < sizeof(tickTicks) / sizeof(tickTicks[0]) - 1; i++)
                                 {
@@ -8553,14 +8557,14 @@ static void logInfo()
     }
     if (nextTickTransactionsSemaphore)
     {
-        setText(message, L"?/?");
+        setText(message, L"?");
     }
     else
     {
         setNumber(message, numberOfKnownNextTickTransactions, TRUE);
-        appendText(message, L"/");
-        appendNumber(message, numberOfNextTickTransactions, TRUE);
     }
+    appendText(message, L"/");
+    appendNumber(message, numberOfNextTickTransactions, TRUE);
     appendText(message, L" next tick transactions are known. ");
     appendNumber(message, numberOfPendingTransactions, TRUE);
     appendText(message, L" pending transactions.");
