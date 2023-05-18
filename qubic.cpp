@@ -18,8 +18,8 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 120
-#define VERSION_C 2
+#define VERSION_B 121
+#define VERSION_C 0
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -7309,7 +7309,24 @@ static void tickerProcessor(void*)
                             }
                         }
                     }
-                    if (tickDataSuits)
+                    if (!tickDataSuits)
+                    {
+                        unsigned int tickTotalNumberOfComputors = 0;
+                        const unsigned int baseOffset = (system.tick - system.initialTick) * NUMBER_OF_COMPUTORS;
+                        for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                        {
+                            ACQUIRE(tickLocks[i]);
+
+                            if (ticks[baseOffset + i].epoch == system.epoch)
+                            {
+                                tickTotalNumberOfComputors++;
+                            }
+
+                            RELEASE(tickLocks[i]);
+                        }
+                        ::tickTotalNumberOfComputors = tickTotalNumberOfComputors;
+                    }
+                    else
                     {
                         numberOfNextTickTransactions = 0;
                         numberOfKnownNextTickTransactions = 0;
@@ -7485,8 +7502,9 @@ static void tickerProcessor(void*)
                             unsigned char revenueFlags[NUMBER_OF_COMPUTORS];
                             bs->SetMem(revenueFlags, sizeof(revenueFlags), 0);
 
-                            unsigned int tickNumberOfComputors = 0, tickTotalNumberOfComputors = 0;
                             const unsigned int baseOffset = (system.tick - system.initialTick) * NUMBER_OF_COMPUTORS;
+
+                            unsigned int tickNumberOfComputors = 0, tickTotalNumberOfComputors = 0;
                             for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
                             {
                                 ACQUIRE(tickLocks[i]);
@@ -7538,230 +7556,311 @@ static void tickerProcessor(void*)
 
                             if (tickNumberOfComputors >= QUORUM)
                             {
-                                for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
+                                if (!targetNextTickDataDigestIsKnown)
                                 {
-                                    for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
-                                    {
-                                        if (revenueFlags[j])
-                                        {
-                                            revenueCounters[i][j]++;
-                                        }
-                                    }
-                                }
-
-                                const int dayIndex = ::dayIndex(etalonTick.year, etalonTick.month, etalonTick.day);
-                                if ((dayIndex == 738570 + system.epoch * 7 && etalonTick.hour >= 12)
-                                    || dayIndex > 738570 + system.epoch * 7)
-                                {
-                                    system.initialMillisecond = etalonTick.millisecond;
-                                    system.initialSecond = etalonTick.second;
-                                    system.initialMinute = etalonTick.minute;
-                                    system.initialHour = etalonTick.hour;
-                                    system.initialDay = etalonTick.day;
-                                    system.initialMonth = etalonTick.month;
-                                    system.initialYear = etalonTick.year;
-
-                                    long long arbitratorRevenue = ISSUANCE_RATE;
-
-                                    unsigned int latestRevenueTicks[NUMBER_OF_COMPUTORS];
-                                    bs->SetMem(latestRevenueTicks, sizeof(latestRevenueTicks), 0);
-                                    for (unsigned int tick = system.initialTick; tick < system.tick; tick++)
-                                    {
-                                        if (tickData[tick - system.initialTick].epoch == system.epoch)
-                                        {
-                                            latestRevenueTicks[tick % NUMBER_OF_COMPUTORS] = tick;
-                                        }
-                                    }
+                                    unsigned int numberOfEmptyNextTickTransactionDigest = 0;
+                                    unsigned int numberOfUniqueNextTickTransactionDigests = 0;
                                     for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
                                     {
-                                        unsigned int revenueAmounts[NUMBER_OF_COMPUTORS];
-                                        unsigned int numberOfRevenueAmounts = 0;
-                                        for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
+                                        if (ticks[baseOffset + i].epoch == system.epoch)
                                         {
-                                            if (latestRevenueTicks[j])
+                                            unsigned int j;
+                                            for (j = 0; j < numberOfUniqueNextTickTransactionDigests; j++)
                                             {
-                                                revenueAmounts[numberOfRevenueAmounts++] = ISSUANCE_RATE / NUMBER_OF_COMPUTORS/*tickData[latestRevenueTicks[j] - system.initialTick].revenues[i]*/;
-                                            }
-                                        }
-                                        if (numberOfRevenueAmounts)
-                                        {
-                                            while (numberOfRevenueAmounts > QUORUM)
-                                            {
-                                                int j = 0;
-                                                for (unsigned int k = 1; k < numberOfRevenueAmounts; k++)
+                                                if (EQUAL(*((__m256i*)ticks[baseOffset + i].expectedNextTickTransactionDigest), uniqueNextTickTransactionDigests[j]))
                                                 {
-                                                    if (revenueAmounts[k] > revenueAmounts[j])
-                                                    {
-                                                        j = k;
-                                                    }
-                                                }
-                                                revenueAmounts[j] = revenueAmounts[--numberOfRevenueAmounts];
-                                            }
-                                            int j = 0;
-                                            for (unsigned int k = 1; k < numberOfRevenueAmounts; k++)
-                                            {
-                                                if (revenueAmounts[k] > revenueAmounts[j])
-                                                {
-                                                    j = k;
+                                                    break;
                                                 }
                                             }
-                                            if (revenueAmounts[j])
+                                            if (j == numberOfUniqueNextTickTransactionDigests)
                                             {
-                                                increaseEnergy(broadcastedComputors.broadcastComputors.computors.publicKeys[i], revenueAmounts[j], system.tick);
-
-                                                arbitratorRevenue -= revenueAmounts[j];
-                                            }
-                                        }
-                                    }
-
-                                    increaseEnergy(arbitratorPublicKey, arbitratorRevenue, system.tick);
-
-                                    ACQUIRE(spectrumLock);
-
-                                    bs->CopyMem(initSpectrum, spectrum, SPECTRUM_CAPACITY * sizeof(Entity));
-                                    bs->SetMem(spectrum, SPECTRUM_CAPACITY * sizeof(Entity), 0);
-                                    for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
-                                    {
-                                        if (initSpectrum[i].incomingAmount - initSpectrum[i].outgoingAmount)
-                                        {
-                                            unsigned int index = (*((unsigned int*)initSpectrum[i].publicKey)) & (SPECTRUM_CAPACITY - 1);
-
-                                        newIndex:
-                                            if (EQUAL(*((__m256i*)spectrum[index].publicKey), ZERO))
-                                            {
-                                                bs->CopyMem(&spectrum[index], &initSpectrum[i], sizeof(Entity));
+                                                uniqueNextTickTransactionDigests[numberOfUniqueNextTickTransactionDigests] = *((__m256i*)ticks[baseOffset + i].expectedNextTickTransactionDigest);
+                                                uniqueNextTickTransactionDigestCounters[numberOfUniqueNextTickTransactionDigests++] = 1;
                                             }
                                             else
                                             {
-                                                index = (index + 1) & (SPECTRUM_CAPACITY - 1);
+                                                uniqueNextTickTransactionDigestCounters[j]++;
+                                            }
 
-                                                goto newIndex;
+                                            if (EQUAL(*((__m256i*)ticks[baseOffset + i].expectedNextTickTransactionDigest), ZERO))
+                                            {
+                                                numberOfEmptyNextTickTransactionDigest++;
                                             }
                                         }
                                     }
-                                    bs->CopyMem(initSpectrum, spectrum, SPECTRUM_CAPACITY * sizeof(Entity));
-
-                                    unsigned int digestIndex;
-                                    for (digestIndex = 0; digestIndex < SPECTRUM_CAPACITY; digestIndex++)
+                                    unsigned int mostPopularUniqueNextTickTransactionDigestIndex = 0, totalUniqueNextTickTransactionDigestCounter = uniqueNextTickTransactionDigestCounters[0];
+                                    for (unsigned int i = 1; i < numberOfUniqueNextTickTransactionDigests; i++)
                                     {
-                                        KangarooTwelve64To32((unsigned char*)&initSpectrum[digestIndex], (unsigned char*)&initSpectrumDigests[digestIndex]);
-                                    }
-                                    unsigned int previousLevelBeginning = 0;
-                                    unsigned int numberOfLeafs = SPECTRUM_CAPACITY;
-                                    while (numberOfLeafs > 1)
-                                    {
-                                        for (unsigned int i = 0; i < numberOfLeafs; i += 2)
+                                        if (uniqueNextTickTransactionDigestCounters[i] > uniqueNextTickTransactionDigestCounters[mostPopularUniqueNextTickTransactionDigestIndex])
                                         {
-                                            KangarooTwelve64To32((unsigned char*)&initSpectrumDigests[previousLevelBeginning + i], (unsigned char*)&initSpectrumDigests[digestIndex++]);
+                                            mostPopularUniqueNextTickTransactionDigestIndex = i;
                                         }
-
-                                        previousLevelBeginning += numberOfLeafs;
-                                        numberOfLeafs >>= 1;
+                                        totalUniqueNextTickTransactionDigestCounter += uniqueNextTickTransactionDigestCounters[i];
                                     }
-                                    bs->CopyMem(spectrumDigests, initSpectrumDigests, (SPECTRUM_CAPACITY * 2 - 1) * 32ULL);
-
-                                    numberOfEntities = 0;
-                                    for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
+                                    if (uniqueNextTickTransactionDigestCounters[mostPopularUniqueNextTickTransactionDigestIndex] >= QUORUM)
                                     {
-                                        if (initSpectrum[i].incomingAmount - initSpectrum[i].outgoingAmount)
-                                        {
-                                            numberOfEntities++;
-                                        }
-                                    }
-
-                                    RELEASE(spectrumLock);
-
-                                    system.epoch++;
-                                    system.initialTick = system.tick;
-                                    bs->SetMem(revenueCounters, sizeof(revenueCounters), 0);
-                                    systemMustBeSaved = true;
-
-                                    SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 4] = system.epoch / 100 + L'0';
-                                    SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 3] = (system.epoch % 100) / 10 + L'0';
-                                    SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 2] = system.epoch % 10 + L'0';
-                                    spectrumMustBeSaved = true;
-
-                                    broadcastedComputors.broadcastComputors.computors.epoch = 0;
-                                    for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
-                                    {
-                                        _rdrand64_step((unsigned long long*) & broadcastedComputors.broadcastComputors.computors.publicKeys[i][0]);
-                                        _rdrand64_step((unsigned long long*) & broadcastedComputors.broadcastComputors.computors.publicKeys[i][8]);
-                                        _rdrand64_step((unsigned long long*) & broadcastedComputors.broadcastComputors.computors.publicKeys[i][16]);
-                                        _rdrand64_step((unsigned long long*) & broadcastedComputors.broadcastComputors.computors.publicKeys[i][24]);
-                                    }
-                                    bs->SetMem(&broadcastedComputors.broadcastComputors.computors.signature, sizeof(broadcastedComputors.broadcastComputors.computors.signature), 0);
-
-                                    numberOfOwnComputorIndices = 0;
-                                }
-                                else
-                                {
-                                    etalonTick.tick++;
-                                    if (tickData[system.tick - system.initialTick].epoch == system.epoch
-                                        && (tickData[system.tick - system.initialTick].year > etalonTick.year
-                                            || (tickData[system.tick - system.initialTick].year == etalonTick.year && (tickData[system.tick - system.initialTick].month > etalonTick.month
-                                                || (tickData[system.tick - system.initialTick].month == etalonTick.month && (tickData[system.tick - system.initialTick].day > etalonTick.day
-                                                    || (tickData[system.tick - system.initialTick].day == etalonTick.day && (tickData[system.tick - system.initialTick].hour > etalonTick.hour
-                                                        || (tickData[system.tick - system.initialTick].hour == etalonTick.hour && (tickData[system.tick - system.initialTick].minute > etalonTick.minute
-                                                            || (tickData[system.tick - system.initialTick].minute == etalonTick.minute && (tickData[system.tick - system.initialTick].second > etalonTick.second
-                                                                || (tickData[system.tick - system.initialTick].second == etalonTick.second && tickData[system.tick - system.initialTick].millisecond > etalonTick.millisecond)))))))))))))
-                                    {
-                                        etalonTick.millisecond = tickData[system.tick - system.initialTick].millisecond;
-                                        etalonTick.second = tickData[system.tick - system.initialTick].second;
-                                        etalonTick.minute = tickData[system.tick - system.initialTick].minute;
-                                        etalonTick.hour = tickData[system.tick - system.initialTick].hour;
-                                        etalonTick.day = tickData[system.tick - system.initialTick].day;
-                                        etalonTick.month = tickData[system.tick - system.initialTick].month;
-                                        etalonTick.year = tickData[system.tick - system.initialTick].year;
+                                        targetNextTickDataDigest = uniqueNextTickTransactionDigests[mostPopularUniqueNextTickTransactionDigestIndex];
+                                        targetNextTickDataDigestIsKnown = true;
                                     }
                                     else
                                     {
-                                        if (++etalonTick.millisecond > 999)
+                                        if (numberOfEmptyNextTickTransactionDigest > NUMBER_OF_COMPUTORS - QUORUM
+                                            || uniqueNextTickTransactionDigestCounters[mostPopularUniqueNextTickTransactionDigestIndex] + (NUMBER_OF_COMPUTORS - totalUniqueNextTickTransactionDigestCounter) < QUORUM)
                                         {
-                                            etalonTick.millisecond = 0;
+                                            targetNextTickDataDigest = ZERO;
+                                            targetNextTickDataDigestIsKnown = true;
+                                        }
+                                    }
+                                }
 
-                                            if (++etalonTick.second > 59)
+                                if (targetNextTickDataDigestIsKnown)
+                                {
+                                    tickDataSuits = false;
+                                    if (EQUAL(targetNextTickDataDigest, ZERO))
+                                    {
+                                        tickData[system.tick + 1 - system.initialTick].epoch = 0;
+                                        tickDataSuits = true;
+                                    }
+                                    else
+                                    {
+                                        if (tickData[system.tick + 1 - system.initialTick].epoch != system.epoch)
+                                        {
+                                            tickDataSuits = false;
+                                        }
+                                        else
+                                        {
+                                            KangarooTwelve((unsigned char*)&tickData[system.tick + 1 - system.initialTick], sizeof(TickData), etalonTick.expectedNextTickTransactionDigest, 32);
+                                            tickDataSuits = EQUAL(*((__m256i*)etalonTick.expectedNextTickTransactionDigest), targetNextTickDataDigest);
+                                        }
+                                    }
+                                    if (tickDataSuits)
+                                    {
+                                        for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
+                                        {
+                                            for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
                                             {
-                                                etalonTick.second = 0;
-
-                                                if (++etalonTick.minute > 59)
+                                                if (revenueFlags[j])
                                                 {
-                                                    etalonTick.minute = 0;
+                                                    revenueCounters[i][j]++;
+                                                }
+                                            }
+                                        }
 
-                                                    if (++etalonTick.hour > 23)
+                                        const int dayIndex = ::dayIndex(etalonTick.year, etalonTick.month, etalonTick.day);
+                                        if ((dayIndex == 738570 + system.epoch * 7 && etalonTick.hour >= 12)
+                                            || dayIndex > 738570 + system.epoch * 7)
+                                        {
+                                            system.initialMillisecond = etalonTick.millisecond;
+                                            system.initialSecond = etalonTick.second;
+                                            system.initialMinute = etalonTick.minute;
+                                            system.initialHour = etalonTick.hour;
+                                            system.initialDay = etalonTick.day;
+                                            system.initialMonth = etalonTick.month;
+                                            system.initialYear = etalonTick.year;
+
+                                            long long arbitratorRevenue = ISSUANCE_RATE;
+
+                                            unsigned int latestRevenueTicks[NUMBER_OF_COMPUTORS];
+                                            bs->SetMem(latestRevenueTicks, sizeof(latestRevenueTicks), 0);
+                                            for (unsigned int tick = system.initialTick; tick < system.tick; tick++)
+                                            {
+                                                if (tickData[tick - system.initialTick].epoch == system.epoch)
+                                                {
+                                                    latestRevenueTicks[tick % NUMBER_OF_COMPUTORS] = tick;
+                                                }
+                                            }
+                                            for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                                            {
+                                                unsigned int revenueAmounts[NUMBER_OF_COMPUTORS];
+                                                unsigned int numberOfRevenueAmounts = 0;
+                                                for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
+                                                {
+                                                    if (latestRevenueTicks[j])
                                                     {
-                                                        etalonTick.hour = 0;
-
-                                                        if (++etalonTick.day > ((etalonTick.month == 1 || etalonTick.month == 3 || etalonTick.month == 5 || etalonTick.month == 7 || etalonTick.month == 8 || etalonTick.month == 10 || etalonTick.month == 12) ? 31 : ((etalonTick.month == 4 || etalonTick.month == 6 || etalonTick.month == 9 || etalonTick.month == 11) ? 30 : ((etalonTick.year & 3) ? 28 : 29))))
+                                                        revenueAmounts[numberOfRevenueAmounts++] = ISSUANCE_RATE / NUMBER_OF_COMPUTORS/*tickData[latestRevenueTicks[j] - system.initialTick].revenues[i]*/;
+                                                    }
+                                                }
+                                                if (numberOfRevenueAmounts)
+                                                {
+                                                    while (numberOfRevenueAmounts > QUORUM)
+                                                    {
+                                                        int j = 0;
+                                                        for (unsigned int k = 1; k < numberOfRevenueAmounts; k++)
                                                         {
-                                                            etalonTick.day = 1;
-
-                                                            if (++etalonTick.month > 12)
+                                                            if (revenueAmounts[k] > revenueAmounts[j])
                                                             {
-                                                                etalonTick.month = 1;
+                                                                j = k;
+                                                            }
+                                                        }
+                                                        revenueAmounts[j] = revenueAmounts[--numberOfRevenueAmounts];
+                                                    }
+                                                    int j = 0;
+                                                    for (unsigned int k = 1; k < numberOfRevenueAmounts; k++)
+                                                    {
+                                                        if (revenueAmounts[k] > revenueAmounts[j])
+                                                        {
+                                                            j = k;
+                                                        }
+                                                    }
+                                                    if (revenueAmounts[j])
+                                                    {
+                                                        increaseEnergy(broadcastedComputors.broadcastComputors.computors.publicKeys[i], revenueAmounts[j], system.tick);
 
-                                                                ++etalonTick.year;
+                                                        arbitratorRevenue -= revenueAmounts[j];
+                                                    }
+                                                }
+                                            }
+
+                                            increaseEnergy(arbitratorPublicKey, arbitratorRevenue, system.tick);
+
+                                            ACQUIRE(spectrumLock);
+
+                                            bs->CopyMem(initSpectrum, spectrum, SPECTRUM_CAPACITY * sizeof(Entity));
+                                            bs->SetMem(spectrum, SPECTRUM_CAPACITY * sizeof(Entity), 0);
+                                            for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
+                                            {
+                                                if (initSpectrum[i].incomingAmount - initSpectrum[i].outgoingAmount)
+                                                {
+                                                    unsigned int index = (*((unsigned int*)initSpectrum[i].publicKey)) & (SPECTRUM_CAPACITY - 1);
+
+                                                newIndex:
+                                                    if (EQUAL(*((__m256i*)spectrum[index].publicKey), ZERO))
+                                                    {
+                                                        bs->CopyMem(&spectrum[index], &initSpectrum[i], sizeof(Entity));
+                                                    }
+                                                    else
+                                                    {
+                                                        index = (index + 1) & (SPECTRUM_CAPACITY - 1);
+
+                                                        goto newIndex;
+                                                    }
+                                                }
+                                            }
+                                            bs->CopyMem(initSpectrum, spectrum, SPECTRUM_CAPACITY * sizeof(Entity));
+
+                                            unsigned int digestIndex;
+                                            for (digestIndex = 0; digestIndex < SPECTRUM_CAPACITY; digestIndex++)
+                                            {
+                                                KangarooTwelve64To32((unsigned char*)&initSpectrum[digestIndex], (unsigned char*)&initSpectrumDigests[digestIndex]);
+                                            }
+                                            unsigned int previousLevelBeginning = 0;
+                                            unsigned int numberOfLeafs = SPECTRUM_CAPACITY;
+                                            while (numberOfLeafs > 1)
+                                            {
+                                                for (unsigned int i = 0; i < numberOfLeafs; i += 2)
+                                                {
+                                                    KangarooTwelve64To32((unsigned char*)&initSpectrumDigests[previousLevelBeginning + i], (unsigned char*)&initSpectrumDigests[digestIndex++]);
+                                                }
+
+                                                previousLevelBeginning += numberOfLeafs;
+                                                numberOfLeafs >>= 1;
+                                            }
+                                            bs->CopyMem(spectrumDigests, initSpectrumDigests, (SPECTRUM_CAPACITY * 2 - 1) * 32ULL);
+
+                                            numberOfEntities = 0;
+                                            for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
+                                            {
+                                                if (initSpectrum[i].incomingAmount - initSpectrum[i].outgoingAmount)
+                                                {
+                                                    numberOfEntities++;
+                                                }
+                                            }
+
+                                            RELEASE(spectrumLock);
+
+                                            system.epoch++;
+                                            system.initialTick = system.tick;
+                                            bs->SetMem(revenueCounters, sizeof(revenueCounters), 0);
+                                            systemMustBeSaved = true;
+
+                                            SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 4] = system.epoch / 100 + L'0';
+                                            SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 3] = (system.epoch % 100) / 10 + L'0';
+                                            SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 2] = system.epoch % 10 + L'0';
+                                            spectrumMustBeSaved = true;
+
+                                            broadcastedComputors.broadcastComputors.computors.epoch = 0;
+                                            for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                                            {
+                                                _rdrand64_step((unsigned long long*) & broadcastedComputors.broadcastComputors.computors.publicKeys[i][0]);
+                                                _rdrand64_step((unsigned long long*) & broadcastedComputors.broadcastComputors.computors.publicKeys[i][8]);
+                                                _rdrand64_step((unsigned long long*) & broadcastedComputors.broadcastComputors.computors.publicKeys[i][16]);
+                                                _rdrand64_step((unsigned long long*) & broadcastedComputors.broadcastComputors.computors.publicKeys[i][24]);
+                                            }
+                                            bs->SetMem(&broadcastedComputors.broadcastComputors.computors.signature, sizeof(broadcastedComputors.broadcastComputors.computors.signature), 0);
+
+                                            numberOfOwnComputorIndices = 0;
+                                        }
+                                        else
+                                        {
+                                            etalonTick.tick++;
+                                            if (tickData[system.tick - system.initialTick].epoch == system.epoch
+                                                && (tickData[system.tick - system.initialTick].year > etalonTick.year
+                                                    || (tickData[system.tick - system.initialTick].year == etalonTick.year && (tickData[system.tick - system.initialTick].month > etalonTick.month
+                                                        || (tickData[system.tick - system.initialTick].month == etalonTick.month && (tickData[system.tick - system.initialTick].day > etalonTick.day
+                                                            || (tickData[system.tick - system.initialTick].day == etalonTick.day && (tickData[system.tick - system.initialTick].hour > etalonTick.hour
+                                                                || (tickData[system.tick - system.initialTick].hour == etalonTick.hour && (tickData[system.tick - system.initialTick].minute > etalonTick.minute
+                                                                    || (tickData[system.tick - system.initialTick].minute == etalonTick.minute && (tickData[system.tick - system.initialTick].second > etalonTick.second
+                                                                        || (tickData[system.tick - system.initialTick].second == etalonTick.second && tickData[system.tick - system.initialTick].millisecond > etalonTick.millisecond)))))))))))))
+                                            {
+                                                etalonTick.millisecond = tickData[system.tick - system.initialTick].millisecond;
+                                                etalonTick.second = tickData[system.tick - system.initialTick].second;
+                                                etalonTick.minute = tickData[system.tick - system.initialTick].minute;
+                                                etalonTick.hour = tickData[system.tick - system.initialTick].hour;
+                                                etalonTick.day = tickData[system.tick - system.initialTick].day;
+                                                etalonTick.month = tickData[system.tick - system.initialTick].month;
+                                                etalonTick.year = tickData[system.tick - system.initialTick].year;
+                                            }
+                                            else
+                                            {
+                                                if (++etalonTick.millisecond > 999)
+                                                {
+                                                    etalonTick.millisecond = 0;
+
+                                                    if (++etalonTick.second > 59)
+                                                    {
+                                                        etalonTick.second = 0;
+
+                                                        if (++etalonTick.minute > 59)
+                                                        {
+                                                            etalonTick.minute = 0;
+
+                                                            if (++etalonTick.hour > 23)
+                                                            {
+                                                                etalonTick.hour = 0;
+
+                                                                if (++etalonTick.day > ((etalonTick.month == 1 || etalonTick.month == 3 || etalonTick.month == 5 || etalonTick.month == 7 || etalonTick.month == 8 || etalonTick.month == 10 || etalonTick.month == 12) ? 31 : ((etalonTick.month == 4 || etalonTick.month == 6 || etalonTick.month == 9 || etalonTick.month == 11) ? 30 : ((etalonTick.year & 3) ? 28 : 29))))
+                                                                {
+                                                                    etalonTick.day = 1;
+
+                                                                    if (++etalonTick.month > 12)
+                                                                    {
+                                                                        etalonTick.month = 1;
+
+                                                                        ++etalonTick.year;
+                                                                    }
+                                                                }
                                                             }
                                                         }
                                                     }
                                                 }
                                             }
                                         }
+
+                                        system.tick++;
+
+                                        ::tickNumberOfComputors = 0;
+                                        ::tickTotalNumberOfComputors = 0;
+                                        targetNextTickDataDigestIsKnown = false;
+                                        numberOfNextTickTransactions = 0;
+                                        numberOfKnownNextTickTransactions = 0;
+
+                                        for (unsigned int i = 0; i < sizeof(tickTicks) / sizeof(tickTicks[0]) - 1; i++)
+                                        {
+                                            tickTicks[i] = tickTicks[i + 1];
+                                        }
+                                        tickTicks[sizeof(tickTicks) / sizeof(tickTicks[0]) - 1] = __rdtsc();
                                     }
                                 }
-
-                                system.tick++;
-
-                                ::tickNumberOfComputors = 0;
-                                ::tickTotalNumberOfComputors = 0;
-                                targetNextTickDataDigestIsKnown = false;
-                                numberOfNextTickTransactions = 0;
-                                numberOfKnownNextTickTransactions = 0;
-
-                                for (unsigned int i = 0; i < sizeof(tickTicks) / sizeof(tickTicks[0]) - 1; i++)
-                                {
-                                    tickTicks[i] = tickTicks[i + 1];
-                                }
-                                tickTicks[sizeof(tickTicks) / sizeof(tickTicks[0]) - 1] = __rdtsc();
                             }
                         }
                     }
@@ -8566,6 +8665,28 @@ static void logInfo()
     appendText(message, L"/");
     appendNumber(message, numberOfNextTickTransactions, TRUE);
     appendText(message, L" next tick transactions are known. ");
+    if (tickData[system.tick + 1 - system.initialTick].epoch == system.epoch)
+    {
+        appendText(message, L"(");
+        appendNumber(message, tickData[system.tick + 1 - system.initialTick].year / 10, FALSE);
+        appendNumber(message, tickData[system.tick + 1 - system.initialTick].year % 10, FALSE);
+        appendText(message, L".");
+        appendNumber(message, tickData[system.tick + 1 - system.initialTick].month / 10, FALSE);
+        appendNumber(message, tickData[system.tick + 1 - system.initialTick].month % 10, FALSE);
+        appendText(message, L".");
+        appendNumber(message, tickData[system.tick + 1 - system.initialTick].day / 10, FALSE);
+        appendNumber(message, tickData[system.tick + 1 - system.initialTick].day % 10, FALSE);
+        appendText(message, L" ");
+        appendNumber(message, tickData[system.tick + 1 - system.initialTick].hour / 10, FALSE);
+        appendNumber(message, tickData[system.tick + 1 - system.initialTick].hour % 10, FALSE);
+        appendText(message, L":");
+        appendNumber(message, tickData[system.tick + 1 - system.initialTick].minute / 10, FALSE);
+        appendNumber(message, tickData[system.tick + 1 - system.initialTick].minute % 10, FALSE);
+        appendText(message, L":");
+        appendNumber(message, tickData[system.tick + 1 - system.initialTick].second / 10, FALSE);
+        appendNumber(message, tickData[system.tick + 1 - system.initialTick].second % 10, FALSE);
+        appendText(message, L".) ");
+    }
     appendNumber(message, numberOfPendingTransactions, TRUE);
     appendText(message, L" pending transactions.");
     if (log3)
@@ -9214,7 +9335,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if (receivedDataSize >= sizeof(RequestResponseHeader))
                                             {
                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B || requestResponseHeader->protocol() > VERSION_B + 1)
+                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B - 1 || requestResponseHeader->protocol() > VERSION_B + 1)
                                                 {
                                                     setText(message, L"Forgetting ");
                                                     appendNumber(message, peers[i].address[0], FALSE);
