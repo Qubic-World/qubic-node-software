@@ -18,7 +18,7 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 122
+#define VERSION_B 123
 #define VERSION_C 0
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
@@ -6252,7 +6252,7 @@ static void requestProcessor(void* ProcedureArgument)
                                 }
                             }
                         }
-                        if (i == NUMBER_OF_COMPUTORS)
+                        //if (i == NUMBER_OF_COMPUTORS)
                         {
                             bool ok = true;
                             for (i = 0; i < NUMBER_OF_TRANSACTIONS_PER_TICK && ok; i++)
@@ -7489,7 +7489,10 @@ static void tickerProcessor(void*)
                                     }
                                 }
 
-                                system.latestCreatedTick = system.tick;
+                                if (system.tick != system.initialTick)
+                                {
+                                    system.latestCreatedTick = system.tick;
+                                }
                             }
 
                             TickEssence tickEssence;
@@ -8257,7 +8260,7 @@ static BOOLEAN initialize()
 
                 if (system.epoch == 57)
                 {
-                    system.initialTick = system.tick = 5750000;
+                    system.initialTick = system.tick = 5760000;
                 }
                 else
                 {
@@ -9342,7 +9345,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if (receivedDataSize >= sizeof(RequestResponseHeader))
                                             {
                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B - 2 || requestResponseHeader->protocol() > VERSION_B + 1)
+                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B - 3 || requestResponseHeader->protocol() > VERSION_B + 1)
                                                 {
                                                     setText(message, L"Forgetting ");
                                                     appendNumber(message, peers[i].address[0], FALSE);
