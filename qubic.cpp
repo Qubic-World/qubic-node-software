@@ -18,7 +18,7 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 121
+#define VERSION_B 122
 #define VERSION_C 0
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
@@ -7068,7 +7068,7 @@ static void tickerProcessor(void*)
                                         entityPendingTransactionIndices[numberOfEntityPendingTransactionIndices] = numberOfEntityPendingTransactionIndices;
                                     }
                                     unsigned int j = 0;
-                                    while (j < NUMBER_OF_TRANSACTIONS_PER_TICK && numberOfEntityPendingTransactionIndices)
+                                    while (j < /*NUMBER_OF_TRANSACTIONS_PER_TICK*/128 && numberOfEntityPendingTransactionIndices)
                                     {
                                         const unsigned int index = random(numberOfEntityPendingTransactionIndices);
 
@@ -7093,7 +7093,7 @@ static void tickerProcessor(void*)
 
                                         entityPendingTransactionIndices[index] = entityPendingTransactionIndices[--numberOfEntityPendingTransactionIndices];
                                     }
-                                    for (; j < NUMBER_OF_TRANSACTIONS_PER_TICK; j++)
+                                    for (; j < /*NUMBER_OF_TRANSACTIONS_PER_TICK*/128; j++)
                                     {
                                         *((__m256i*)broadcastFutureTickData.tickData.transactionDigests[j]) = ZERO;
                                     }
@@ -7201,19 +7201,22 @@ static void tickerProcessor(void*)
                                 }
                             }
                         }
-                        unsigned int mostPopularUniqueNextTickTransactionDigestIndex = 0, totalUniqueNextTickTransactionDigestCounter = uniqueNextTickTransactionDigestCounters[0];
-                        for (unsigned int i = 1; i < numberOfUniqueNextTickTransactionDigests; i++)
+                        if (numberOfUniqueNextTickTransactionDigests)
                         {
-                            if (uniqueNextTickTransactionDigestCounters[i] > uniqueNextTickTransactionDigestCounters[mostPopularUniqueNextTickTransactionDigestIndex])
+                            unsigned int mostPopularUniqueNextTickTransactionDigestIndex = 0, totalUniqueNextTickTransactionDigestCounter = uniqueNextTickTransactionDigestCounters[0];
+                            for (unsigned int i = 1; i < numberOfUniqueNextTickTransactionDigests; i++)
                             {
-                                mostPopularUniqueNextTickTransactionDigestIndex = i;
+                                if (uniqueNextTickTransactionDigestCounters[i] > uniqueNextTickTransactionDigestCounters[mostPopularUniqueNextTickTransactionDigestIndex])
+                                {
+                                    mostPopularUniqueNextTickTransactionDigestIndex = i;
+                                }
+                                totalUniqueNextTickTransactionDigestCounter += uniqueNextTickTransactionDigestCounters[i];
                             }
-                            totalUniqueNextTickTransactionDigestCounter += uniqueNextTickTransactionDigestCounters[i];
-                        }
-                        if (uniqueNextTickTransactionDigestCounters[mostPopularUniqueNextTickTransactionDigestIndex] >= QUORUM)
-                        {
-                            targetNextTickDataDigest = uniqueNextTickTransactionDigests[mostPopularUniqueNextTickTransactionDigestIndex];
-                            targetNextTickDataDigestIsKnown = true;
+                            if (uniqueNextTickTransactionDigestCounters[mostPopularUniqueNextTickTransactionDigestIndex] >= QUORUM)
+                            {
+                                targetNextTickDataDigest = uniqueNextTickTransactionDigests[mostPopularUniqueNextTickTransactionDigestIndex];
+                                targetNextTickDataDigestIsKnown = true;
+                            }
                         }
                     }
 
@@ -7250,27 +7253,30 @@ static void tickerProcessor(void*)
                                 }
                             }
                         }
-                        unsigned int mostPopularUniqueNextTickTransactionDigestIndex = 0, totalUniqueNextTickTransactionDigestCounter = uniqueNextTickTransactionDigestCounters[0];
-                        for (unsigned int i = 1; i < numberOfUniqueNextTickTransactionDigests; i++)
+                        if (numberOfUniqueNextTickTransactionDigests)
                         {
-                            if (uniqueNextTickTransactionDigestCounters[i] > uniqueNextTickTransactionDigestCounters[mostPopularUniqueNextTickTransactionDigestIndex])
+                            unsigned int mostPopularUniqueNextTickTransactionDigestIndex = 0, totalUniqueNextTickTransactionDigestCounter = uniqueNextTickTransactionDigestCounters[0];
+                            for (unsigned int i = 1; i < numberOfUniqueNextTickTransactionDigests; i++)
                             {
-                                mostPopularUniqueNextTickTransactionDigestIndex = i;
+                                if (uniqueNextTickTransactionDigestCounters[i] > uniqueNextTickTransactionDigestCounters[mostPopularUniqueNextTickTransactionDigestIndex])
+                                {
+                                    mostPopularUniqueNextTickTransactionDigestIndex = i;
+                                }
+                                totalUniqueNextTickTransactionDigestCounter += uniqueNextTickTransactionDigestCounters[i];
                             }
-                            totalUniqueNextTickTransactionDigestCounter += uniqueNextTickTransactionDigestCounters[i];
-                        }
-                        if (uniqueNextTickTransactionDigestCounters[mostPopularUniqueNextTickTransactionDigestIndex] >= QUORUM)
-                        {
-                            targetNextTickDataDigest = uniqueNextTickTransactionDigests[mostPopularUniqueNextTickTransactionDigestIndex];
-                            targetNextTickDataDigestIsKnown = true;
-                        }
-                        else
-                        {
-                            if (numberOfEmptyNextTickTransactionDigest > NUMBER_OF_COMPUTORS - QUORUM
-                                || uniqueNextTickTransactionDigestCounters[mostPopularUniqueNextTickTransactionDigestIndex] + (NUMBER_OF_COMPUTORS - totalUniqueNextTickTransactionDigestCounter) < QUORUM)
+                            if (uniqueNextTickTransactionDigestCounters[mostPopularUniqueNextTickTransactionDigestIndex] >= QUORUM)
                             {
-                                targetNextTickDataDigest = ZERO;
+                                targetNextTickDataDigest = uniqueNextTickTransactionDigests[mostPopularUniqueNextTickTransactionDigestIndex];
                                 targetNextTickDataDigestIsKnown = true;
+                            }
+                            else
+                            {
+                                if (numberOfEmptyNextTickTransactionDigest > NUMBER_OF_COMPUTORS - QUORUM
+                                    || uniqueNextTickTransactionDigestCounters[mostPopularUniqueNextTickTransactionDigestIndex] + (NUMBER_OF_COMPUTORS - totalUniqueNextTickTransactionDigestCounter) < QUORUM)
+                                {
+                                    targetNextTickDataDigest = ZERO;
+                                    targetNextTickDataDigestIsKnown = true;
+                                }
                             }
                         }
                     }
@@ -7418,7 +7424,7 @@ static void tickerProcessor(void*)
                         if (numberOfKnownNextTickTransactions != numberOfNextTickTransactions)
                         {
                             if (!targetNextTickDataDigestIsKnown
-                                && __rdtsc() - tickTicks[sizeof(tickTicks) / sizeof(tickTicks[0]) - 1] > TARGET_TICK_DURATION * 10 * frequency / 1000)
+                                && __rdtsc() - tickTicks[sizeof(tickTicks) / sizeof(tickTicks[0]) - 1] > TARGET_TICK_DURATION * 5 * frequency / 1000)
                             {
                                 tickData[system.tick + 1 - system.initialTick].epoch = 0;
                                 
@@ -8249,10 +8255,9 @@ static BOOLEAN initialize()
                     system.initialYear = 22;
                 }
 
-                system.version = VERSION_B;
                 if (system.epoch == 57)
                 {
-                    system.initialTick = system.tick = 5730000;
+                    system.initialTick = system.tick = 5750000;
                 }
                 else
                 {
@@ -8975,7 +8980,7 @@ static void processKeyPresses()
 
         case 0x0F:
         {
-            reCatchUp = true;
+            //reCatchUp = true;
         }
         break;
 
@@ -9189,7 +9194,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             {
                                 setText(message, L"Ticker loop duration = ");
                                 appendNumber(message, (tickerLoopNumerator / tickerLoopDenominator) * 1000000 / frequency, TRUE);
-                                appendText(message, L" microseconds.");
+                                appendText(message, L" microseconds. Latest created tick = ");
+                                appendNumber(message, system.latestCreatedTick, TRUE);
+                                appendText(message, L".");
                                 log(message);
                             }
                             tickerLoopNumerator = 0;
@@ -9335,7 +9342,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if (receivedDataSize >= sizeof(RequestResponseHeader))
                                             {
                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B - 1 || requestResponseHeader->protocol() > VERSION_B + 1)
+                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B - 2 || requestResponseHeader->protocol() > VERSION_B + 1)
                                                 {
                                                     setText(message, L"Forgetting ");
                                                     appendNumber(message, peers[i].address[0], FALSE);
