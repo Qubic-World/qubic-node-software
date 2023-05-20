@@ -18,7 +18,7 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 123
+#define VERSION_B 124
 #define VERSION_C 0
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
@@ -5716,11 +5716,12 @@ static void forget(int address)
 
 static void addPublicPeer(unsigned char address[4])
 {
-    if (!(*((int*)address))
+    if ((!address[0])
         || (address[0] == 127)
         || (address[0] == 10)
         || (address[0] == 172 && address[1] >= 16 && address[1] <= 31)
-        || (address[0] == 192 && address[1] == 168))
+        || (address[0] == 192 && address[1] == 168)
+        || (address[0] == 255))
     {
         return;
     }
@@ -7068,7 +7069,7 @@ static void tickerProcessor(void*)
                                         entityPendingTransactionIndices[numberOfEntityPendingTransactionIndices] = numberOfEntityPendingTransactionIndices;
                                     }
                                     unsigned int j = 0;
-                                    while (j < /*NUMBER_OF_TRANSACTIONS_PER_TICK*/128 && numberOfEntityPendingTransactionIndices)
+                                    while (j < NUMBER_OF_TRANSACTIONS_PER_TICK && numberOfEntityPendingTransactionIndices)
                                     {
                                         const unsigned int index = random(numberOfEntityPendingTransactionIndices);
 
@@ -7093,7 +7094,7 @@ static void tickerProcessor(void*)
 
                                         entityPendingTransactionIndices[index] = entityPendingTransactionIndices[--numberOfEntityPendingTransactionIndices];
                                     }
-                                    for (; j < /*NUMBER_OF_TRANSACTIONS_PER_TICK*/128; j++)
+                                    for (; j < NUMBER_OF_TRANSACTIONS_PER_TICK; j++)
                                     {
                                         *((__m256i*)broadcastFutureTickData.tickData.transactionDigests[j]) = ZERO;
                                     }
@@ -8260,7 +8261,7 @@ static BOOLEAN initialize()
 
                 if (system.epoch == 57)
                 {
-                    system.initialTick = system.tick = 5760000;
+                    system.initialTick = system.tick = 5770000;
                 }
                 else
                 {
@@ -8984,6 +8985,7 @@ static void processKeyPresses()
         case 0x0F:
         {
             //reCatchUp = true;
+            bs->SetMem(system.solutionPublicationTicks, sizeof(system.solutionPublicationTicks), 0);
         }
         break;
 
@@ -9018,6 +9020,13 @@ static void processKeyPresses()
         {
             isMain = !isMain;
             log(isMain ? L"MAIN   *   MAIN   *   MAIN   *   MAIN   *   MAIN" : L"aux   *   aux   *   aux   *   aux   *   aux");
+            if (isMain)
+            {
+                if (system.latestCreatedTick == system.tick)
+                {
+                    system.latestCreatedTick--;
+                }
+            }
         }
         break;
 
@@ -9345,7 +9354,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if (receivedDataSize >= sizeof(RequestResponseHeader))
                                             {
                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B - 3 || requestResponseHeader->protocol() > VERSION_B + 1)
+                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B - 4 || requestResponseHeader->protocol() > VERSION_B + 1)
                                                 {
                                                     setText(message, L"Forgetting ");
                                                     appendNumber(message, peers[i].address[0], FALSE);
