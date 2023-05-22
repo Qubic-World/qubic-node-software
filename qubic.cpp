@@ -18,8 +18,8 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 124
-#define VERSION_C 1
+#define VERSION_B 125
+#define VERSION_C 0
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -5217,6 +5217,7 @@ struct SpecialCommandSetProposalAndBallotResponse
 
 static volatile int state = 0;
 static volatile bool isMain = false;
+static volatile bool listOfPeersIsStatic = false;
 static volatile char criticalSituation = 0;
 static volatile bool systemMustBeSaved = false, spectrumMustBeSaved = false;
 
@@ -5267,7 +5268,7 @@ static struct System
     __m256i futureComputors[NUMBER_OF_COMPUTORS];
 } system;
 static unsigned long long faultyComputorFlags[(NUMBER_OF_COMPUTORS + 63) / 64];
-static unsigned int tickNumberOfComputors = 0, tickTotalNumberOfComputors = 0, futureTickTotalNumberOfComputors = 0;
+static unsigned int tickPhase = 0, tickNumberOfComputors = 0, tickTotalNumberOfComputors = 0, futureTickTotalNumberOfComputors = 0;
 static unsigned int nextTickTransactionsSemaphore = 0, numberOfNextTickTransactions = 0, numberOfKnownNextTickTransactions = 0;
 static unsigned short numberOfOwnComputorIndices = 0;
 static unsigned short ownComputorIndices[sizeof(computorSeeds) / sizeof(computorSeeds[0])];
@@ -5300,6 +5301,7 @@ static __m256i* spectrumDigests = NULL;
 
 static volatile char tickLocks[NUMBER_OF_COMPUTORS];
 static bool targetNextTickDataDigestIsKnown = false;
+static unsigned int testFlags = 0;
 static __m256i targetNextTickDataDigest;
 static unsigned long long tickTicks[11];
 
@@ -5521,6 +5523,20 @@ static void log(const CHAR16* message)
     timestampedMessage[12] = ' ';
     timestampedMessage[13] = 0;
 
+    switch (tickPhase)
+    {
+    case 0: appendText(timestampedMessage, L"A"); break;
+    case 1: appendText(timestampedMessage, L"B"); break;
+    case 2: appendText(timestampedMessage, L"C"); break;
+    case 3: appendText(timestampedMessage, L"D"); break;
+    case 4: appendText(timestampedMessage, L"E"); break;
+    default: appendText(timestampedMessage, L"?");
+    }
+    if (testFlags)
+    {
+        appendNumber(timestampedMessage, testFlags, TRUE);
+    }
+    appendText(timestampedMessage, targetNextTickDataDigestIsKnown ? L"+ " : L"- ");
     appendNumber(timestampedMessage, tickNumberOfComputors / 100, FALSE);
     appendNumber(timestampedMessage, (tickNumberOfComputors % 100) / 10, FALSE);
     appendNumber(timestampedMessage, tickNumberOfComputors % 10, FALSE);
@@ -5699,6 +5715,8 @@ inline static unsigned int random(const unsigned int range)
 
 static void forget(int address)
 {
+    if (listOfPeersIsStatic) return;
+
     ACQUIRE(publicPeersLock);
 
     for (unsigned int i = 0; numberOfPublicPeers > NUMBER_OF_EXCHANGED_PEERS && i < numberOfPublicPeers; i++)
@@ -6129,7 +6147,7 @@ static void requestProcessor(void* ProcedureArgument)
                     ExchangePublicPeers* request = (ExchangePublicPeers*)((char*)processor->buffer + sizeof(RequestResponseHeader));
                     for (unsigned int j = 0; j < NUMBER_OF_EXCHANGED_PEERS && numberOfPublicPeers < MAX_NUMBER_OF_PUBLIC_PEERS; j++)
                     {
-                        addPublicPeer(request->peers[j]);
+                        if (!listOfPeersIsStatic) addPublicPeer(request->peers[j]);
                     }
                 }
                 break;
@@ -6256,7 +6274,7 @@ static void requestProcessor(void* ProcedureArgument)
                                 }
                             }
                         }
-                        //if (i == NUMBER_OF_COMPUTORS)
+                        if (i == NUMBER_OF_COMPUTORS)
                         {
                             bool ok = true;
                             for (i = 0; i < NUMBER_OF_TRANSACTIONS_PER_TICK && ok; i++)
@@ -6776,6 +6794,11 @@ static void tickerProcessor(void*)
             {
                 if (system.tick > latestProcessedTick)
                 {
+                    if (tickPhase < 1)
+                    {
+                        tickPhase = 1;
+                    }
+
                     *((__m256i*)etalonTick.prevSpectrumDigest) = spectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1];
                     *((__m256i*)etalonTick.prevUniverseDigest) = ZERO;
                     *((__m256i*)etalonTick.prevComputerDigest) = ZERO;
@@ -7022,7 +7045,7 @@ static void tickerProcessor(void*)
                                     entityPendingTransactionIndices[numberOfEntityPendingTransactionIndices] = numberOfEntityPendingTransactionIndices;
                                 }
                                 unsigned int j = 0;
-                                while (j < NUMBER_OF_TRANSACTIONS_PER_TICK && numberOfEntityPendingTransactionIndices)
+                                while (j < /*NUMBER_OF_TRANSACTIONS_PER_TICK*/100 && numberOfEntityPendingTransactionIndices)
                                 {
                                     const unsigned int index = random(numberOfEntityPendingTransactionIndices);
 
@@ -7263,6 +7286,10 @@ static void tickerProcessor(void*)
                         {
                             KangarooTwelve((unsigned char*)&tickData[system.tick + 1 - system.initialTick], sizeof(TickData), etalonTick.expectedNextTickTransactionDigest, 32);
                             tickDataSuits = EQUAL(*((__m256i*)etalonTick.expectedNextTickTransactionDigest), targetNextTickDataDigest);
+                            if (!tickDataSuits)
+                            {
+                                testFlags |= 1;
+                            }
                         }
                     }
                 }
@@ -7286,6 +7313,11 @@ static void tickerProcessor(void*)
                 }
                 else
                 {
+                    if (tickPhase < 2)
+                    {
+                        tickPhase = 2;
+                    }
+
                     numberOfNextTickTransactions = 0;
                     numberOfKnownNextTickTransactions = 0;
 
@@ -7505,8 +7537,31 @@ static void tickerProcessor(void*)
                                                 tickNumberOfComputors++;
                                                 revenueFlags[i] = 1;
                                             }
+                                            else
+                                            {
+                                                if (*((unsigned long long*) & tick->millisecond) != *((unsigned long long*) & etalonTick.millisecond)) testFlags |= 16;
+                                                if (!EQUAL(*((__m256i*)tick->initComputerDigest), *((__m256i*)etalonTick.initSpectrumDigest))) testFlags |= 32;
+                                                if (!EQUAL(*((__m256i*)tick->initComputerDigest), *((__m256i*)etalonTick.initUniverseDigest))) testFlags |= 64;
+                                                if (!EQUAL(*((__m256i*)tick->initComputerDigest), *((__m256i*)etalonTick.initComputerDigest))) testFlags |= 128;
+                                                if (!EQUAL(*((__m256i*)tick->prevComputerDigest), *((__m256i*)etalonTick.prevComputerDigest))) testFlags |= 256;
+                                                if (!EQUAL(*((__m256i*)tick->prevComputerDigest), *((__m256i*)etalonTick.prevComputerDigest))) testFlags |= 512;
+                                                if (!EQUAL(*((__m256i*)tick->prevComputerDigest), *((__m256i*)etalonTick.prevComputerDigest))) testFlags |= 1024;
+                                                if (!EQUAL(*((__m256i*)tick->transactionDigest), *((__m256i*)etalonTick.transactionDigest))) testFlags |= 2048;
+                                            }
+                                        }
+                                        else
+                                        {
+                                            testFlags |= 8;
                                         }
                                     }
+                                    else
+                                    {
+                                        testFlags |= 4;
+                                    }
+                                }
+                                else
+                                {
+                                    testFlags |= 2;
                                 }
                             }
 
@@ -7515,9 +7570,19 @@ static void tickerProcessor(void*)
                         ::tickNumberOfComputors = tickNumberOfComputors;
                         ::tickTotalNumberOfComputors = tickTotalNumberOfComputors;
 
+                        if (tickPhase < 3)
+                        {
+                            tickPhase = 3;
+                        }
+
                         if (tickNumberOfComputors >= QUORUM
                             && targetNextTickDataDigestIsKnown)
                         {
+                            if (tickPhase < 4)
+                            {
+                                tickPhase = 4;
+                            }
+
                             tickDataSuits = false;
                             if (EQUAL(targetNextTickDataDigest, ZERO))
                             {
@@ -7750,6 +7815,8 @@ static void tickerProcessor(void*)
                                 }
 
                                 system.tick++;
+
+                                tickPhase = 0;
 
                                 ::tickNumberOfComputors = 0;
                                 ::tickTotalNumberOfComputors = 0;
@@ -8152,7 +8219,7 @@ static BOOLEAN initialize()
 
                 if (system.epoch == 57)
                 {
-                    system.initialTick = system.tick = 5770000;
+                    system.initialTick = system.tick = 5780000;
                 }
                 else
                 {
@@ -8168,6 +8235,11 @@ static BOOLEAN initialize()
                 etalonTick.day = system.initialDay;
                 etalonTick.month = system.initialMonth;
                 etalonTick.year = system.initialYear;
+
+                if (system.tick >= system.latestCreatedTick)
+                {
+                    bs->SetMem(system.solutionPublicationTicks, sizeof(system.solutionPublicationTicks), 0);
+                }
             }
         }
 
@@ -8489,6 +8561,7 @@ static void logInfo()
     appendNumber(message, numberOfVerifiedPublicPeers, TRUE);
     appendText(message, L"/");
     appendNumber(message, numberOfPublicPeers, TRUE);
+    appendText(message, listOfPeersIsStatic ? L" Static" : L" Dynamic");
     appendText(message, L" (+");
     appendNumber(message, numberOfReceivedBytes - prevNumberOfReceivedBytes, TRUE);
     appendText(message, L" -");
@@ -8565,11 +8638,11 @@ static void logInfo()
     appendText(message, L"/");
     if (nextTickTransactionsSemaphore)
     {
-        setText(message, L"?");
+        appendText(message, L"?");
     }
     else
     {
-        setNumber(message, numberOfNextTickTransactions, TRUE);
+        appendNumber(message, numberOfNextTickTransactions, TRUE);
     }
     appendText(message, L" next tick transactions are known. ");
     if (tickData[system.tick + 1 - system.initialTick].epoch == system.epoch)
@@ -8880,12 +8953,6 @@ static void processKeyPresses()
         }
         break;
 
-        case 0x0F:
-        {
-            bs->SetMem(system.solutionPublicationTicks, sizeof(system.solutionPublicationTicks), 0);
-        }
-        break;
-
         case 0x10:
         {
             SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 4] = L'0';
@@ -8913,17 +8980,22 @@ static void processKeyPresses()
         }
         break;
 
+        case 0x14:
+        {
+            testFlags = 0;
+        }
+        break;
+
+        case 0x15:
+        {
+            listOfPeersIsStatic = !listOfPeersIsStatic;
+        }
+        break;
+
         case 0x16:
         {
             isMain = !isMain;
             log(isMain ? L"MAIN   *   MAIN   *   MAIN   *   MAIN   *   MAIN" : L"aux   *   aux   *   aux   *   aux   *   aux");
-            if (isMain)
-            {
-                if (system.latestCreatedTick == system.tick)
-                {
-                    system.latestCreatedTick--;
-                }
-            }
         }
         break;
 
@@ -9057,7 +9129,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                     unsigned long long clockTick = 0, systemDataSavingTick = 0, loggingTick = 0, peerRefreshingTick = 0, tickRequestingTick = 0;
                     unsigned int tickRequestingIndicator = 0, futureTickRequestingIndicator = 0;
                     unsigned long long mainLoopNumerator = 0, mainLoopDenominator = 0;
-                    unsigned int optimisticTick = 0;
                     while (!state)
                     {
                         if (criticalSituation == 1)
@@ -9091,9 +9162,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             {
                                 setText(message, L"Main loop duration = ");
                                 appendNumber(message, (mainLoopNumerator / mainLoopDenominator) * 1000000 / frequency, TRUE);
-                                appendText(message, L" microseconds. Optimistic tick = ");
-                                appendNumber(message, optimisticTick, TRUE);
-                                appendText(message, L".");
+                                appendText(message, L" microseconds.");
                                 log(message);
                             }
                             mainLoopNumerator = 0;
@@ -9251,7 +9320,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if (receivedDataSize >= sizeof(RequestResponseHeader))
                                             {
                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B - 4 || requestResponseHeader->protocol() > VERSION_B + 1)
+                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B - 5 || requestResponseHeader->protocol() > VERSION_B + 1)
                                                 {
                                                     setText(message, L"Forgetting ");
                                                     appendNumber(message, peers[i].address[0], FALSE);
@@ -9447,21 +9516,24 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 }
                                 else
                                 {
-                                    peers[i].receiveData.FragmentTable[0].FragmentBuffer = peers[i].receiveBuffer;
-                                    peers[i].dataToTransmitSize = 0;
-                                    peers[i].isReceiving = FALSE;
-                                    peers[i].isTransmitting = FALSE;
-                                    peers[i].exchangedPublicPeers = FALSE;
-                                    peers[i].isClosing = FALSE;
+                                    if (!listOfPeersIsStatic)
+                                    {
+                                        peers[i].receiveData.FragmentTable[0].FragmentBuffer = peers[i].receiveBuffer;
+                                        peers[i].dataToTransmitSize = 0;
+                                        peers[i].isReceiving = FALSE;
+                                        peers[i].isTransmitting = FALSE;
+                                        peers[i].exchangedPublicPeers = FALSE;
+                                        peers[i].isClosing = FALSE;
 
-                                    if (status = peerTcp4Protocol->Accept(peerTcp4Protocol, &peers[i].connectAcceptToken))
-                                    {
-                                        logStatus(L"EFI_TCP4_PROTOCOL.Accept() fails", status, __LINE__);
-                                    }
-                                    else
-                                    {
-                                        peers[i].isConnectingAccepting = TRUE;
-                                        peers[i].tcp4Protocol = (EFI_TCP4_PROTOCOL*)1;
+                                        if (status = peerTcp4Protocol->Accept(peerTcp4Protocol, &peers[i].connectAcceptToken))
+                                        {
+                                            logStatus(L"EFI_TCP4_PROTOCOL.Accept() fails", status, __LINE__);
+                                        }
+                                        else
+                                        {
+                                            peers[i].isConnectingAccepting = TRUE;
+                                            peers[i].tcp4Protocol = (EFI_TCP4_PROTOCOL*)1;
+                                        }
                                     }
                                 }
                             }
@@ -9543,31 +9615,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 pushToAny(&requestedTickTransactions.header);
 
                                 requestedTickTransactions.requestedTickTransactions.tick = 0;
-                            }
-
-                            if (optimisticTick < system.tick + 2)
-                            {
-                                optimisticTick = system.tick + 2;
-                            }
-                            const unsigned int baseOffset = (optimisticTick - system.initialTick) * NUMBER_OF_COMPUTORS;
-                            for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
-                            {
-                                if (ticks[baseOffset + i].epoch == system.epoch)
-                                {
-                                    optimisticTick++;
-
-                                    break;
-                                }
-                            }
-                            requestedQuorumTick.header.randomizeDejavu();
-                            requestedQuorumTick.requestQuorumTick.quorumTick.tick = optimisticTick;
-                            bs->SetMem(&requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags, sizeof(requestedQuorumTick.requestQuorumTick.quorumTick.voteFlags), 0);
-                            pushToAny(&requestedQuorumTick.header);
-                            if (tickData[optimisticTick + 1 - system.initialTick].epoch != system.epoch)
-                            {
-                                requestedTickData.header.randomizeDejavu();
-                                requestedTickData.requestTickData.requestedTickData.tick = optimisticTick + 1;
-                                pushToAny(&requestedTickData.header);
                             }
                         }
 
