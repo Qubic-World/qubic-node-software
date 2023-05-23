@@ -18,7 +18,7 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 125
+#define VERSION_B 126
 #define VERSION_C 0
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
@@ -6274,7 +6274,7 @@ static void requestProcessor(void* ProcedureArgument)
                                 }
                             }
                         }
-                        if (i == NUMBER_OF_COMPUTORS)
+                        //if (i == NUMBER_OF_COMPUTORS)
                         {
                             bool ok = true;
                             for (i = 0; i < NUMBER_OF_TRANSACTIONS_PER_TICK && ok; i++)
@@ -6313,6 +6313,11 @@ static void requestProcessor(void* ProcedureArgument)
                                             KangarooTwelve((unsigned char*)&request->tickData, sizeof(TickData), digest, 32);
                                             if (EQUAL(*((__m256i*)digest), targetNextTickDataDigest))
                                             {
+                                                /**/if (tickData[request->tickData.tick - system.initialTick].epoch == system.epoch)
+                                                {
+                                                    KangarooTwelve((unsigned char*)&tickData[request->tickData.tick - system.initialTick], sizeof(TickData), digest, 32);
+                                                    if (!EQUAL(*((__m256i*)digest), targetNextTickDataDigest)) testFlags |= 4096;
+                                                }
                                                 bs->CopyMem(&tickData[request->tickData.tick - system.initialTick], &request->tickData, sizeof(TickData));
                                             }
                                         }
@@ -7045,7 +7050,7 @@ static void tickerProcessor(void*)
                                     entityPendingTransactionIndices[numberOfEntityPendingTransactionIndices] = numberOfEntityPendingTransactionIndices;
                                 }
                                 unsigned int j = 0;
-                                while (j < /*NUMBER_OF_TRANSACTIONS_PER_TICK*/100 && numberOfEntityPendingTransactionIndices)
+                                while (j < NUMBER_OF_TRANSACTIONS_PER_TICK && numberOfEntityPendingTransactionIndices)
                                 {
                                     const unsigned int index = random(numberOfEntityPendingTransactionIndices);
 
@@ -8219,7 +8224,7 @@ static BOOLEAN initialize()
 
                 if (system.epoch == 57)
                 {
-                    system.initialTick = system.tick = 5780000;
+                    system.initialTick = system.tick = 5790000;
                 }
                 else
                 {
@@ -9320,7 +9325,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if (receivedDataSize >= sizeof(RequestResponseHeader))
                                             {
                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B - 5 || requestResponseHeader->protocol() > VERSION_B + 1)
+                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B - 6 || requestResponseHeader->protocol() > VERSION_B)
                                                 {
                                                     setText(message, L"Forgetting ");
                                                     appendNumber(message, peers[i].address[0], FALSE);
