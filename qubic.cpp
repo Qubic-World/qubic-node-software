@@ -18,7 +18,7 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 126
+#define VERSION_B 127
 #define VERSION_C 0
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
@@ -4809,11 +4809,11 @@ static BOOLEAN verify(const unsigned char* publicKey, const unsigned char* messa
 #define MAX_UNIVERSE_SIZE 1073741824
 #define MESSAGE_DISSEMINATION_THRESHOLD 1000000000
 #define MESSAGE_TYPE_SOLUTION 0
-#define NATIVE_ASSET (26 * 26 * 26 * 26 * 26 * 26)
+#define NATIVE_ASSET (27 * 27 * 27 * 27 * 27 * 27)
 #define NUMBER_OF_EXCHANGED_PEERS 4
 #define NUMBER_OF_OUTGOING_CONNECTIONS 4
 #define NUMBER_OF_INCOMING_CONNECTIONS 60
-#define NUMBER_OF_NEURONS 1048576
+#define NUMBER_OF_NEURONS 2097152
 #define NUMBER_OF_SOLUTION_NONCES 1000
 #define NUMBER_OF_TRANSACTIONS_PER_TICK 1024 // Must be 2^N
 #define PEER_REFRESHING_PERIOD 10000
@@ -4845,8 +4845,8 @@ struct Entity
 
 struct Asset
 {
-    unsigned int symbol; // 6-letter encoded
-    unsigned int quality; // 6-letter encoded or NATIVE_ASSET
+    unsigned int symbol; // 6-letter encoded (base 27)
+    unsigned int quality; // 6-letter encoded (base 27) or NATIVE_ASSET
     char unitOfMeasurement[8];
     unsigned char numberOfDecimalPlaces;
 };
@@ -8215,16 +8215,16 @@ static BOOLEAN initialize()
             {
                 if (!size)
                 {
-                    system.epoch = 57;
+                    system.epoch = 58;
                     system.initialHour = 12;
                     system.initialDay = 13;
                     system.initialMonth = 4;
                     system.initialYear = 22;
                 }
 
-                if (system.epoch == 57)
+                if (system.epoch == 58)
                 {
-                    system.initialTick = system.tick = 5790000;
+                    system.initialTick = system.tick = 5810000;
                 }
                 else
                 {
@@ -8249,6 +8249,7 @@ static BOOLEAN initialize()
         }
 
         bs->SetMem(faultyComputorFlags, sizeof(faultyComputorFlags), 0);
+        bs->SetMem(revenueCounters, sizeof(revenueCounters), 0);
 
         bs->SetMem(initSpectrum, SPECTRUM_CAPACITY * sizeof(Entity), 0);
         SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 4] = system.epoch / 100 + L'0';
@@ -8335,14 +8336,14 @@ static BOOLEAN initialize()
 
         unsigned char randomSeed[32];
         bs->SetMem(randomSeed, 32, 0);
-        randomSeed[0] = 9;
-        randomSeed[1] = 9;
-        randomSeed[2] = 9;
-        randomSeed[3] = 9;
-        randomSeed[4] = 9;
-        randomSeed[5] = 9;
-        randomSeed[6] = 9;
-        randomSeed[7] = 9;
+        randomSeed[0] = 6;
+        randomSeed[1] = 7;
+        randomSeed[2] = 6;
+        randomSeed[3] = 6;
+        randomSeed[4] = 6;
+        randomSeed[5] = 6;
+        randomSeed[6] = 6;
+        randomSeed[7] = 6;
         random(randomSeed, randomSeed, (unsigned char*)miningData, sizeof(miningData));
 
         if (status = bs->AllocatePool(EfiRuntimeServicesData, NUMBER_OF_MINER_SOLUTION_FLAGS / 8, (void**)&minerSolutionFlags))
@@ -9325,7 +9326,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if (receivedDataSize >= sizeof(RequestResponseHeader))
                                             {
                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B - 6 || requestResponseHeader->protocol() > VERSION_B)
+                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B - 1 || requestResponseHeader->protocol() > VERSION_B + 1)
                                                 {
                                                     setText(message, L"Forgetting ");
                                                     appendNumber(message, peers[i].address[0], FALSE);
