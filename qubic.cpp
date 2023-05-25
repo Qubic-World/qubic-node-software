@@ -18,8 +18,8 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 127
-#define VERSION_C 0
+#define VERSION_B 129
+#define VERSION_C 1
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -7615,6 +7615,7 @@ static void tickerProcessor(void*)
                                         if (revenueFlags[j])
                                         {
                                             revenueCounters[i][j]++;
+                                            /**/if (revenueCounters[i][j] > NUMBER_OF_COMPUTORS) testFlags |= 8192;
                                         }
                                     }
                                 }
@@ -8224,7 +8225,7 @@ static BOOLEAN initialize()
 
                 if (system.epoch == 58)
                 {
-                    system.initialTick = system.tick = 5810000;
+                    system.initialTick = system.tick = 5820000;
                 }
                 else
                 {
