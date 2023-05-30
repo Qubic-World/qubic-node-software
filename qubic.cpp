@@ -18,7 +18,7 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 133
+#define VERSION_B 134
 #define VERSION_C 0
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
@@ -6775,6 +6775,7 @@ static void tickerProcessor(void*)
     *((__m256i*)etalonTick.initUniverseDigest) = ZERO;
     *((__m256i*)etalonTick.initComputerDigest) = ZERO;
     unsigned int latestProcessedTick = 0;
+    unsigned long long timerTriggerTick;
     while (!state)
     {
         const unsigned long long curTimeTick = __rdtsc();
@@ -7590,13 +7591,15 @@ static void tickerProcessor(void*)
                         if (tickPhase < 3)
                         {
                             tickPhase = 3;
+
+                            timerTriggerTick = __rdtsc();
                         }
 
                         if (tickNumberOfComputors >= QUORUM)
                         {
                             if (!targetNextTickDataDigestIsKnown)
                             {
-                                if (__rdtsc() - tickTicks[sizeof(tickTicks) / sizeof(tickTicks[0]) - 1] > TARGET_TICK_DURATION * 10 * frequency / 1000)
+                                if (__rdtsc() - timerTriggerTick > TARGET_TICK_DURATION * 10 * frequency / 1000)
                                 {
                                     targetNextTickDataDigest = ZERO;
                                     targetNextTickDataDigestIsKnown = true;
@@ -8232,7 +8235,7 @@ static BOOLEAN initialize()
 
                 if (system.epoch == 58)
                 {
-                    system.initialTick = system.tick = 5900000;
+                    system.initialTick = system.tick = 5910000;
                 }
                 else
                 {
@@ -9341,7 +9344,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if (receivedDataSize >= sizeof(RequestResponseHeader))
                                             {
                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B - 4 || requestResponseHeader->protocol() > VERSION_B + 1)
+                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B - 5 || requestResponseHeader->protocol() > VERSION_B + 1)
                                                 {
                                                     setText(message, L"Forgetting ");
                                                     appendNumber(message, peers[i].address[0], FALSE);
