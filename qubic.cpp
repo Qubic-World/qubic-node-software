@@ -18,7 +18,7 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 134
+#define VERSION_B 135
 #define VERSION_C 0
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
@@ -5220,6 +5220,7 @@ struct SpecialCommandSetProposalAndBallotResponse
 static volatile int state = 0;
 static volatile bool isMain = false;
 static volatile bool listOfPeersIsStatic = false;
+static volatile bool forceNextTick = false;
 static volatile char criticalSituation = 0;
 static volatile bool systemMustBeSaved = false, spectrumMustBeSaved = false, universeMustBeSaved = false, computerMustBeSaved = false;
 
@@ -5301,6 +5302,10 @@ static unsigned char* entityPendingTransactionDigests = NULL;
 static unsigned int entityPendingTransactionIndices[SPECTRUM_CAPACITY];
 static unsigned long long spectrumChangeFlags[SPECTRUM_CAPACITY / (sizeof(unsigned long long) * 8)];
 static __m256i* spectrumDigests = NULL;
+
+static volatile char universeLock = 0;
+
+static volatile char computerLock = 0;
 
 static volatile char tickLocks[NUMBER_OF_COMPUTORS];
 static bool targetNextTickDataDigestIsKnown = false;
@@ -7599,12 +7604,14 @@ static void tickerProcessor(void*)
                         {
                             if (!targetNextTickDataDigestIsKnown)
                             {
-                                if (__rdtsc() - timerTriggerTick > TARGET_TICK_DURATION * 10 * frequency / 1000)
+                                if (__rdtsc() - timerTriggerTick > TARGET_TICK_DURATION * 10 * frequency / 1000
+                                    && forceNextTick)
                                 {
                                     targetNextTickDataDigest = ZERO;
                                     targetNextTickDataDigestIsKnown = true;
                                 }
                             }
+                            forceNextTick = false;
 
                             if (targetNextTickDataDigestIsKnown)
                             {
@@ -7900,12 +7907,54 @@ static void saveSpectrum()
 
 static void saveUniverse()
 {
-    // TODO
+    const unsigned long long beginningTick = __rdtsc();
+
+    EFI_FILE_PROTOCOL* dataFile;
+    EFI_STATUS status;
+    if (status = root->Open(root, (void**)&dataFile, (CHAR16*)UNIVERSE_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, 0))
+    {
+        logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status, __LINE__);
+    }
+    else
+    {
+        ACQUIRE(universeLock);
+
+        dataFile->Close(dataFile);
+
+        setNumber(message, 0, TRUE);
+        appendText(message, L" bytes of the universe data are saved (");
+        appendNumber(message, (__rdtsc() - beginningTick) * 1000000 / frequency, TRUE);
+        appendText(message, L" microseconds).");
+        log(message);
+
+        RELEASE(universeLock);
+    }
 }
 
 static void saveComputer()
 {
-    // TODO
+    const unsigned long long beginningTick = __rdtsc();
+
+    EFI_FILE_PROTOCOL* dataFile;
+    EFI_STATUS status;
+    if (status = root->Open(root, (void**)&dataFile, (CHAR16*)COMPUTER_FILE_NAME, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, 0))
+    {
+        logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status, __LINE__);
+    }
+    else
+    {
+        ACQUIRE(computerLock);
+
+        dataFile->Close(dataFile);
+
+        setNumber(message, 0, TRUE);
+        appendText(message, L" bytes of the computer data are saved (");
+        appendNumber(message, (__rdtsc() - beginningTick) * 1000000 / frequency, TRUE);
+        appendText(message, L" microseconds).");
+        log(message);
+
+        RELEASE(computerLock);
+    }
 }
 
 static void saveSystem()
@@ -8347,10 +8396,30 @@ static BOOLEAN initialize()
         UNIVERSE_FILE_NAME[sizeof(UNIVERSE_FILE_NAME) / sizeof(UNIVERSE_FILE_NAME[0]) - 4] = system.epoch / 100 + L'0';
         UNIVERSE_FILE_NAME[sizeof(UNIVERSE_FILE_NAME) / sizeof(UNIVERSE_FILE_NAME[0]) - 3] = (system.epoch % 100) / 10 + L'0';
         UNIVERSE_FILE_NAME[sizeof(UNIVERSE_FILE_NAME) / sizeof(UNIVERSE_FILE_NAME[0]) - 2] = system.epoch % 10 + L'0';
+        if (status = root->Open(root, (void**)&dataFile, (CHAR16*)UNIVERSE_FILE_NAME, EFI_FILE_MODE_READ, 0))
+        {
+            logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status, __LINE__);
+
+            return FALSE;
+        }
+        else
+        {
+            dataFile->Close(dataFile);
+        }
 
         COMPUTER_FILE_NAME[sizeof(COMPUTER_FILE_NAME) / sizeof(COMPUTER_FILE_NAME[0]) - 4] = system.epoch / 100 + L'0';
         COMPUTER_FILE_NAME[sizeof(COMPUTER_FILE_NAME) / sizeof(COMPUTER_FILE_NAME[0]) - 3] = (system.epoch % 100) / 10 + L'0';
         COMPUTER_FILE_NAME[sizeof(COMPUTER_FILE_NAME) / sizeof(COMPUTER_FILE_NAME[0]) - 2] = system.epoch % 10 + L'0';
+        if (status = root->Open(root, (void**)&dataFile, (CHAR16*)COMPUTER_FILE_NAME, EFI_FILE_MODE_READ, 0))
+        {
+            logStatus(L"EFI_FILE_PROTOCOL.Open() fails", status, __LINE__);
+
+            return FALSE;
+        }
+        else
+        {
+            dataFile->Close(dataFile);
+        }
 
         system.tick = system.initialTick;
 
@@ -8967,6 +9036,12 @@ static void processKeyPresses()
         }
         break;
 
+        case 0x0F:
+        {
+            forceNextTick = true;
+        }
+        break;
+
         case 0x10:
         {
             SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 4] = L'0';
@@ -9344,7 +9419,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if (receivedDataSize >= sizeof(RequestResponseHeader))
                                             {
                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B - 5 || requestResponseHeader->protocol() > VERSION_B + 1)
+                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B - 6 || requestResponseHeader->protocol() > VERSION_B + 1)
                                                 {
                                                     setText(message, L"Forgetting ");
                                                     appendNumber(message, peers[i].address[0], FALSE);
