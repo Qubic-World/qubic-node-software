@@ -18,7 +18,7 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 132
+#define VERSION_B 133
 #define VERSION_C 0
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
@@ -7598,11 +7598,12 @@ static void tickerProcessor(void*)
                             {
                                 if (__rdtsc() - tickTicks[sizeof(tickTicks) / sizeof(tickTicks[0]) - 1] > TARGET_TICK_DURATION * 10 * frequency / 1000)
                                 {
-                                    tickData[system.tick + 1 - system.initialTick].epoch = 0;
-                                    testFlags |= 8192;
+                                    targetNextTickDataDigest = ZERO;
+                                    targetNextTickDataDigestIsKnown = true;
                                 }
                             }
-                            else
+
+                            if (targetNextTickDataDigestIsKnown)
                             {
                                 if (tickPhase < 4)
                                 {
@@ -8231,7 +8232,7 @@ static BOOLEAN initialize()
 
                 if (system.epoch == 58)
                 {
-                    system.initialTick = system.tick = 5880000;
+                    system.initialTick = system.tick = 5900000;
                 }
                 else
                 {
@@ -8793,18 +8794,6 @@ static void processKeyPresses()
             appendText(message, L".");
             log(message);
 
-            unsigned int earliestTick = 1000000000;
-            for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
-            {
-                if (((Transaction*)&entityPendingTransactions[i * MAX_TRANSACTION_SIZE])->tick > system.tick && ((Transaction*)&entityPendingTransactions[i * MAX_TRANSACTION_SIZE])->tick < earliestTick)
-                {
-                    earliestTick = ((Transaction*)&entityPendingTransactions[i * MAX_TRANSACTION_SIZE])->tick;
-                }
-            }
-            setText(message, L"Earliest tick with pending transactions = ");
-            appendNumber(message, earliestTick, TRUE);
-            log(message);
-
             CHAR16 digest[60 + 1];
             getIdentity((unsigned char*)&spectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1], digest, true);
             unsigned int numberOfEntities = 0;
@@ -9352,7 +9341,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if (receivedDataSize >= sizeof(RequestResponseHeader))
                                             {
                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B - 3 || requestResponseHeader->protocol() > VERSION_B + 1)
+                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B - 4 || requestResponseHeader->protocol() > VERSION_B + 1)
                                                 {
                                                     setText(message, L"Forgetting ");
                                                     appendNumber(message, peers[i].address[0], FALSE);
