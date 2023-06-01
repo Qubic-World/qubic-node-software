@@ -18,7 +18,7 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 136
+#define VERSION_B 137
 #define VERSION_C 0
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
@@ -5054,8 +5054,6 @@ typedef struct
     unsigned char month;
     unsigned char year;
 
-    unsigned char computorKPIs[((NUMBER_OF_COMPUTORS - 1) * 10 + 7) / 8];
-
     union
     {
         struct
@@ -5071,6 +5069,7 @@ typedef struct
         } ballot;
     } varStruct;
 
+    unsigned char timelock[32];
     unsigned char transactionDigests[NUMBER_OF_TRANSACTIONS_PER_TICK][32];
 
     unsigned char signature[SIGNATURE_SIZE];
@@ -5276,8 +5275,6 @@ static unsigned int nextTickTransactionsSemaphore = 0, numberOfNextTickTransacti
 static unsigned short numberOfOwnComputorIndices = 0;
 static unsigned short ownComputorIndices[sizeof(computorSeeds) / sizeof(computorSeeds[0])];
 static unsigned short ownComputorIndicesMapping[sizeof(computorSeeds) / sizeof(computorSeeds[0])];
-static unsigned short revenueCounters[sizeof(computorSeeds) / sizeof(computorSeeds[0])][NUMBER_OF_COMPUTORS];
-static unsigned int totalRevenueCounters[NUMBER_OF_COMPUTORS];
 
 static Tick* ticks = NULL;
 static TickData* tickData = NULL;
@@ -6270,86 +6267,71 @@ static void requestProcessor(void* ProcedureArgument)
                         && !request->tickData.millisecond
                         && ms(request->tickData.year, request->tickData.month, request->tickData.day, request->tickData.hour, request->tickData.minute, request->tickData.second, request->tickData.millisecond) <= ms(time.Year - 2000, time.Month, time.Day, time.Hour, time.Minute, time.Second, time.Nanosecond / 1000000) + TIME_ACCURACY)
                     {
-                        unsigned int i;
-                        for (i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                        bool ok = true;
+                        for (unsigned int i = 0; i < NUMBER_OF_TRANSACTIONS_PER_TICK && ok; i++)
                         {
-                            if (i != request->tickData.computorIndex)
+                            if (!EQUAL(*((__m256i*)request->tickData.transactionDigests[i]), ZERO))
                             {
-                                const unsigned int offset = (i - (i > request->tickData.computorIndex ? 1 : 0)) * 10;
-                                if (((request->tickData.computorKPIs[offset >> 3] >> (offset & 7)) | ((request->tickData.computorKPIs[(offset >> 3) + 1] & ((1 << ((offset + 10) & 7)) - 1)) << (8 - (offset & 7)))) > NUMBER_OF_COMPUTORS)
+                                for (unsigned int j = 0; j < i; j++)
                                 {
-                                    break;
+                                    if (EQUAL(*((__m256i*)request->tickData.transactionDigests[i]), *((__m256i*)request->tickData.transactionDigests[j])))
+                                    {
+                                        ok = false;
+
+                                        break;
+                                    }
                                 }
                             }
                         }
-                        if (i == NUMBER_OF_COMPUTORS)
+                        if (ok)
                         {
-                            bool ok = true;
-                            for (i = 0; i < NUMBER_OF_TRANSACTIONS_PER_TICK && ok; i++)
+                            unsigned char digest[32];
+                            request->tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
+                            KangarooTwelve((unsigned char*)&request->tickData, sizeof(TickData) - SIGNATURE_SIZE, digest, sizeof(digest));
+                            request->tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
+                            if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->tickData.computorIndex], digest, request->tickData.signature))
                             {
-                                if (!EQUAL(*((__m256i*)request->tickData.transactionDigests[i]), ZERO))
+                                if (header->isDejavuZero())
                                 {
-                                    for (unsigned int j = 0; j < i; j++)
-                                    {
-                                        if (EQUAL(*((__m256i*)request->tickData.transactionDigests[i]), *((__m256i*)request->tickData.transactionDigests[j])))
-                                        {
-                                            ok = false;
+                                    enqueueResponse(NULL, header);
+                                }
 
-                                            break;
+                                if (request->tickData.tick == system.tick + 1 && targetNextTickDataDigestIsKnown)
+                                {
+                                    if (!EQUAL(targetNextTickDataDigest, ZERO))
+                                    {
+                                        unsigned char digest[32];
+                                        KangarooTwelve((unsigned char*)&request->tickData, sizeof(TickData), digest, 32);
+                                        if (EQUAL(*((__m256i*)digest), targetNextTickDataDigest))
+                                        {
+                                            bs->CopyMem(&tickData[request->tickData.tick - system.initialTick], &request->tickData, sizeof(TickData));
                                         }
                                     }
                                 }
-                            }
-                            if (ok)
-                            {
-                                unsigned char digest[32];
-                                request->tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
-                                KangarooTwelve((unsigned char*)&request->tickData, sizeof(TickData) - SIGNATURE_SIZE, digest, sizeof(digest));
-                                request->tickData.computorIndex ^= BROADCAST_FUTURE_TICK_DATA;
-                                if (verify(broadcastedComputors.broadcastComputors.computors.publicKeys[request->tickData.computorIndex], digest, request->tickData.signature))
+                                else
                                 {
-                                    if (header->isDejavuZero())
+                                    if (tickData[request->tickData.tick - system.initialTick].epoch == system.epoch)
                                     {
-                                        enqueueResponse(NULL, header);
-                                    }
-
-                                    if (request->tickData.tick == system.tick + 1 && targetNextTickDataDigestIsKnown)
-                                    {
-                                        if (!EQUAL(targetNextTickDataDigest, ZERO))
+                                        if (*((unsigned long long*) & request->tickData.millisecond) != *((unsigned long long*) & tickData[request->tickData.tick - system.initialTick].millisecond))
                                         {
-                                            unsigned char digest[32];
-                                            KangarooTwelve((unsigned char*)&request->tickData, sizeof(TickData), digest, 32);
-                                            if (EQUAL(*((__m256i*)digest), targetNextTickDataDigest))
+                                            faultyComputorFlags[request->tickData.computorIndex >> 6] |= (1ULL << (request->tickData.computorIndex & 63));
+                                        }
+                                        else
+                                        {
+                                            for (unsigned int i = 0; i < NUMBER_OF_TRANSACTIONS_PER_TICK; i++)
                                             {
-                                                bs->CopyMem(&tickData[request->tickData.tick - system.initialTick], &request->tickData, sizeof(TickData));
+                                                if (!EQUAL(*((__m256i*)request->tickData.transactionDigests[i]), *((__m256i*)tickData[request->tickData.tick - system.initialTick].transactionDigests[i])))
+                                                {
+                                                    faultyComputorFlags[request->tickData.computorIndex >> 6] |= (1ULL << (request->tickData.computorIndex & 63));
+
+                                                    break;
+                                                }
                                             }
                                         }
                                     }
                                     else
                                     {
-                                        if (tickData[request->tickData.tick - system.initialTick].epoch == system.epoch)
-                                        {
-                                            if (*((unsigned long long*) & request->tickData.millisecond) != *((unsigned long long*) & tickData[request->tickData.tick - system.initialTick].millisecond))
-                                            {
-                                                faultyComputorFlags[request->tickData.computorIndex >> 6] |= (1ULL << (request->tickData.computorIndex & 63));
-                                            }
-                                            else
-                                            {
-                                                for (unsigned int i = 0; i < NUMBER_OF_TRANSACTIONS_PER_TICK; i++)
-                                                {
-                                                    if (!EQUAL(*((__m256i*)request->tickData.transactionDigests[i]), *((__m256i*)tickData[request->tickData.tick - system.initialTick].transactionDigests[i])))
-                                                    {
-                                                        faultyComputorFlags[request->tickData.computorIndex >> 6] |= (1ULL << (request->tickData.computorIndex & 63));
-
-                                                        break;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        else
-                                        {
-                                            bs->CopyMem(&tickData[request->tickData.tick - system.initialTick], &request->tickData, sizeof(TickData));
-                                        }
+                                        bs->CopyMem(&tickData[request->tickData.tick - system.initialTick], &request->tickData, sizeof(TickData));
                                     }
                                 }
                             }
@@ -6971,15 +6953,6 @@ static void tickerProcessor(void*)
                                 }
                             }
                         }
-
-                        for (unsigned int computorIndex = 0; computorIndex < NUMBER_OF_COMPUTORS; computorIndex++)
-                        {
-                            if (computorIndex != tickData[system.tick - system.initialTick].computorIndex)
-                            {
-                                const unsigned int offset = (computorIndex - (computorIndex > tickData[system.tick - system.initialTick].computorIndex ? 1 : 0)) * 10;
-                                totalRevenueCounters[computorIndex] += ((tickData[system.tick - system.initialTick].computorKPIs[offset >> 3] >> (offset & 7)) | ((tickData[system.tick - system.initialTick].computorKPIs[(offset >> 3) + 1] & ((1 << ((offset + 10) & 7)) - 1)) << (8 - (offset & 7))));
-                            }
-                        }
                     }
 
                     // TODO: Process oracle machines
@@ -7047,17 +7020,7 @@ static void tickerProcessor(void*)
                                         bs->CopyMem(&broadcastFutureTickData.tickData.varStruct.ballot, &system.ballots[ownComputorIndices[i]], sizeof(ComputorBallot));
                                     }
 
-                                    bs->SetMem(broadcastFutureTickData.tickData.computorKPIs, sizeof(broadcastFutureTickData.tickData.computorKPIs), 0);
-                                    for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
-                                    {
-                                        if (j != ownComputorIndices[i])
-                                        {
-                                            const unsigned int offset = (j - (j > ownComputorIndices[i] ? 1 : 0)) * 10;
-                                            const unsigned short kpi = (faultyComputorFlags[j >> 6] & (1ULL << (j & 63))) ? 0 : revenueCounters[i][j];
-                                            broadcastFutureTickData.tickData.computorKPIs[offset >> 3] |= (unsigned char)(kpi << (offset & 7));
-                                            broadcastFutureTickData.tickData.computorKPIs[(offset >> 3) + 1] = (unsigned char)(kpi >> (8 - (offset & 7)));
-                                        }
-                                    }
+                                    *((__m256i*)broadcastFutureTickData.tickData.timelock) = ZERO;
 
                                     unsigned int numberOfEntityPendingTransactionIndices;
                                     for (numberOfEntityPendingTransactionIndices = 0; numberOfEntityPendingTransactionIndices < SPECTRUM_CAPACITY; numberOfEntityPendingTransactionIndices++)
@@ -7105,8 +7068,6 @@ static void tickerProcessor(void*)
 
                                 system.latestLedTick = system.tick;
                             }
-
-                            bs->SetMem(revenueCounters[i], sizeof(revenueCounters[0]), 0);
 
                             break;
                         }
@@ -7530,9 +7491,6 @@ static void tickerProcessor(void*)
                         *((__m256i*)tickEssence.transactionDigest) = *((__m256i*)etalonTick.transactionDigest);
                         KangarooTwelve((unsigned char*)&tickEssence, sizeof(TickEssence), (unsigned char*)&etalonTickEssenceDigest, 32);
 
-                        unsigned char revenueFlags[NUMBER_OF_COMPUTORS];
-                        bs->SetMem(revenueFlags, sizeof(revenueFlags), 0);
-
                         const unsigned int baseOffset = (system.tick - system.initialTick) * NUMBER_OF_COMPUTORS;
 
                         unsigned int tickNumberOfComputors = 0, tickTotalNumberOfComputors = 0;
@@ -7573,7 +7531,6 @@ static void tickerProcessor(void*)
                                             if (EQUAL(tickEssenceDigest, etalonTickEssenceDigest))
                                             {
                                                 tickNumberOfComputors++;
-                                                revenueFlags[i] = 1;
                                             }
                                             else
                                             {
@@ -7655,17 +7612,6 @@ static void tickerProcessor(void*)
                                 }
                                 if (tickDataSuits)
                                 {
-                                    for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
-                                    {
-                                        for (unsigned int j = 0; j < NUMBER_OF_COMPUTORS; j++)
-                                        {
-                                            if (revenueFlags[j])
-                                            {
-                                                revenueCounters[i][j]++;
-                                            }
-                                        }
-                                    }
-
                                     const int dayIndex = ::dayIndex(etalonTick.year, etalonTick.month, etalonTick.day);
                                     if ((dayIndex == 738570 + system.epoch * 7 && etalonTick.hour >= 12)
                                         || dayIndex > 738570 + system.epoch * 7)
@@ -7680,17 +7626,9 @@ static void tickerProcessor(void*)
 
                                         long long arbitratorRevenue = ISSUANCE_RATE;
 
-                                        unsigned int maxTotalRevenueCounter = 1;
                                         for (unsigned int computorIndex = 0; computorIndex < NUMBER_OF_COMPUTORS; computorIndex++)
                                         {
-                                            if (totalRevenueCounters[computorIndex] > maxTotalRevenueCounter)
-                                            {
-                                                maxTotalRevenueCounter = totalRevenueCounters[computorIndex];
-                                            }
-                                        }
-                                        for (unsigned int computorIndex = 0; computorIndex < NUMBER_OF_COMPUTORS; computorIndex++)
-                                        {
-                                            const unsigned int revenue = (ISSUANCE_RATE / NUMBER_OF_COMPUTORS) * totalRevenueCounters[computorIndex] / maxTotalRevenueCounter;
+                                            const unsigned int revenue = (ISSUANCE_RATE / NUMBER_OF_COMPUTORS);
                                             increaseEnergy(broadcastedComputors.broadcastComputors.computors.publicKeys[computorIndex], revenue, system.tick);
                                             arbitratorRevenue -= revenue;
                                         }
@@ -7754,8 +7692,6 @@ static void tickerProcessor(void*)
 
                                         system.epoch++;
                                         system.initialTick = system.tick;
-                                        bs->SetMem(revenueCounters, sizeof(revenueCounters), 0);
-                                        bs->SetMem(totalRevenueCounters, sizeof(totalRevenueCounters), 0);
                                         systemMustBeSaved = true;
 
                                         SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 4] = system.epoch / 100 + L'0';
@@ -8299,7 +8235,7 @@ static BOOLEAN initialize()
 
                 if (system.epoch == 59)
                 {
-                    system.initialTick = system.tick = 5930000;
+                    system.initialTick = system.tick = 5970000;
                 }
                 else
                 {
@@ -8324,8 +8260,6 @@ static BOOLEAN initialize()
         }
 
         bs->SetMem(faultyComputorFlags, sizeof(faultyComputorFlags), 0);
-        bs->SetMem(revenueCounters, sizeof(revenueCounters), 0);
-        bs->SetMem(totalRevenueCounters, sizeof(totalRevenueCounters), 0);
 
         bs->SetMem(initSpectrum, SPECTRUM_CAPACITY * sizeof(Entity), 0);
         SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 4] = system.epoch / 100 + L'0';
@@ -9434,7 +9368,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if (receivedDataSize >= sizeof(RequestResponseHeader))
                                             {
                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B || requestResponseHeader->protocol() > VERSION_B + 1)
+                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B - 1 || requestResponseHeader->protocol() > VERSION_B + 1)
                                                 {
                                                     setText(message, L"Forgetting ");
                                                     appendNumber(message, peers[i].address[0], FALSE);
