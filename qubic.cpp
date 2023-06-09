@@ -9,7 +9,6 @@ static unsigned char computorSeeds[][55 + 1] = {
 };
 
 static const unsigned char knownPublicPeers[][4] = {
-    {85, 10, 200, 180}, {148, 251, 192, 60}, {162, 55, 235, 138}, {94, 130, 136, 175}, {94, 130, 136, 177}, {193, 34, 212, 110}
 };
 
 
@@ -19,7 +18,7 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 138
+#define VERSION_B 139
 #define VERSION_C 0
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
@@ -5183,7 +5182,7 @@ struct SpecialCommandGetProposalAndBallotRequest
 {
     unsigned long long everIncreasingNonceAndCommandType;
     unsigned short computorIndex;
-    unsigned char padding[2];
+    unsigned char padding[6];
     unsigned char signature[SIGNATURE_SIZE];
 };
 
@@ -5192,7 +5191,7 @@ struct SpecialCommandGetProposalAndBallotResponse
 {
     unsigned long long everIncreasingNonceAndCommandType;
     unsigned short computorIndex;
-    unsigned char padding[2];
+    unsigned char padding[6];
     ComputorProposal proposal;
     ComputorBallot ballot;
 };
@@ -5202,7 +5201,7 @@ struct SpecialCommandSetProposalAndBallotRequest
 {
     unsigned long long everIncreasingNonceAndCommandType;
     unsigned short computorIndex;
-    unsigned char padding[2];
+    unsigned char padding[6];
     ComputorProposal proposal;
     ComputorBallot ballot;
     unsigned char signature[SIGNATURE_SIZE];
@@ -6561,7 +6560,7 @@ static void requestProcessor(void* ProcedureArgument)
                         && (request->everIncreasingNonceAndCommandType & 0xFFFFFFFFFFFFFF) > system.latestOperatorNonce)
                     {
                         unsigned char digest[32];
-                        KangarooTwelve((unsigned char*)&request, header->size() - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
+                        KangarooTwelve((unsigned char*)request, header->size() - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
                         if (verify(operatorPublicKey, digest, ((const unsigned char*)processor->buffer + (header->size() - SIGNATURE_SIZE))))
                         {
                             system.latestOperatorNonce = request->everIncreasingNonceAndCommandType & 0xFFFFFFFFFFFFFF;
@@ -6787,184 +6786,6 @@ static void tickerProcessor(void*)
                     *((__m256i*)etalonTick.prevSpectrumDigest) = spectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1];
                     *((__m256i*)etalonTick.prevUniverseDigest) = ZERO;
                     *((__m256i*)etalonTick.prevComputerDigest) = ZERO;
-
-                    if (system.tick == 6100001)
-                    {
-                        unsigned char sourcePublicKey[32], destinationPublicKey[32];
-                        getPublicKeyFromIdentity((unsigned char*)"QQWLRKCTHYHEVBQNKOCYQXWQWOVAKWXYVWQRLYQJPBXLCBHZDCTWBJVCWHLN", sourcePublicKey);
-                        int spectrumIndex = ::spectrumIndex(sourcePublicKey);
-                        if (spectrumIndex >= 0)
-                        {
-                            {
-                                unsigned long long amount = 774951478;
-                                if (decreaseEnergy(spectrumIndex, amount, system.tick))
-                                {
-                                    getPublicKeyFromIdentity((unsigned char*)"QHMQTMXXHARLCEPBHAXGKYXTGLRCSYJSWSSSKNPOZGHJSFPUXPSEBMBACCQO", destinationPublicKey);
-                                    increaseEnergy(destinationPublicKey, amount, system.tick);
-                                }
-                            }
-                            {
-                                unsigned long long amount = 44282942;
-                                if (decreaseEnergy(spectrumIndex, amount, system.tick))
-                                {
-                                    getPublicKeyFromIdentity((unsigned char*)"QHMQTMXXHARLCEPBHAXGKYXTGLRCSYJSWSSSKNPOZGHJSFPUXPSEBMBACCQO", destinationPublicKey);
-                                    increaseEnergy(destinationPublicKey, amount, system.tick);
-                                }
-                            }
-                            {
-                                unsigned long long amount = 7970929490;
-                                if (decreaseEnergy(spectrumIndex, amount, system.tick))
-                                {
-                                    getPublicKeyFromIdentity((unsigned char*)"SDORTGXYNMXWHCWXFXHBWIHWAVNBYDYCHIGJOOIXBDXPOLVMRUDNEYLGVDLE", destinationPublicKey);
-                                    increaseEnergy(destinationPublicKey, amount, system.tick);
-                                }
-                            }
-                            {
-                                unsigned long long amount = 251493896155;
-                                if (decreaseEnergy(spectrumIndex, amount, system.tick))
-                                {
-                                    getPublicKeyFromIdentity((unsigned char*)"XXZQWVZXAKLLMDTDGMVEETZRVQFDIZBKUNITKWTDHDXRVOSSDDUWGAYCHFWA", destinationPublicKey);
-                                    increaseEnergy(destinationPublicKey, amount, system.tick);
-                                }
-                            }
-                            {
-                                unsigned long long amount = 28876906226;
-                                if (decreaseEnergy(spectrumIndex, amount, system.tick))
-                                {
-                                    getPublicKeyFromIdentity((unsigned char*)"EWQWXMNBSWJCIGOMVKRYTOSYQWHDXPIMNTOAEWBIVAFPJCHSBYTLUZACQSPJ", destinationPublicKey);
-                                    increaseEnergy(destinationPublicKey, amount, system.tick);
-                                }
-                            }
-                            {
-                                unsigned long long amount = 1390484367;
-                                if (decreaseEnergy(spectrumIndex, amount, system.tick))
-                                {
-                                    getPublicKeyFromIdentity((unsigned char*)"KWELCKVOKPUUIGSVKDLWJKOURQMANHLRBTRBZKNHQCVRTNUDSROQOBAALAVH", destinationPublicKey);
-                                    increaseEnergy(destinationPublicKey, amount, system.tick);
-                                }
-                            }
-                            {
-                                unsigned long long amount = 61830057227;
-                                if (decreaseEnergy(spectrumIndex, amount, system.tick))
-                                {
-                                    getPublicKeyFromIdentity((unsigned char*)"KVBNERJVQMOGOCUUWGVMEYQUWEJDZQCYINDDXYLVVEDAODETVFPMUKTBMSLG", destinationPublicKey);
-                                    increaseEnergy(destinationPublicKey, amount, system.tick);
-                                }
-                            }
-                            {
-                                unsigned long long amount = 51246434181;
-                                if (decreaseEnergy(spectrumIndex, amount, system.tick))
-                                {
-                                    getPublicKeyFromIdentity((unsigned char*)"NBAEFULBYJYGPBQFLCDYHKZWBBWAFWCCWQZDPSTXWFMRCKHTITLSGPBDUNJI", destinationPublicKey);
-                                    increaseEnergy(destinationPublicKey, amount, system.tick);
-                                }
-                            }
-                            {
-                                unsigned long long amount = 293137574448;
-                                if (decreaseEnergy(spectrumIndex, amount, system.tick))
-                                {
-                                    getPublicKeyFromIdentity((unsigned char*)"DMAZYAXTRYPOCGBQOPXJZXVEKSCDXQUEJNIZSTYILDSAYCQPLJMMDWKBBVCD", destinationPublicKey);
-                                    increaseEnergy(destinationPublicKey, amount, system.tick);
-                                }
-                            }
-                            {
-                                unsigned long long amount = 123992237;
-                                if (decreaseEnergy(spectrumIndex, amount, system.tick))
-                                {
-                                    getPublicKeyFromIdentity((unsigned char*)"YCWKKRYCZFLGZBNDWMUXQJKVOTWBCDARKKGQCSRYJGYADRVBBOMPVITCARNH", destinationPublicKey);
-                                    increaseEnergy(destinationPublicKey, amount, system.tick);
-                                }
-                            }
-                            {
-                                unsigned long long amount = 234593311488;
-                                if (decreaseEnergy(spectrumIndex, amount, system.tick))
-                                {
-                                    getPublicKeyFromIdentity((unsigned char*)"EXCSQFRVSONQDHPOMAYRNWNHVUCAMMITRXKTQKLVDGASGHRBCRYRTNPEXHXM", destinationPublicKey);
-                                    increaseEnergy(destinationPublicKey, amount, system.tick);
-                                }
-                            }
-                            {
-                                unsigned long long amount = 766094890;
-                                if (decreaseEnergy(spectrumIndex, amount, system.tick))
-                                {
-                                    getPublicKeyFromIdentity((unsigned char*)"PETERBGTUNQPGDARBTEMFEUEKQRAYPCULUCVOVGBBAVVDPCCDUHEIVABDVEO", destinationPublicKey);
-                                    increaseEnergy(destinationPublicKey, amount, system.tick);
-                                }
-                            }
-                            {
-                                unsigned long long amount = 985295451;
-                                if (decreaseEnergy(spectrumIndex, amount, system.tick))
-                                {
-                                    getPublicKeyFromIdentity((unsigned char*)"YTKQVHAFETDOVFFGNPRDQZVGWDMBEBAHVWLMPLPLEFVONSUWSSSMNPTDAXMF", destinationPublicKey);
-                                    increaseEnergy(destinationPublicKey, amount, system.tick);
-                                }
-                            }
-                            {
-                                unsigned long long amount = 2676903820;
-                                if (decreaseEnergy(spectrumIndex, amount, system.tick))
-                                {
-                                    getPublicKeyFromIdentity((unsigned char*)"SRJZAJUYRSMJGHFGUUSHAADLMQBDBGFAOZCXYNOZBDWKZFSPOEDICAOGESGC", destinationPublicKey);
-                                    increaseEnergy(destinationPublicKey, amount, system.tick);
-                                }
-                            }
-                            {
-                                unsigned long long amount = 106279060;
-                                if (decreaseEnergy(spectrumIndex, amount, system.tick))
-                                {
-                                    getPublicKeyFromIdentity((unsigned char*)"VWYUWDKKTEGZTACQELAZLZCAXXDAVAJBDYQRIFISEFHVQHOVTVZUTYXABSQG", destinationPublicKey);
-                                    increaseEnergy(destinationPublicKey, amount, system.tick);
-                                }
-                            }
-                            {
-                                unsigned long long amount = 21767279950;
-                                if (decreaseEnergy(spectrumIndex, amount, system.tick))
-                                {
-                                    getPublicKeyFromIdentity((unsigned char*)"ILHDAVTWLBXEJFZANIHAZYPNOIVAVBQPUJLLJVKLKFXOTPBJMTVMMLUEBSOI", destinationPublicKey);
-                                    increaseEnergy(destinationPublicKey, amount, system.tick);
-                                }
-                            }
-                            {
-                                unsigned long long amount = 22141471;
-                                if (decreaseEnergy(spectrumIndex, amount, system.tick))
-                                {
-                                    getPublicKeyFromIdentity((unsigned char*)"UNSSJFKCFWHPTCAHZPNBFOVHDRDBFRWJWABXCKUUPFLODWTFJZLAZZGFAHVF", destinationPublicKey);
-                                    increaseEnergy(destinationPublicKey, amount, system.tick);
-                                }
-                            }
-                            {
-                                unsigned long long amount = 9983589187;
-                                if (decreaseEnergy(spectrumIndex, amount, system.tick))
-                                {
-                                    getPublicKeyFromIdentity((unsigned char*)"LLMHGYQFAQXZPFNSHGQDRPNKJVHAAYGYLQERLMNAICSLRHUEAPKFPCGAWLWK", destinationPublicKey);
-                                    increaseEnergy(destinationPublicKey, amount, system.tick);
-                                }
-                            }
-                            {
-                                unsigned long long amount = 4981830931;
-                                if (decreaseEnergy(spectrumIndex, amount, system.tick))
-                                {
-                                    getPublicKeyFromIdentity((unsigned char*)"ICZEUTGDMZZCTBOJQZVADDURKUHBITRKGQMBPBHEWDUVCPMTWCHATIODYAMG", destinationPublicKey);
-                                    increaseEnergy(destinationPublicKey, amount, system.tick);
-                                }
-                            }
-                            {
-                                unsigned long long amount = 73066854;
-                                if (decreaseEnergy(spectrumIndex, amount, system.tick))
-                                {
-                                    getPublicKeyFromIdentity((unsigned char*)"ICZEUTGDMZZCTBOJQZVADDURKUHBITRKGQMBPBHEWDUVCPMTWCHATIODYAMG", destinationPublicKey);
-                                    increaseEnergy(destinationPublicKey, amount, system.tick);
-                                }
-                            }
-                            {
-                                unsigned long long amount = spectrum[spectrumIndex].incomingAmount - spectrum[spectrumIndex].outgoingAmount;
-                                if (decreaseEnergy(spectrumIndex, amount, system.tick))
-                                {
-                                    getPublicKeyFromIdentity((unsigned char*)"KXRSTAAGZKJZCCSHJKCSPTUSUZTAIESNWZJZRTFMBAIVTIPXPUYCFYVFWAZL", destinationPublicKey);
-                                    increaseEnergy(destinationPublicKey, amount, system.tick);
-                                }
-                            }
-                        }
-                    }
 
                     if (tickData[system.tick - system.initialTick].epoch == system.epoch)
                     {
@@ -8441,7 +8262,7 @@ static bool initialize()
 
                 if (system.epoch == 60)
                 {
-                    system.initialTick = system.tick = 6100000;
+                    system.initialTick = system.tick = 6130000;
                 }
                 else
                 {
@@ -9544,7 +9365,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if (receivedDataSize >= sizeof(RequestResponseHeader))
                                             {
                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B || requestResponseHeader->protocol() > VERSION_B + 1)
+                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B - 1 || requestResponseHeader->protocol() > VERSION_B + 1)
                                                 {
                                                     setText(message, L"Forgetting ");
                                                     appendNumber(message, peers[i].address[0], FALSE);
