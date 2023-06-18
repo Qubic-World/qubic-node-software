@@ -18,8 +18,8 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 140
-#define VERSION_C 1
+#define VERSION_B 141
+#define VERSION_C 0
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -4811,7 +4811,6 @@ static bool verify(const unsigned char* publicKey, const unsigned char* messageD
 #define MAX_UNIVERSE_SIZE 1073741824
 #define MESSAGE_DISSEMINATION_THRESHOLD 1000000000
 #define MESSAGE_TYPE_SOLUTION 0
-#define NATIVE_ASSET (27 * 27 * 27 * 27 * 27 * 27)
 #define NUMBER_OF_EXCHANGED_PEERS 4
 #define NUMBER_OF_OUTGOING_CONNECTIONS 4
 #define NUMBER_OF_INCOMING_CONNECTIONS 60
@@ -4836,6 +4835,15 @@ static bool verify(const unsigned char* publicKey, const unsigned char* messageD
 #define TRANSACTION_SPARSENESS 4
 #define VOLUME_LABEL L"Qubic"
 
+#define AMPERE 1
+#define CANDELA 2
+#define KELVIN 3
+#define KILOGRAM 4
+#define METER 5
+#define MOLE 6
+#define SECOND 7
+
+
 struct Entity
 {
     unsigned char publicKey[32];
@@ -4846,10 +4854,40 @@ struct Entity
 
 struct Asset
 {
-    unsigned int symbol; // 6-letter encoded (base 27)
-    unsigned int quality; // 6-letter encoded (base 27) or NATIVE_ASSET
-    char unitOfMeasurement[8];
-    unsigned char numberOfDecimalPlaces;
+    union
+    {
+        struct
+        {
+            unsigned char publicKey[32];
+            unsigned char type;
+
+            unsigned int managingContractIndex;
+            char category[8]; // Capital letters + digits
+            char name[8]; // Capital letters + digits
+            char numberOfDecimalPlacesAndUnitOfMeasurement[8]; // 0th char contains the number of decimal places, 1st - 7th chars contain powers of the corresponding SI base units going in alphabetical order
+
+        } issuance;
+        struct
+        {
+            unsigned char publicKey[32];
+
+            unsigned char type;
+
+            unsigned int parentIndex;
+            unsigned short managingContractIndex;
+
+        } ownership;
+        struct
+        {
+            unsigned char publicKey[32];
+
+            unsigned char type;
+
+            unsigned int parentIndex;
+            unsigned short managingContractIndex;
+
+        } possession;
+    } varStruct;
 };
 
 typedef struct
@@ -4974,6 +5012,7 @@ typedef struct
     // TODO: Padding
     unsigned short epoch;
     unsigned char publicKeys[NUMBER_OF_COMPUTORS][32];
+    long long padding;
     unsigned char signature[SIGNATURE_SIZE];
 } Computors;
 
@@ -5358,8 +5397,8 @@ static unsigned int numberOfPublicPeers = 0;
 static PublicPeer publicPeers[MAX_NUMBER_OF_PUBLIC_PEERS];
 
 static unsigned long long miningData[65536];
-static unsigned int validationNeuronLinks333[MAX_NUMBER_OF_PROCESSORS][NUMBER_OF_NEURONS][2];
-static unsigned char validationNeuronValues333[MAX_NUMBER_OF_PROCESSORS][NUMBER_OF_NEURONS];
+static unsigned int validationNeuronLinks[MAX_NUMBER_OF_PROCESSORS][NUMBER_OF_NEURONS][2];
+static unsigned char validationNeuronValues[MAX_NUMBER_OF_PROCESSORS][NUMBER_OF_NEURONS];
 
 static unsigned long long* minerSolutionFlags = NULL;
 static volatile unsigned char minerPublicKeys[MAX_NUMBER_OF_MINERS][32];
@@ -6051,29 +6090,29 @@ static void requestProcessor(void* ProcedureArgument)
                                                     }
                                                     if (k == system.numberOfSolutions)
                                                     {
-                                                        random(request->destinationPublicKey, &((unsigned char*)request)[sizeof(Message)], (unsigned char*)validationNeuronLinks333[processorNumber], sizeof(validationNeuronLinks333[0]));
+                                                        random(request->destinationPublicKey, &((unsigned char*)request)[sizeof(Message)], (unsigned char*)validationNeuronLinks[processorNumber], sizeof(validationNeuronLinks[0]));
                                                         for (k = 0; k < NUMBER_OF_NEURONS; k++)
                                                         {
-                                                            validationNeuronLinks333[processorNumber][k][0] %= NUMBER_OF_NEURONS;
-                                                            validationNeuronLinks333[processorNumber][k][1] %= NUMBER_OF_NEURONS;
+                                                            validationNeuronLinks[processorNumber][k][0] %= NUMBER_OF_NEURONS;
+                                                            validationNeuronLinks[processorNumber][k][1] %= NUMBER_OF_NEURONS;
                                                         }
 
-                                                        bs->SetMem(validationNeuronValues333[processorNumber], sizeof(validationNeuronValues333[0]), 0xFF);
+                                                        bs->SetMem(validationNeuronValues[processorNumber], sizeof(validationNeuronValues[0]), 0xFF);
 
                                                         unsigned int limiter = sizeof(miningData) / sizeof(miningData[0]);
                                                         int outputLength = 0;
                                                         while (outputLength < (sizeof(miningData) << 3))
                                                         {
-                                                            const unsigned int prevValue0 = validationNeuronValues333[processorNumber][NUMBER_OF_NEURONS - 1];
-                                                            const unsigned int prevValue1 = validationNeuronValues333[processorNumber][NUMBER_OF_NEURONS - 2];
+                                                            const unsigned int prevValue0 = validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 1];
+                                                            const unsigned int prevValue1 = validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 2];
 
                                                             for (k = 0; k < NUMBER_OF_NEURONS; k++)
                                                             {
-                                                                validationNeuronValues333[processorNumber][k] = ~(validationNeuronValues333[processorNumber][validationNeuronLinks333[processorNumber][k][0]] & validationNeuronValues333[processorNumber][validationNeuronLinks333[processorNumber][k][1]]);
+                                                                validationNeuronValues[processorNumber][k] = ~(validationNeuronValues[processorNumber][validationNeuronLinks[processorNumber][k][0]] & validationNeuronValues[processorNumber][validationNeuronLinks[processorNumber][k][1]]);
                                                             }
 
-                                                            if (validationNeuronValues333[processorNumber][NUMBER_OF_NEURONS - 1] != prevValue0
-                                                                && validationNeuronValues333[processorNumber][NUMBER_OF_NEURONS - 2] == prevValue1)
+                                                            if (validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 1] != prevValue0
+                                                                && validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 2] == prevValue1)
                                                             {
                                                                 if (!((miningData[outputLength >> 6] >> (outputLength & 63)) & 1))
                                                                 {
@@ -6084,8 +6123,8 @@ static void requestProcessor(void* ProcedureArgument)
                                                             }
                                                             else
                                                             {
-                                                                if (validationNeuronValues333[processorNumber][NUMBER_OF_NEURONS - 2] != prevValue1
-                                                                    && validationNeuronValues333[processorNumber][NUMBER_OF_NEURONS - 1] == prevValue0)
+                                                                if (validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 2] != prevValue1
+                                                                    && validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 1] == prevValue0)
                                                                 {
                                                                     if ((miningData[outputLength >> 6] >> (outputLength & 63)) & 1)
                                                                     {
@@ -6820,29 +6859,29 @@ static void tickerProcessor(void*)
                                             && !transaction->inputType
                                             && EQUAL(*((__m256i*)transaction->destinationPublicKey), *((__m256i*)arbitratorPublicKey)))
                                         {
-                                            random(transaction->sourcePublicKey, ((unsigned char*)transaction) + sizeof(Transaction), (unsigned char*)validationNeuronLinks333[processorNumber], sizeof(validationNeuronLinks333[0]));
+                                            random(transaction->sourcePublicKey, ((unsigned char*)transaction) + sizeof(Transaction), (unsigned char*)validationNeuronLinks[processorNumber], sizeof(validationNeuronLinks[0]));
                                             for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
                                             {
-                                                validationNeuronLinks333[processorNumber][k][0] %= NUMBER_OF_NEURONS;
-                                                validationNeuronLinks333[processorNumber][k][1] %= NUMBER_OF_NEURONS;
+                                                validationNeuronLinks[processorNumber][k][0] %= NUMBER_OF_NEURONS;
+                                                validationNeuronLinks[processorNumber][k][1] %= NUMBER_OF_NEURONS;
                                             }
 
-                                            bs->SetMem(validationNeuronValues333[processorNumber], sizeof(validationNeuronValues333[0]), 0xFF);
+                                            bs->SetMem(validationNeuronValues[processorNumber], sizeof(validationNeuronValues[0]), 0xFF);
 
                                             unsigned int limiter = sizeof(miningData) / sizeof(miningData[0]);
                                             int outputLength = 0;
                                             while (outputLength < (sizeof(miningData) << 3))
                                             {
-                                                const unsigned int prevValue0 = validationNeuronValues333[processorNumber][NUMBER_OF_NEURONS - 1];
-                                                const unsigned int prevValue1 = validationNeuronValues333[processorNumber][NUMBER_OF_NEURONS - 2];
+                                                const unsigned int prevValue0 = validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 1];
+                                                const unsigned int prevValue1 = validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 2];
 
                                                 for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
                                                 {
-                                                    validationNeuronValues333[processorNumber][k] = ~(validationNeuronValues333[processorNumber][validationNeuronLinks333[processorNumber][k][0]] & validationNeuronValues333[processorNumber][validationNeuronLinks333[processorNumber][k][1]]);
+                                                    validationNeuronValues[processorNumber][k] = ~(validationNeuronValues[processorNumber][validationNeuronLinks[processorNumber][k][0]] & validationNeuronValues[processorNumber][validationNeuronLinks[processorNumber][k][1]]);
                                                 }
 
-                                                if (validationNeuronValues333[processorNumber][NUMBER_OF_NEURONS - 1] != prevValue0
-                                                    && validationNeuronValues333[processorNumber][NUMBER_OF_NEURONS - 2] == prevValue1)
+                                                if (validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 1] != prevValue0
+                                                    && validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 2] == prevValue1)
                                                 {
                                                     if (!((miningData[outputLength >> 6] >> (outputLength & 63)) & 1))
                                                     {
@@ -6853,8 +6892,8 @@ static void tickerProcessor(void*)
                                                 }
                                                 else
                                                 {
-                                                    if (validationNeuronValues333[processorNumber][NUMBER_OF_NEURONS - 2] != prevValue1
-                                                        && validationNeuronValues333[processorNumber][NUMBER_OF_NEURONS - 1] == prevValue0)
+                                                    if (validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 2] != prevValue1
+                                                        && validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 1] == prevValue0)
                                                     {
                                                         if ((miningData[outputLength >> 6] >> (outputLength & 63)) & 1)
                                                         {
@@ -8268,7 +8307,7 @@ static bool initialize()
 
                 if (system.epoch == 61)
                 {
-                    system.initialTick = system.tick = 6200000;
+                    system.initialTick = system.tick = 6260000;
                 }
                 else
                 {
@@ -9371,7 +9410,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             if (receivedDataSize >= sizeof(RequestResponseHeader))
                                             {
                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
-                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B || requestResponseHeader->protocol() > VERSION_B + 1)
+                                                if (requestResponseHeader->size() < sizeof(RequestResponseHeader) || requestResponseHeader->protocol() < VERSION_B - 1 || requestResponseHeader->protocol() > VERSION_B + 1)
                                                 {
                                                     setText(message, L"Forgetting ");
                                                     appendNumber(message, peers[i].address[0], FALSE);
