@@ -19,7 +19,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 142
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -5400,6 +5400,7 @@ static unsigned long long miningData[65536];
 static unsigned int validationNeuronLinks[MAX_NUMBER_OF_PROCESSORS][NUMBER_OF_NEURONS][2];
 static unsigned char validationNeuronValues[MAX_NUMBER_OF_PROCESSORS][NUMBER_OF_NEURONS];
 
+static volatile char solutionsLock = 0;
 static unsigned long long* minerSolutionFlags = NULL;
 static volatile unsigned char minerPublicKeys[MAX_NUMBER_OF_MINERS][32];
 static volatile unsigned int minerScores[MAX_NUMBER_OF_MINERS];
@@ -6146,8 +6147,23 @@ static void requestProcessor(void* ProcedureArgument)
                                                         if (outputLength >= SOLUTION_THRESHOLD
                                                             && system.numberOfSolutions < MAX_NUMBER_OF_SOLUTIONS)
                                                         {
-                                                            *((__m256i*)system.solutions[system.numberOfSolutions].computorPublicKey) = *((__m256i*)request->destinationPublicKey);
-                                                            *((__m256i*)system.solutions[system.numberOfSolutions++].nonce) = *((__m256i*)&((unsigned char*)request)[sizeof(Message)]);
+                                                            ACQUIRE(solutionsLock);
+
+                                                            for (k = 0; k < system.numberOfSolutions; k++)
+                                                            {
+                                                                if (EQUAL(*((__m256i*)&((unsigned char*)request)[sizeof(Message)]), *((__m256i*)system.solutions[k].nonce))
+                                                                    && EQUAL(*((__m256i*)request->destinationPublicKey), *((__m256i*)system.solutions[k].computorPublicKey)))
+                                                                {
+                                                                    break;
+                                                                }
+                                                            }
+                                                            if (k == system.numberOfSolutions)
+                                                            {
+                                                                *((__m256i*)system.solutions[system.numberOfSolutions].computorPublicKey) = *((__m256i*)request->destinationPublicKey);
+                                                                *((__m256i*)system.solutions[system.numberOfSolutions++].nonce) = *((__m256i*)&((unsigned char*)request)[sizeof(Message)]);
+                                                            }
+
+                                                            RELEASE(solutionsLock);
                                                         }
                                                     }
                                                 }
@@ -6918,6 +6934,8 @@ static void tickerProcessor(void*)
                                                 {
                                                     if (EQUAL(*((__m256i*)transaction->sourcePublicKey), *((__m256i*)computorPublicKeys[i])))
                                                     {
+                                                        ACQUIRE(solutionsLock);
+
                                                         unsigned int j;
                                                         for (j = 0; j < system.numberOfSolutions; j++)
                                                         {
@@ -6936,6 +6954,8 @@ static void tickerProcessor(void*)
                                                             *((__m256i*)system.solutions[system.numberOfSolutions].nonce) = *((__m256i*)(((unsigned char*)transaction) + sizeof(Transaction)));
                                                             system.solutionPublicationTicks[system.numberOfSolutions++] = -1;
                                                         }
+
+                                                        RELEASE(solutionsLock);
 
                                                         break;
                                                     }
