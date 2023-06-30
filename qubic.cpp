@@ -19,7 +19,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 143
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -4801,7 +4801,7 @@ static bool verify(const unsigned char* publicKey, const unsigned char* messageD
 #define NUMBER_OF_MINER_SOLUTION_FLAGS 0x100000000
 #define MAX_NUMBER_OF_PROCESSORS 28
 #define MAX_NUMBER_OF_PUBLIC_PEERS 1024
-#define MAX_NUMBER_OF_CONTRACTS 1024
+#define MAX_NUMBER_OF_CONTRACTS 1024 // Must be 2^N
 #define MAX_NUMBER_OF_SOLUTIONS 65536 // Must be 2^N
 #define MAX_TRANSACTION_SIZE 1024ULL
 #define MAX_MESSAGE_PAYLOAD_SIZE MAX_TRANSACTION_SIZE
@@ -4834,6 +4834,8 @@ static bool verify(const unsigned char* publicKey, const unsigned char* messageD
 #define TIME_ACCURACY 60000
 #define TRANSACTION_SPARSENESS 4
 #define VOLUME_LABEL L"Qubic"
+
+#define CONTRACT_IPO_BID 1
 
 #define AMPERE 1
 #define CANDELA 2
@@ -4891,8 +4893,8 @@ struct Asset
 
 struct IPO
 {
-    unsigned char publicKeys[NUMBER_OF_COMPUTORS];
-    unsigned char prices[NUMBER_OF_COMPUTORS];
+    unsigned char publicKeys[NUMBER_OF_COMPUTORS][32];
+    long long prices[NUMBER_OF_COMPUTORS];
 };
 
 typedef struct
@@ -5162,6 +5164,12 @@ typedef struct
     unsigned short inputSize;
 } Transaction;
 
+struct ContractIPOBid
+{
+    long long price;
+    unsigned short quantity;
+};
+
 #define REQUEST_CURRENT_TICK_INFO 27
 
 #define RESPOND_CURRENT_TICK_INFO 28
@@ -5199,6 +5207,23 @@ typedef struct
     int spectrumIndex;
     unsigned char siblings[SPECTRUM_DEPTH][32];
 } RespondedEntity;
+
+#define REQUEST_CONTRACT_IPO 33
+
+typedef struct
+{
+    unsigned int contractIndex;
+} RequestContractIPO;
+
+#define RESPOND_CONTRACT_IPO 34
+
+typedef struct
+{
+    unsigned int contractIndex;
+    unsigned int tick;
+    unsigned char publicKeys[NUMBER_OF_COMPUTORS][32];
+    long long prices[NUMBER_OF_COMPUTORS];
+} RespondContractIPO;
 
 struct ComputorProposal
 {
@@ -5655,7 +5680,12 @@ iteration:
     }
 }
 
-static void increaseEnergy(unsigned char* publicKey, long long amount, unsigned int tick)
+static long long energy(const int index)
+{
+    return spectrum[index].incomingAmount - spectrum[index].outgoingAmount;
+}
+
+static void increaseEnergy(unsigned char* publicKey, long long amount)
 {
     if (!EQUAL(*((__m256i*)publicKey), ZERO) && amount >= 0)
     {
@@ -5670,7 +5700,7 @@ static void increaseEnergy(unsigned char* publicKey, long long amount, unsigned 
         {
             spectrum[index].incomingAmount += amount;
             spectrum[index].numberOfIncomingTransfers++;
-            spectrum[index].latestIncomingTransferTick = tick;
+            spectrum[index].latestIncomingTransferTick = system.tick;
         }
         else
         {
@@ -5679,7 +5709,7 @@ static void increaseEnergy(unsigned char* publicKey, long long amount, unsigned 
                 *((__m256i*)spectrum[index].publicKey) = *((__m256i*)publicKey);
                 spectrum[index].incomingAmount = amount;
                 spectrum[index].numberOfIncomingTransfers = 1;
-                spectrum[index].latestIncomingTransferTick = tick;
+                spectrum[index].latestIncomingTransferTick = system.tick;
             }
             else
             {
@@ -5693,55 +5723,17 @@ static void increaseEnergy(unsigned char* publicKey, long long amount, unsigned 
     }
 }
 
-static bool decreaseEnergy(unsigned char* publicKey, long long amount, unsigned int tick)
-{
-    if (!EQUAL(*((__m256i*)publicKey), ZERO) && amount >= 0)
-    {
-        unsigned int index = (*((unsigned int*)publicKey)) & (SPECTRUM_CAPACITY - 1);
-
-        ACQUIRE(spectrumLock);
-
-    iteration:
-        if (EQUAL(*((__m256i*)spectrum[index].publicKey), *((__m256i*)publicKey)))
-        {
-            if (spectrum[index].incomingAmount - spectrum[index].outgoingAmount >= amount)
-            {
-                spectrum[index].outgoingAmount += amount;
-                spectrum[index].numberOfOutgoingTransfers++;
-                spectrum[index].latestOutgoingTransferTick = tick;
-
-                RELEASE(spectrumLock);
-
-                return true;
-            }
-        }
-        else
-        {
-            if (!EQUAL(*((__m256i*)spectrum[index].publicKey), ZERO))
-            {
-                index = (index + 1) & (SPECTRUM_CAPACITY - 1);
-
-                goto iteration;
-            }
-        }
-
-        RELEASE(spectrumLock);
-    }
-
-    return false;
-}
-
-static bool decreaseEnergy(const int index, long long amount, unsigned int tick)
+static bool decreaseEnergy(const int index, long long amount)
 {
     if (amount >= 0)
     {
         ACQUIRE(spectrumLock);
 
-        if (spectrum[index].incomingAmount - spectrum[index].outgoingAmount >= amount)
+        if (energy(index) >= amount)
         {
             spectrum[index].outgoingAmount += amount;
             spectrum[index].numberOfOutgoingTransfers++;
-            spectrum[index].latestOutgoingTransferTick = tick;
+            spectrum[index].latestOutgoingTransferTick = system.tick;
 
             RELEASE(spectrumLock);
 
@@ -6044,7 +6036,7 @@ static void requestProcessor(void* ProcedureArgument)
                             if (header->isDejavuZero())
                             {
                                 const int spectrumIndex = ::spectrumIndex(request->sourcePublicKey);
-                                if (spectrumIndex >= 0 && spectrum[spectrumIndex].incomingAmount - spectrum[spectrumIndex].outgoingAmount >= MESSAGE_DISSEMINATION_THRESHOLD)
+                                if (spectrumIndex >= 0 && energy(spectrumIndex) >= MESSAGE_DISSEMINATION_THRESHOLD)
                                 {
                                     enqueueResponse(NULL, header);
                                 }
@@ -6875,141 +6867,253 @@ static void tickerProcessor(void*)
                                         entityPendingTransactionIndices[spectrumIndex] = 1;
 
                                         numberOfTransactions++;
-                                        if (decreaseEnergy(spectrumIndex, transaction->amount, system.tick))
+                                        if (decreaseEnergy(spectrumIndex, transaction->amount))
                                         {
-                                            increaseEnergy(transaction->destinationPublicKey, transaction->amount, system.tick);
+                                            increaseEnergy(transaction->destinationPublicKey, transaction->amount);
                                         }
 
-                                        if (!transaction->amount
-                                            && transaction->inputSize == 32
-                                            && !transaction->inputType
-                                            && EQUAL(*((__m256i*)transaction->destinationPublicKey), *((__m256i*)arbitratorPublicKey)))
+                                        if (EQUAL(*((__m256i*)transaction->destinationPublicKey), ZERO))
                                         {
-                                            unsigned char data[32 + 32];
-                                            *((__m256i*)&data[0]) = *((__m256i*)transaction->sourcePublicKey);
-                                            *((__m256i*)&data[32]) = *((__m256i*)(((unsigned char*)transaction) + sizeof(Transaction)));
-                                            unsigned int flagIndex;
-                                            KangarooTwelve(data, sizeof(data), (unsigned char*)&flagIndex, sizeof(flagIndex));
-                                            if (!(minerSolutionFlags[flagIndex >> 6] & (1ULL << (flagIndex & 63))))
+                                            // Nothing to do
+                                        }
+                                        else
+                                        {
+                                            unsigned char maskedDestinationPublicKey[32];
+                                            *((__m256i*)maskedDestinationPublicKey) = *((__m256i*)transaction->destinationPublicKey);
+                                            *((unsigned int*)maskedDestinationPublicKey) &= ~MAX_NUMBER_OF_CONTRACTS;
+                                            const unsigned int contractIndex = *((unsigned int*)transaction->destinationPublicKey);
+                                            if (EQUAL(*((__m256i*)maskedDestinationPublicKey), ZERO)
+                                                && contractIndex < NUMBER_OF_CONTRACTS)
                                             {
-                                                minerSolutionFlags[flagIndex >> 6] |= (1ULL << (flagIndex & 63));
-
-                                                random(transaction->sourcePublicKey, ((unsigned char*)transaction) + sizeof(Transaction), (unsigned char*)validationNeuronLinks[processorNumber], sizeof(validationNeuronLinks[0]));
-                                                for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
+                                                switch (transaction->inputType)
                                                 {
-                                                    validationNeuronLinks[processorNumber][k][0] %= NUMBER_OF_NEURONS;
-                                                    validationNeuronLinks[processorNumber][k][1] %= NUMBER_OF_NEURONS;
-                                                }
-
-                                                bs->SetMem(validationNeuronValues[processorNumber], sizeof(validationNeuronValues[0]), 0xFF);
-
-                                                unsigned int limiter = sizeof(miningData) / sizeof(miningData[0]);
-                                                int outputLength = 0;
-                                                while (outputLength < (sizeof(miningData) << 3))
+                                                case CONTRACT_IPO_BID:
                                                 {
-                                                    const unsigned int prevValue0 = validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 1];
-                                                    const unsigned int prevValue1 = validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 2];
-
-                                                    for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
+                                                    if (contractIndex >= NUMBER_OF_EXECUTED_CONTRACTS)
                                                     {
-                                                        validationNeuronValues[processorNumber][k] = ~(validationNeuronValues[processorNumber][validationNeuronLinks[processorNumber][k][0]] & validationNeuronValues[processorNumber][validationNeuronLinks[processorNumber][k][1]]);
-                                                    }
-
-                                                    if (validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 1] != prevValue0
-                                                        && validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 2] == prevValue1)
-                                                    {
-                                                        if (!((miningData[outputLength >> 6] >> (outputLength & 63)) & 1))
+                                                        if (!transaction->amount
+                                                            && transaction->inputSize == sizeof(ContractIPOBid))
                                                         {
-                                                            break;
-                                                        }
+                                                            ContractIPOBid* contractIPOBid = (ContractIPOBid*)(((unsigned char*)transaction) + sizeof(Transaction));
+                                                            if (contractIPOBid->price > 0 && contractIPOBid->price <= MAX_AMOUNT / NUMBER_OF_COMPUTORS
+                                                                && contractIPOBid->quantity > 0 && contractIPOBid->quantity <= NUMBER_OF_COMPUTORS)
+                                                            {
+                                                                const long long amount = contractIPOBid->price * contractIPOBid->quantity;
+                                                                if (decreaseEnergy(spectrumIndex, amount))
+                                                                {
+                                                                    unsigned char releasedPublicKeys[NUMBER_OF_COMPUTORS][32];
+                                                                    long long releasedAmounts[NUMBER_OF_COMPUTORS];
+                                                                    unsigned int numberOfReleasedEntities = 0;
+                                                                    IPO* ipo = (IPO*)contractStates[contractIndex];
+                                                                    for (unsigned int i = 0; i < contractIPOBid->quantity; i++)
+                                                                    {
+                                                                        if (contractIPOBid->price <= ipo->prices[NUMBER_OF_COMPUTORS - 1])
+                                                                        {
+                                                                            unsigned int j;
+                                                                            for (j = 0; j < numberOfReleasedEntities; j++)
+                                                                            {
+                                                                                if (EQUAL(*((__m256i*)transaction->sourcePublicKey), *((__m256i*)releasedPublicKeys[j])))
+                                                                                {
+                                                                                    break;
+                                                                                }
+                                                                            }
+                                                                            if (j == numberOfReleasedEntities)
+                                                                            {
+                                                                                *((__m256i*)releasedPublicKeys[numberOfReleasedEntities]) = *((__m256i*)transaction->sourcePublicKey);
+                                                                                releasedAmounts[numberOfReleasedEntities++] = contractIPOBid->price;
+                                                                            }
+                                                                            else
+                                                                            {
+                                                                                releasedAmounts[j] += contractIPOBid->price;
+                                                                            }
+                                                                        }
+                                                                        else
+                                                                        {
+                                                                            unsigned int j;
+                                                                            for (j = 0; j < numberOfReleasedEntities; j++)
+                                                                            {
+                                                                                if (EQUAL(*((__m256i*)ipo->publicKeys[NUMBER_OF_COMPUTORS - 1]), *((__m256i*)releasedPublicKeys[j])))
+                                                                                {
+                                                                                    break;
+                                                                                }
+                                                                            }
+                                                                            if (j == numberOfReleasedEntities)
+                                                                            {
+                                                                                *((__m256i*)releasedPublicKeys[numberOfReleasedEntities]) = *((__m256i*)ipo->publicKeys[NUMBER_OF_COMPUTORS - 1]);
+                                                                                releasedAmounts[numberOfReleasedEntities++] = ipo->prices[NUMBER_OF_COMPUTORS - 1];
+                                                                            }
+                                                                            else
+                                                                            {
+                                                                                releasedAmounts[j] += ipo->prices[NUMBER_OF_COMPUTORS - 1];
+                                                                            }
 
-                                                        outputLength++;
+                                                                            *((__m256i*)ipo->publicKeys[NUMBER_OF_COMPUTORS - 1]) = *((__m256i*)transaction->sourcePublicKey);
+                                                                            ipo->prices[NUMBER_OF_COMPUTORS - 1] = contractIPOBid->price;
+                                                                            j = NUMBER_OF_COMPUTORS - 1;
+                                                                            while (j
+                                                                                && ipo->prices[j - 1] < ipo->prices[j])
+                                                                            {
+                                                                                __m256i tmpPublicKey = *((__m256i*)ipo->publicKeys[j - 1]);
+                                                                                long long tmpPrice = ipo->prices[j - 1];
+                                                                                *((__m256i*)ipo->publicKeys[j - 1]) = *((__m256i*)ipo->publicKeys[j]);
+                                                                                ipo->prices[j - 1] = ipo->prices[j];
+                                                                                *((__m256i*)ipo->publicKeys[j]) = tmpPublicKey;
+                                                                                ipo->prices[j] = tmpPrice;
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    for (unsigned int i = 0; i < numberOfReleasedEntities; i++)
+                                                                    {
+                                                                        increaseEnergy(releasedPublicKeys[i], releasedAmounts[i]);
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
                                                     }
                                                     else
                                                     {
-                                                        if (validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 2] != prevValue1
-                                                            && validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 1] == prevValue0)
-                                                        {
-                                                            if ((miningData[outputLength >> 6] >> (outputLength & 63)) & 1)
-                                                            {
-                                                                break;
-                                                            }
-
-                                                            outputLength++;
-                                                        }
-                                                        else
-                                                        {
-                                                            if (!(--limiter))
-                                                            {
-                                                                break;
-                                                            }
-                                                        }
+                                                        // TODO
                                                     }
                                                 }
-
-                                                if (outputLength >= SOLUTION_THRESHOLD)
+                                                break;
+                                                }
+                                            }
+                                            else
+                                            {
+                                                if (EQUAL(*((__m256i*)transaction->destinationPublicKey), *((__m256i*)arbitratorPublicKey)))
                                                 {
-                                                    __m256i minerSolutionDigest;
-                                                    KangarooTwelve((unsigned char*)&outputLength, sizeof(outputLength), (unsigned char*)&minerSolutionDigest, sizeof(minerSolutionDigest));
-                                                    minerSolutionsDigest = _mm256_xor_si256(minerSolutionsDigest, minerSolutionDigest);
-
-                                                    for (unsigned int i = 0; i < sizeof(computorSeeds) / sizeof(computorSeeds[0]); i++)
+                                                    if (!transaction->amount
+                                                        && transaction->inputSize == 32
+                                                        && !transaction->inputType)
                                                     {
-                                                        if (EQUAL(*((__m256i*)transaction->sourcePublicKey), *((__m256i*)computorPublicKeys[i])))
+                                                        unsigned char data[32 + 32];
+                                                        *((__m256i*) & data[0]) = *((__m256i*)transaction->sourcePublicKey);
+                                                        *((__m256i*) & data[32]) = *((__m256i*)(((unsigned char*)transaction) + sizeof(Transaction)));
+                                                        unsigned int flagIndex;
+                                                        KangarooTwelve(data, sizeof(data), (unsigned char*)&flagIndex, sizeof(flagIndex));
+                                                        if (!(minerSolutionFlags[flagIndex >> 6] & (1ULL << (flagIndex & 63))))
                                                         {
-                                                            ACQUIRE(solutionsLock);
+                                                            minerSolutionFlags[flagIndex >> 6] |= (1ULL << (flagIndex & 63));
 
-                                                            unsigned int j;
-                                                            for (j = 0; j < system.numberOfSolutions; j++)
+                                                            random(transaction->sourcePublicKey, ((unsigned char*)transaction) + sizeof(Transaction), (unsigned char*)validationNeuronLinks[processorNumber], sizeof(validationNeuronLinks[0]));
+                                                            for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
                                                             {
-                                                                if (EQUAL(*((__m256i*)(((unsigned char*)transaction) + sizeof(Transaction))), *((__m256i*)system.solutions[j].nonce))
-                                                                    && EQUAL(*((__m256i*)transaction->sourcePublicKey), *((__m256i*)system.solutions[j].computorPublicKey)))
-                                                                {
-                                                                    system.solutionPublicationTicks[j] = -1;
+                                                                validationNeuronLinks[processorNumber][k][0] %= NUMBER_OF_NEURONS;
+                                                                validationNeuronLinks[processorNumber][k][1] %= NUMBER_OF_NEURONS;
+                                                            }
 
-                                                                    break;
+                                                            bs->SetMem(validationNeuronValues[processorNumber], sizeof(validationNeuronValues[0]), 0xFF);
+
+                                                            unsigned int limiter = sizeof(miningData) / sizeof(miningData[0]);
+                                                            int outputLength = 0;
+                                                            while (outputLength < (sizeof(miningData) << 3))
+                                                            {
+                                                                const unsigned int prevValue0 = validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 1];
+                                                                const unsigned int prevValue1 = validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 2];
+
+                                                                for (unsigned int k = 0; k < NUMBER_OF_NEURONS; k++)
+                                                                {
+                                                                    validationNeuronValues[processorNumber][k] = ~(validationNeuronValues[processorNumber][validationNeuronLinks[processorNumber][k][0]] & validationNeuronValues[processorNumber][validationNeuronLinks[processorNumber][k][1]]);
+                                                                }
+
+                                                                if (validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 1] != prevValue0
+                                                                    && validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 2] == prevValue1)
+                                                                {
+                                                                    if (!((miningData[outputLength >> 6] >> (outputLength & 63)) & 1))
+                                                                    {
+                                                                        break;
+                                                                    }
+
+                                                                    outputLength++;
+                                                                }
+                                                                else
+                                                                {
+                                                                    if (validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 2] != prevValue1
+                                                                        && validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 1] == prevValue0)
+                                                                    {
+                                                                        if ((miningData[outputLength >> 6] >> (outputLength & 63)) & 1)
+                                                                        {
+                                                                            break;
+                                                                        }
+
+                                                                        outputLength++;
+                                                                    }
+                                                                    else
+                                                                    {
+                                                                        if (!(--limiter))
+                                                                        {
+                                                                            break;
+                                                                        }
+                                                                    }
                                                                 }
                                                             }
-                                                            if (j == system.numberOfSolutions
-                                                                && system.numberOfSolutions < MAX_NUMBER_OF_SOLUTIONS)
+
+                                                            if (outputLength >= SOLUTION_THRESHOLD)
                                                             {
-                                                                *((__m256i*)system.solutions[system.numberOfSolutions].computorPublicKey) = *((__m256i*)transaction->sourcePublicKey);
-                                                                *((__m256i*)system.solutions[system.numberOfSolutions].nonce) = *((__m256i*)(((unsigned char*)transaction) + sizeof(Transaction)));
-                                                                system.solutionPublicationTicks[system.numberOfSolutions++] = -1;
+                                                                __m256i minerSolutionDigest;
+                                                                KangarooTwelve((unsigned char*)&outputLength, sizeof(outputLength), (unsigned char*)&minerSolutionDigest, sizeof(minerSolutionDigest));
+                                                                minerSolutionsDigest = _mm256_xor_si256(minerSolutionsDigest, minerSolutionDigest);
+
+                                                                for (unsigned int i = 0; i < sizeof(computorSeeds) / sizeof(computorSeeds[0]); i++)
+                                                                {
+                                                                    if (EQUAL(*((__m256i*)transaction->sourcePublicKey), *((__m256i*)computorPublicKeys[i])))
+                                                                    {
+                                                                        ACQUIRE(solutionsLock);
+
+                                                                        unsigned int j;
+                                                                        for (j = 0; j < system.numberOfSolutions; j++)
+                                                                        {
+                                                                            if (EQUAL(*((__m256i*)(((unsigned char*)transaction) + sizeof(Transaction))), *((__m256i*)system.solutions[j].nonce))
+                                                                                && EQUAL(*((__m256i*)transaction->sourcePublicKey), *((__m256i*)system.solutions[j].computorPublicKey)))
+                                                                            {
+                                                                                system.solutionPublicationTicks[j] = -1;
+
+                                                                                break;
+                                                                            }
+                                                                        }
+                                                                        if (j == system.numberOfSolutions
+                                                                            && system.numberOfSolutions < MAX_NUMBER_OF_SOLUTIONS)
+                                                                        {
+                                                                            *((__m256i*)system.solutions[system.numberOfSolutions].computorPublicKey) = *((__m256i*)transaction->sourcePublicKey);
+                                                                            *((__m256i*)system.solutions[system.numberOfSolutions].nonce) = *((__m256i*)(((unsigned char*)transaction) + sizeof(Transaction)));
+                                                                            system.solutionPublicationTicks[system.numberOfSolutions++] = -1;
+                                                                        }
+
+                                                                        RELEASE(solutionsLock);
+
+                                                                        break;
+                                                                    }
+                                                                }
+
+                                                                unsigned int minerIndex;
+                                                                for (minerIndex = 0; minerIndex < numberOfMiners; minerIndex++)
+                                                                {
+                                                                    if (EQUAL(*((__m256i*)transaction->sourcePublicKey), *((__m256i*)minerPublicKeys[minerIndex])))
+                                                                    {
+                                                                        minerScores[minerIndex]++;
+
+                                                                        break;
+                                                                    }
+                                                                }
+                                                                if (minerIndex == numberOfMiners
+                                                                    && numberOfMiners < MAX_NUMBER_OF_MINERS)
+                                                                {
+                                                                    *((__m256i*)minerPublicKeys[numberOfMiners]) = *((__m256i*)transaction->sourcePublicKey);
+                                                                    minerScores[numberOfMiners++] = 1;
+                                                                }
+
+                                                                const __m256i tmpPublicKey = *((__m256i*)minerPublicKeys[minerIndex]);
+                                                                const unsigned int tmpScore = minerScores[minerIndex];
+                                                                while (minerIndex > (unsigned int)(minerIndex < NUMBER_OF_COMPUTORS ? 0 : NUMBER_OF_COMPUTORS)
+                                                                    && minerScores[minerIndex - 1] < minerScores[minerIndex])
+                                                                {
+                                                                    *((__m256i*)minerPublicKeys[minerIndex]) = *((__m256i*)minerPublicKeys[minerIndex - 1]);
+                                                                    minerScores[minerIndex] = minerScores[minerIndex - 1];
+                                                                    *((__m256i*)minerPublicKeys[--minerIndex]) = tmpPublicKey;
+                                                                    minerScores[minerIndex] = tmpScore;
+                                                                }
                                                             }
-
-                                                            RELEASE(solutionsLock);
-
-                                                            break;
                                                         }
-                                                    }
-
-                                                    unsigned int minerIndex;
-                                                    for (minerIndex = 0; minerIndex < numberOfMiners; minerIndex++)
-                                                    {
-                                                        if (EQUAL(*((__m256i*)transaction->sourcePublicKey), *((__m256i*)minerPublicKeys[minerIndex])))
-                                                        {
-                                                            minerScores[minerIndex]++;
-
-                                                            break;
-                                                        }
-                                                    }
-                                                    if (minerIndex == numberOfMiners
-                                                        && numberOfMiners < MAX_NUMBER_OF_MINERS)
-                                                    {
-                                                        *((__m256i*)minerPublicKeys[numberOfMiners]) = *((__m256i*)transaction->sourcePublicKey);
-                                                        minerScores[numberOfMiners++] = 1;
-                                                    }
-
-                                                    const __m256i tmpPublicKey = *((__m256i*)minerPublicKeys[minerIndex]);
-                                                    const unsigned int tmpScore = minerScores[minerIndex];
-                                                    while (minerIndex > (unsigned int)(minerIndex < NUMBER_OF_COMPUTORS ? 0 : NUMBER_OF_COMPUTORS)
-                                                        && minerScores[minerIndex - 1] < minerScores[minerIndex])
-                                                    {
-                                                        *((__m256i*)minerPublicKeys[minerIndex]) = *((__m256i*)minerPublicKeys[minerIndex - 1]);
-                                                        minerScores[minerIndex] = minerScores[minerIndex - 1];
-                                                        *((__m256i*)minerPublicKeys[--minerIndex]) = tmpPublicKey;
-                                                        minerScores[minerIndex] = tmpScore;
                                                     }
                                                 }
                                             }
@@ -7347,6 +7451,7 @@ static void tickerProcessor(void*)
                     {
                         tickData[system.tick + 1 - system.initialTick].epoch = 0;
                         nextTickData.epoch = 0;
+                        testFlags |= 8192;
                     }
                 }
 
@@ -7511,6 +7616,8 @@ static void tickerProcessor(void*)
 
                             numberOfNextTickTransactions = 0;
                             numberOfKnownNextTickTransactions = 0;
+
+                            testFlags |= 4096;
                         }
                     }
 
@@ -7738,11 +7845,11 @@ static void tickerProcessor(void*)
                                         for (unsigned int computorIndex = 0; computorIndex < NUMBER_OF_COMPUTORS; computorIndex++)
                                         {
                                             const unsigned int revenue = tickCounters[computorIndex] ? ((ISSUANCE_RATE / NUMBER_OF_COMPUTORS) * ((unsigned long long)nonEmptyTickCounters[computorIndex]) / tickCounters[computorIndex]) : 0;
-                                            increaseEnergy(broadcastedComputors.broadcastComputors.computors.publicKeys[computorIndex], revenue, system.tick);
+                                            increaseEnergy(broadcastedComputors.broadcastComputors.computors.publicKeys[computorIndex], revenue);
                                             arbitratorRevenue -= revenue;
                                         }
 
-                                        increaseEnergy(arbitratorPublicKey, arbitratorRevenue, system.tick);
+                                        increaseEnergy(arbitratorPublicKey, arbitratorRevenue);
 
                                         ACQUIRE(spectrumLock);
 
@@ -8318,13 +8425,13 @@ static bool initialize()
         for (unsigned int contractIndex = 0; contractIndex < NUMBER_OF_CONTRACTS; contractIndex++)
         {
             unsigned long long size;
-            if (contractIndex < NUMBER_OF_EXECUTED_CONTRACTS)
+            if (contractIndex >= NUMBER_OF_EXECUTED_CONTRACTS)
             {
-                // TODO
+                size = sizeof(IPO);
             }
             else
             {
-                size = sizeof(IPO);
+                // TODO
             }
             if (status = bs->AllocatePool(EfiRuntimeServicesData, size, (void**)&contractStates[contractIndex]))
             {
@@ -8332,13 +8439,13 @@ static bool initialize()
 
                 return false;
             }
-            if (contractIndex < NUMBER_OF_EXECUTED_CONTRACTS)
+            if (contractIndex >= NUMBER_OF_EXECUTED_CONTRACTS)
             {
-                // TODO
+                bs->SetMem(contractStates[contractIndex], size, 0);
             }
             else
             {
-                bs->SetMem(contractStates[contractIndex], size, 0);
+                // TODO
             }
         }
         if (status = bs->AllocatePool(EfiRuntimeServicesData, MAX_CONTRACT_STATE_SIZE, (void**)&curContractState))
@@ -8371,6 +8478,8 @@ static bool initialize()
             }
             else
             {
+                system.version = VERSION_B;
+
                 if (!size)
                 {
                     system.epoch = 63;
@@ -8382,7 +8491,7 @@ static bool initialize()
 
                 if (system.epoch == 63)
                 {
-                    system.initialTick = system.tick = 6310000;
+                    system.initialTick = system.tick = 6340000;
                 }
                 else
                 {
@@ -8929,7 +9038,7 @@ static void processKeyPresses()
                     const int spectrumIndex = ::spectrumIndex(broadcastedComputors.broadcastComputors.computors.publicKeys[i]);
                     if (spectrumIndex >= 0)
                     {
-                        amount = spectrum[spectrumIndex].incomingAmount - spectrum[spectrumIndex].outgoingAmount;
+                        amount = energy(spectrumIndex);
                     }
                     appendNumber(message, amount, TRUE);
                     appendText(message, L" qus");
@@ -8973,10 +9082,10 @@ static void processKeyPresses()
             unsigned long long totalAmount = 0;
             for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
             {
-                if (spectrum[i].incomingAmount - spectrum[i].outgoingAmount)
+                if (energy(i))
                 {
                     numberOfEntities++;
-                    totalAmount += spectrum[i].incomingAmount - spectrum[i].outgoingAmount;
+                    totalAmount += energy(i);
                 }
             }
             setNumber(message, totalAmount, TRUE);
@@ -9076,7 +9185,7 @@ static void processKeyPresses()
                         const int spectrumIndex = ::spectrumIndex(computorPublicKeys[i]);
                         if (spectrumIndex >= 0)
                         {
-                            amount = spectrum[spectrumIndex].incomingAmount - spectrum[spectrumIndex].outgoingAmount;
+                            amount = energy(spectrumIndex);
                         }
                         appendNumber(message, amount, TRUE);
                         appendText(message, L" qus");
@@ -9101,7 +9210,7 @@ static void processKeyPresses()
                             const int spectrumIndex = ::spectrumIndex(computorPublicKeys[i]);
                             if (spectrumIndex >= 0)
                             {
-                                amount = spectrum[spectrumIndex].incomingAmount - spectrum[spectrumIndex].outgoingAmount;
+                                amount = energy(spectrumIndex);
                             }
                             appendNumber(message, amount, TRUE);
                             appendText(message, L" qus");
@@ -9231,25 +9340,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
     if (initialize())
     {
-        log(L"Ids:");
-        for (unsigned int i = 0; i < sizeof(computorSeeds) / sizeof(computorSeeds[0]); i++)
-        {
-            if (!EQUAL(*((__m256i*)computorSeeds[i]), ZERO))
-            {
-                getIdentity(computorPublicKeys[i], message, false);
-                appendText(message, L" = ");
-                long long amount = 0;
-                const int spectrumIndex = ::spectrumIndex(computorPublicKeys[i]);
-                if (spectrumIndex >= 0)
-                {
-                    amount = spectrum[spectrumIndex].incomingAmount - spectrum[spectrumIndex].outgoingAmount;
-                }
-                appendNumber(message, amount, TRUE);
-                appendText(message, L" qus");
-                log(message);
-            }
-        }
-
         EFI_STATUS status;
 
         unsigned int computingProcessorNumber;
