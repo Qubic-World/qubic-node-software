@@ -19,7 +19,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 143
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -4789,6 +4789,7 @@ static bool verify(const unsigned char* publicKey, const unsigned char* messageD
 ////////// Qubic \\\\\\\\\\
 
 #define BUFFER_SIZE 4194304
+#define CONTRACT_STATES_DEPTH 10 // Is derived from MAX_NUMBER_OF_CONTRACTS (=N)
 #define TARGET_TICK_DURATION 5000
 #define TICK_REQUESTING_PERIOD 200
 #define DEJAVU_SWAP_LIMIT 1000000
@@ -4815,7 +4816,7 @@ static bool verify(const unsigned char* publicKey, const unsigned char* messageD
 #define NUMBER_OF_OUTGOING_CONNECTIONS 4
 #define NUMBER_OF_INCOMING_CONNECTIONS 60
 #define NUMBER_OF_NEURONS 4194304
-#define NUMBER_OF_TRANSACTIONS_PER_TICK 1024 // Must be 2^N
+#define NUMBER_OF_TRANSACTIONS_PER_TICK 64 // Must be 2^N
 #define PEER_REFRESHING_PERIOD 10000
 #define PORT 21841
 #define QUORUM (NUMBER_OF_COMPUTORS * 2 / 3 + 1)
@@ -4827,7 +4828,7 @@ static bool verify(const unsigned char* publicKey, const unsigned char* messageD
 #define SOLUTION_THRESHOLD 19
 #define SPECTRUM_CAPACITY 0x1000000ULL // Must be 2^N
 #define SPECTRUM_DEPTH 24 // Is derived from SPECTRUM_CAPACITY (=N)
-#define SPECTRUM_WRITING_CHUNK_SIZE 1048576 // Must be 2^N
+#define WRITING_CHUNK_SIZE 1048576 // Must be 2^N
 #define SYSTEM_DATA_SAVING_PERIOD 300000
 #define TICK_TRANSACTIONS_PUBLICATION_OFFSET 2 // Must be only 2
 #define MIN_MINING_SOLUTIONS_PUBLICATION_OFFSET 3 // Must be 3+
@@ -4837,13 +4838,18 @@ static bool verify(const unsigned char* publicKey, const unsigned char* messageD
 
 #define CONTRACT_IPO_BID 1
 
-#define AMPERE 1
-#define CANDELA 2
-#define KELVIN 3
-#define KILOGRAM 4
-#define METER 5
-#define MOLE 6
-#define SECOND 7
+#define EMPTY 0
+#define ISSUANCE 1
+#define OWNERSHIP 2
+#define POSSESSION 3
+
+#define AMPERE 0
+#define CANDELA 1
+#define KELVIN 2
+#define KILOGRAM 3
+#define METER 4
+#define MOLE 5
+#define SECOND 6
 
 struct Entity
 {
@@ -4861,32 +4867,29 @@ struct Asset
         {
             unsigned char publicKey[32];
             unsigned char type;
-
-            unsigned int managingContractIndex;
-            char category[8]; // Capital letters + digits
-            char name[8]; // Capital letters + digits
-            char numberOfDecimalPlacesAndUnitOfMeasurement[8]; // 0th char contains the number of decimal places, 1st - 7th chars contain powers of the corresponding SI base units going in alphabetical order
-
+            char name[7]; // Capital letters + digits
+            char numberOfDecimalPlaces;
+            char unitOfMeasurement[7]; // Powers of the corresponding SI base units going in alphabetical order
         } issuance;
+
         struct
         {
             unsigned char publicKey[32];
-
             unsigned char type;
-
-            unsigned int parentIndex;
+            char padding[1];
             unsigned short managingContractIndex;
-
+            unsigned int issuanceIndex;
+            long long numberOfUnits;
         } ownership;
+
         struct
         {
             unsigned char publicKey[32];
-
             unsigned char type;
-
-            unsigned int parentIndex;
+            char padding[1];
             unsigned short managingContractIndex;
-
+            unsigned int ownershipIndex;
+            long long numberOfUnits;
         } possession;
     } varStruct;
 };
@@ -5374,9 +5377,14 @@ static __m256i* spectrumDigests = NULL;
 static volatile char universeLock = 0;
 static __m256i minerSolutionsDigest;
 
+struct contract0State
+{
+    long long contractFeeReserves[MAX_NUMBER_OF_CONTRACTS];
+};
 static volatile char computerLock = 0;
-static void* contractStates[NUMBER_OF_CONTRACTS];
+static unsigned char* contractStates[NUMBER_OF_CONTRACTS];
 static void* curContractState = NULL;
+static __m256i contractStateDigests[MAX_NUMBER_OF_CONTRACTS * 2 - 1];
 
 static volatile char tickLocks[NUMBER_OF_COMPUTORS];
 static bool targetNextTickDataDigestIsKnown = false;
@@ -5821,6 +5829,62 @@ inline int dayIndex(unsigned int year, unsigned int month, unsigned int day) // 
 inline long long ms(unsigned char year, unsigned char month, unsigned char day, unsigned char hour, unsigned char minute, unsigned char second, unsigned short millisecond)
 {
     return (((((long long)dayIndex(year, month, day)) * 24 + hour) * 60 + minute) * 60 + second) * 1000 + millisecond;
+}
+
+static unsigned long long contractStateSize(unsigned int contractIndex)
+{
+    if (!contractIndex)
+    {
+        return sizeof(contract0State);
+    }
+    if (contractIndex >= NUMBER_OF_CONTRACTS)
+    {
+        return 0;
+    }
+    if (contractIndex >= NUMBER_OF_EXECUTED_CONTRACTS)
+    {
+        return sizeof(IPO);
+    }
+
+    return 0; // TODO
+}
+
+static void getUniverseDigest(__m256i* digest)
+{
+    //////
+    *digest = minerSolutionsDigest;
+}
+
+static void getComputerDigest(__m256i* digest)
+{
+    unsigned int digestIndex;
+    for (digestIndex = 0; digestIndex < MAX_NUMBER_OF_CONTRACTS; digestIndex++)
+    {
+        const unsigned long long size = contractStateSize(digestIndex);
+        if (!size)
+        {
+            contractStateDigests[digestIndex] = ZERO;
+        }
+        else
+        {
+            KangarooTwelve((unsigned char*)contractStates[digestIndex], size, (unsigned char*)&contractStateDigests[digestIndex], 32);
+        }
+    }
+    unsigned int previousLevelBeginning = 0;
+    unsigned int numberOfLeafs = MAX_NUMBER_OF_CONTRACTS;
+    while (numberOfLeafs > 1)
+    {
+        for (unsigned int i = 0; i < numberOfLeafs; i += 2)
+        {
+            KangarooTwelve64To32((unsigned char*)&contractStateDigests[previousLevelBeginning + i], (unsigned char*)&contractStateDigests[digestIndex++]);
+        }
+
+        previousLevelBeginning += numberOfLeafs;
+        numberOfLeafs >>= 1;
+    }
+
+    *digest = contractStateDigests[(MAX_NUMBER_OF_CONTRACTS * 2 - 1) - 1];
+    /**/*digest = ZERO; // TODO
 }
 
 static void closePeer(Peer* peer)
@@ -6533,7 +6597,7 @@ static void requestProcessor(void* ProcedureArgument)
 
                 case REQUEST_CURRENT_TICK_INFO:
                 {
-                    static struct
+                    struct
                     {
                         RequestResponseHeader header;
                         CurrentTickInfo currentTickInfo;
@@ -6569,7 +6633,7 @@ static void requestProcessor(void* ProcedureArgument)
 
                 case REQUEST_ENTITY:
                 {
-                    static struct
+                    struct
                     {
                         RequestResponseHeader header;
                         RespondedEntity respondedEntity;
@@ -6607,6 +6671,39 @@ static void requestProcessor(void* ProcedureArgument)
                             spectrumDigestInputOffset += (SPECTRUM_CAPACITY >> j);
                             sibling >>= 1;
                         }
+                    }
+
+                    enqueueResponse(peer, &packet.header);
+                }
+                break;
+
+                case REQUEST_CONTRACT_IPO:
+                {
+                    struct
+                    {
+                        RequestResponseHeader header;
+                        RespondContractIPO respondContractIPO;
+                    } packet;
+
+                    packet.header.setSize(sizeof(packet));
+                    packet.header.setProtocol();
+                    packet.header.randomizeDejavu();
+                    packet.header.setType(RESPOND_CONTRACT_IPO);
+
+                    RequestContractIPO* request = (RequestContractIPO*)((char*)processor->buffer + sizeof(RequestResponseHeader));
+                    packet.respondContractIPO.contractIndex = request->contractIndex;
+                    packet.respondContractIPO.tick = system.tick;
+                    if (request->contractIndex < NUMBER_OF_EXECUTED_CONTRACTS
+                        || request->contractIndex >= NUMBER_OF_CONTRACTS)
+                    {
+                        bs->SetMem(packet.respondContractIPO.publicKeys, sizeof(packet.respondContractIPO.publicKeys), 0);
+                        bs->SetMem(packet.respondContractIPO.prices, sizeof(packet.respondContractIPO.prices), 0);
+                    }
+                    else
+                    {
+                        IPO* ipo = (IPO*)contractStates[request->contractIndex];
+                        bs->CopyMem(packet.respondContractIPO.publicKeys, ipo->publicKeys, sizeof(packet.respondContractIPO.publicKeys));
+                        bs->CopyMem(packet.respondContractIPO.prices, ipo->prices, sizeof(packet.respondContractIPO.prices));
                     }
 
                     enqueueResponse(peer, &packet.header);
@@ -6847,8 +6944,8 @@ static void tickerProcessor(void*)
                     }
 
                     *((__m256i*)etalonTick.prevSpectrumDigest) = spectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1];
-                    *((__m256i*)etalonTick.prevUniverseDigest) = minerSolutionsDigest;
-                    *((__m256i*)etalonTick.prevComputerDigest) = ZERO;
+                    getUniverseDigest((__m256i*)etalonTick.prevUniverseDigest);
+                    getComputerDigest((__m256i*)etalonTick.prevComputerDigest);
 
                     if (tickData[system.tick - system.initialTick].epoch == system.epoch)
                     {
@@ -7164,8 +7261,8 @@ static void tickerProcessor(void*)
                     spectrumChangeFlags[0] = 0;
 
                     *((__m256i*)etalonTick.saltedSpectrumDigest) = spectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1];
-                    *((__m256i*)etalonTick.saltedUniverseDigest) = minerSolutionsDigest;
-                    *((__m256i*)etalonTick.saltedComputerDigest) = ZERO;
+                    getUniverseDigest((__m256i*)etalonTick.saltedUniverseDigest);
+                    getComputerDigest((__m256i*)etalonTick.saltedComputerDigest);
 
                     for (unsigned int i = 0; i < numberOfOwnComputorIndices; i++)
                     {
@@ -7740,11 +7837,11 @@ static void tickerProcessor(void*)
                                             else
                                             {
                                                 if (*((unsigned long long*) & tick->millisecond) != *((unsigned long long*) & etalonTick.millisecond)) testFlags |= 16;
-                                                if (!EQUAL(*((__m256i*)tick->initComputerDigest), *((__m256i*)etalonTick.initSpectrumDigest))) testFlags |= 32;
-                                                if (!EQUAL(*((__m256i*)tick->initComputerDigest), *((__m256i*)etalonTick.initUniverseDigest))) testFlags |= 64;
+                                                if (!EQUAL(*((__m256i*)tick->initSpectrumDigest), *((__m256i*)etalonTick.initSpectrumDigest))) testFlags |= 32;
+                                                if (!EQUAL(*((__m256i*)tick->initUniverseDigest), *((__m256i*)etalonTick.initUniverseDigest))) testFlags |= 64;
                                                 if (!EQUAL(*((__m256i*)tick->initComputerDigest), *((__m256i*)etalonTick.initComputerDigest))) testFlags |= 128;
-                                                if (!EQUAL(*((__m256i*)tick->prevComputerDigest), *((__m256i*)etalonTick.prevComputerDigest))) testFlags |= 256;
-                                                if (!EQUAL(*((__m256i*)tick->prevComputerDigest), *((__m256i*)etalonTick.prevComputerDigest))) testFlags |= 512;
+                                                if (!EQUAL(*((__m256i*)tick->prevSpectrumDigest), *((__m256i*)etalonTick.prevSpectrumDigest))) testFlags |= 256;
+                                                if (!EQUAL(*((__m256i*)tick->prevUniverseDigest), *((__m256i*)etalonTick.prevUniverseDigest))) testFlags |= 512;
                                                 if (!EQUAL(*((__m256i*)tick->prevComputerDigest), *((__m256i*)etalonTick.prevComputerDigest))) testFlags |= 1024;
                                                 if (!EQUAL(*((__m256i*)tick->transactionDigest), *((__m256i*)etalonTick.transactionDigest))) testFlags |= 2048;
                                             }
@@ -8047,10 +8144,10 @@ static void saveSpectrum()
         unsigned long long writtenSize = 0;
         while (writtenSize < SPECTRUM_CAPACITY * sizeof(Entity))
         {
-            unsigned long long size = SPECTRUM_WRITING_CHUNK_SIZE;
+            unsigned long long size = WRITING_CHUNK_SIZE;
             status = dataFile->Write(dataFile, &size, &spectrum[writtenSize / sizeof(Entity)]);
             if (status
-                || size != SPECTRUM_WRITING_CHUNK_SIZE)
+                || size != WRITING_CHUNK_SIZE)
             {
                 logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status, __LINE__);
 
@@ -8112,13 +8209,43 @@ static void saveComputer()
     {
         ACQUIRE(computerLock);
 
-        dataFile->Close(dataFile);
+        unsigned long long writtenSize = 0;
+        for (unsigned int contractIndex = 0; contractIndex < NUMBER_OF_CONTRACTS; contractIndex++)
+        {
+            unsigned long long remainingSize = contractStateSize(contractIndex);
+            while (remainingSize)
+            {
+                unsigned long long size = remainingSize < WRITING_CHUNK_SIZE ? remainingSize : WRITING_CHUNK_SIZE;
+                status = dataFile->Write(dataFile, &size, contractStates[contractIndex] + (contractStateSize(contractIndex) - remainingSize));
+                if (status
+                    || size != (remainingSize < WRITING_CHUNK_SIZE ? remainingSize : WRITING_CHUNK_SIZE))
+                {
+                    logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status, __LINE__);
 
-        setNumber(message, 0, TRUE);
-        appendText(message, L" bytes of the computer data are saved (");
-        appendNumber(message, (__rdtsc() - beginningTick) * 1000000 / frequency, TRUE);
-        appendText(message, L" microseconds).");
-        log(message);
+                    break;
+                }
+                remainingSize -= size;
+                writtenSize += size;
+            }
+            if (remainingSize)
+            {
+                break;
+            }
+        }
+        dataFile->Close(dataFile);
+        unsigned long long expectedWrittenSize = 0;
+        for (unsigned int contractIndex = 0; contractIndex < NUMBER_OF_CONTRACTS; contractIndex++)
+        {
+            expectedWrittenSize += contractStateSize(contractIndex);
+        }
+        if (writtenSize == expectedWrittenSize)
+        {
+            setNumber(message, writtenSize, TRUE);
+            appendText(message, L" bytes of the computer data are saved (");
+            appendNumber(message, (__rdtsc() - beginningTick) * 1000000 / frequency, TRUE);
+            appendText(message, L" microseconds).");
+            log(message);
+        }
 
         RELEASE(computerLock);
     }
@@ -8424,28 +8551,12 @@ static bool initialize()
 
         for (unsigned int contractIndex = 0; contractIndex < NUMBER_OF_CONTRACTS; contractIndex++)
         {
-            unsigned long long size;
-            if (contractIndex >= NUMBER_OF_EXECUTED_CONTRACTS)
-            {
-                size = sizeof(IPO);
-            }
-            else
-            {
-                // TODO
-            }
+            unsigned long long size = contractStateSize(contractIndex);
             if (status = bs->AllocatePool(EfiRuntimeServicesData, size, (void**)&contractStates[contractIndex]))
             {
                 logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status, __LINE__);
 
                 return false;
-            }
-            if (contractIndex >= NUMBER_OF_EXECUTED_CONTRACTS)
-            {
-                bs->SetMem(contractStates[contractIndex], size, 0);
-            }
-            else
-            {
-                // TODO
             }
         }
         if (status = bs->AllocatePool(EfiRuntimeServicesData, MAX_CONTRACT_STATE_SIZE, (void**)&curContractState))
@@ -8491,7 +8602,7 @@ static bool initialize()
 
                 if (system.epoch == 63)
                 {
-                    system.initialTick = system.tick = 6340000;
+                    system.initialTick = system.tick = 6350000;
                 }
                 else
                 {
@@ -8575,10 +8686,10 @@ static bool initialize()
 
             bs->CopyMem(spectrumDigests, initSpectrumDigests, (SPECTRUM_CAPACITY * 2 - 1) * 32ULL);
 
-            CHAR16 digest[60 + 1];
+            CHAR16 digestChars[60 + 1];
             unsigned long long totalAmount = 0;
 
-            getIdentity((unsigned char*)&initSpectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1], digest, true);
+            getIdentity((unsigned char*)&initSpectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1], digestChars, true);
 
             for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
             {
@@ -8593,7 +8704,7 @@ static bool initialize()
             appendText(message, L" qus in ");
             appendNumber(message, numberOfEntities, TRUE);
             appendText(message, L" entities (digest = ");
-            appendText(message, digest);
+            appendText(message, digestChars);
             appendText(message, L").");
             log(message);
         }
@@ -8610,6 +8721,15 @@ static bool initialize()
         else
         {
             dataFile->Close(dataFile);
+
+            setText(message, L"Universe digest = ");
+            __m256i digest;
+            getUniverseDigest(&digest);
+            CHAR16 digestChars[60 + 1];
+            getIdentity((unsigned char*)&digest, digestChars, true);
+            appendText(message, digestChars);
+            appendText(message, L".");
+            log(message);
         }
 
         COMPUTER_FILE_NAME[sizeof(COMPUTER_FILE_NAME) / sizeof(COMPUTER_FILE_NAME[0]) - 4] = system.epoch / 100 + L'0';
@@ -8623,7 +8743,41 @@ static bool initialize()
         }
         else
         {
+            for (unsigned int contractIndex = 0; contractIndex < NUMBER_OF_CONTRACTS; contractIndex++)
+            {
+                unsigned long long size = contractStateSize(contractIndex);
+                status = dataFile->Read(dataFile, &size, contractStates[contractIndex]);
+                if (status)
+                {
+                    logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status, __LINE__);
+
+                    dataFile->Close(dataFile);
+
+                    return false;
+                }
+                else
+                {
+                    /*if (size != contractStateSize(contractIndex))
+                    {
+                        logStatus(L"EFI_FILE_PROTOCOL.Read() reads invalid number of bytes", size, __LINE__);
+
+                        dataFile->Close(dataFile);
+
+                        return false;
+                    }*/
+                }
+            }
+
             dataFile->Close(dataFile);
+
+            setText(message, L"Computer digest = ");
+            __m256i digest;
+            getComputerDigest(&digest);
+            CHAR16 digestChars[60 + 1];
+            getIdentity((unsigned char*)&digest, digestChars, true);
+            appendText(message, digestChars);
+            appendText(message, L".");
+            log(message);
         }
 
         system.tick = system.initialTick;
@@ -9076,8 +9230,9 @@ static void processKeyPresses()
             appendText(message, L".");
             log(message);
 
-            CHAR16 digest[60 + 1];
-            getIdentity((unsigned char*)&spectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1], digest, true);
+            CHAR16 digestChars[60 + 1];
+
+            getIdentity((unsigned char*)&spectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1], digestChars, true);
             unsigned int numberOfEntities = 0;
             unsigned long long totalAmount = 0;
             for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
@@ -9092,12 +9247,28 @@ static void processKeyPresses()
             appendText(message, L" qus in ");
             appendNumber(message, numberOfEntities, TRUE);
             appendText(message, L" entities (digest = ");
-            appendText(message, digest);
+            appendText(message, digestChars);
             appendText(message, L"); ");
             appendNumber(message, numberOfTransactions, TRUE);
             appendText(message, L" transactions.");
             log(message);
-            
+
+            __m256i digest;
+
+            setText(message, L"Universe digest = ");
+            getUniverseDigest(&digest);
+            getIdentity((unsigned char*)&digest, digestChars, true);
+            appendText(message, digestChars);
+            appendText(message, L".");
+            log(message);
+
+            setText(message, L"Computer digest = ");
+            getComputerDigest(&digest);
+            getIdentity((unsigned char*)&digest, digestChars, true);
+            appendText(message, digestChars);
+            appendText(message, L".");
+            log(message);
+
             unsigned int numberOfPublishedSolutions = 0, numberOfRecordedSolutions = 0;
             for (unsigned int i = 0; i < system.numberOfSolutions; i++)
             {
@@ -9268,6 +9439,12 @@ static void processKeyPresses()
             COMPUTER_FILE_NAME[sizeof(COMPUTER_FILE_NAME) / sizeof(COMPUTER_FILE_NAME[0]) - 3] = L'0';
             COMPUTER_FILE_NAME[sizeof(COMPUTER_FILE_NAME) / sizeof(COMPUTER_FILE_NAME[0]) - 2] = L'0';
             saveComputer();
+        }
+        break;
+
+        case 0x13:
+        {
+            // TODO
         }
         break;
 
