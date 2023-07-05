@@ -21,7 +21,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 144
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -6049,6 +6049,237 @@ static void enqueueResponse(Peer* peer, const bool randomizeDejavu, const unsign
     RELEASE(responseQueueHeadLock);
 }
 
+static void broadcastMessage(unsigned long long processorNumber, Processor* processor, RequestResponseHeader* header)
+{
+    Message* request = (Message*)((char*)processor->buffer + sizeof(RequestResponseHeader));
+    if (header->size() <= sizeof(RequestResponseHeader) + sizeof(Message) + MAX_MESSAGE_PAYLOAD_SIZE + SIGNATURE_SIZE
+        && header->size() >= sizeof(RequestResponseHeader) + sizeof(Message) + SIGNATURE_SIZE)
+    {
+        const unsigned int messageSize = header->size() - sizeof(RequestResponseHeader);
+
+        bool ok;
+        if (EQUAL(*((__m256i*)request->sourcePublicKey), ZERO))
+        {
+            ok = true;
+        }
+        else
+        {
+            unsigned char digest[32];
+            KangarooTwelve((unsigned char*)request, messageSize - SIGNATURE_SIZE, digest, sizeof(digest));
+            ok = verify(request->sourcePublicKey, digest, (((const unsigned char*)request) + (messageSize - SIGNATURE_SIZE)));
+        }
+        if (ok)
+        {
+            if (header->isDejavuZero())
+            {
+                const int spectrumIndex = ::spectrumIndex(request->sourcePublicKey);
+                if (spectrumIndex >= 0 && energy(spectrumIndex) >= MESSAGE_DISSEMINATION_THRESHOLD)
+                {
+                    enqueueResponse(NULL, header);
+                }
+            }
+
+            for (unsigned int i = 0; i < sizeof(computorSeeds) / sizeof(computorSeeds[0]); i++)
+            {
+                if (EQUAL(*((__m256i*)request->destinationPublicKey), *((__m256i*)computorPublicKeys[i])))
+                {
+                    const unsigned int messagePayloadSize = messageSize - sizeof(Message) - SIGNATURE_SIZE;
+                    if (messagePayloadSize)
+                    {
+                        unsigned char sharedKeyAndGammingNonce[64];
+
+                        if (EQUAL(*((__m256i*)request->sourcePublicKey), ZERO))
+                        {
+                            bs->SetMem(sharedKeyAndGammingNonce, 32, 0);
+                        }
+                        else
+                        {
+                            if (!getSharedKey(computorPrivateKeys[i], request->sourcePublicKey, sharedKeyAndGammingNonce))
+                            {
+                                ok = false;
+                            }
+                        }
+
+                        if (ok)
+                        {
+                            bs->CopyMem(&sharedKeyAndGammingNonce[32], request->gammingNonce, 32);
+                            unsigned char gammingKey[32];
+                            KangarooTwelve64To32(sharedKeyAndGammingNonce, gammingKey);
+                            bs->SetMem(sharedKeyAndGammingNonce, 32, 0); // Zero the shared key in case stack content could be leaked later
+                            unsigned char gamma[MAX_MESSAGE_PAYLOAD_SIZE];
+                            KangarooTwelve(gammingKey, sizeof(gammingKey), gamma, messagePayloadSize);
+                            for (unsigned int j = 0; j < messagePayloadSize; j++)
+                            {
+                                ((unsigned char*)request)[sizeof(Message) + j] ^= gamma[j];
+                            }
+
+                            switch (gammingKey[0])
+                            {
+                            case MESSAGE_TYPE_SOLUTION:
+                            {
+                                if (messagePayloadSize >= 32)
+                                {
+                                    unsigned int k;
+                                    for (k = 0; k < system.numberOfSolutions; k++)
+                                    {
+                                        if (EQUAL(*((__m256i*) & ((unsigned char*)request)[sizeof(Message)]), *((__m256i*)system.solutions[k].nonce))
+                                            && EQUAL(*((__m256i*)request->destinationPublicKey), *((__m256i*)system.solutions[k].computorPublicKey)))
+                                        {
+                                            break;
+                                        }
+                                    }
+                                    if (k == system.numberOfSolutions)
+                                    {
+                                        random(request->destinationPublicKey, &((unsigned char*)request)[sizeof(Message)], (unsigned char*)validationNeuronLinks[processorNumber], sizeof(validationNeuronLinks[0]));
+                                        for (k = 0; k < NUMBER_OF_NEURONS; k++)
+                                        {
+                                            validationNeuronLinks[processorNumber][k][0] %= NUMBER_OF_NEURONS;
+                                            validationNeuronLinks[processorNumber][k][1] %= NUMBER_OF_NEURONS;
+                                        }
+
+                                        bs->SetMem(validationNeuronValues[processorNumber], sizeof(validationNeuronValues[0]), 0xFF);
+
+                                        unsigned int limiter = sizeof(miningData) / sizeof(miningData[0]);
+                                        int outputLength = 0;
+                                        while (outputLength < (sizeof(miningData) << 3))
+                                        {
+                                            const unsigned int prevValue0 = validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 1];
+                                            const unsigned int prevValue1 = validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 2];
+
+                                            for (k = 0; k < NUMBER_OF_NEURONS; k++)
+                                            {
+                                                validationNeuronValues[processorNumber][k] = ~(validationNeuronValues[processorNumber][validationNeuronLinks[processorNumber][k][0]] & validationNeuronValues[processorNumber][validationNeuronLinks[processorNumber][k][1]]);
+                                            }
+
+                                            if (validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 1] != prevValue0
+                                                && validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 2] == prevValue1)
+                                            {
+                                                if (!((miningData[outputLength >> 6] >> (outputLength & 63)) & 1))
+                                                {
+                                                    break;
+                                                }
+
+                                                outputLength++;
+                                            }
+                                            else
+                                            {
+                                                if (validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 2] != prevValue1
+                                                    && validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 1] == prevValue0)
+                                                {
+                                                    if ((miningData[outputLength >> 6] >> (outputLength & 63)) & 1)
+                                                    {
+                                                        break;
+                                                    }
+
+                                                    outputLength++;
+                                                }
+                                                else
+                                                {
+                                                    if (!(--limiter))
+                                                    {
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        if (outputLength >= SOLUTION_THRESHOLD
+                                            && system.numberOfSolutions < MAX_NUMBER_OF_SOLUTIONS)
+                                        {
+                                            ACQUIRE(solutionsLock);
+
+                                            for (k = 0; k < system.numberOfSolutions; k++)
+                                            {
+                                                if (EQUAL(*((__m256i*) & ((unsigned char*)request)[sizeof(Message)]), *((__m256i*)system.solutions[k].nonce))
+                                                    && EQUAL(*((__m256i*)request->destinationPublicKey), *((__m256i*)system.solutions[k].computorPublicKey)))
+                                                {
+                                                    break;
+                                                }
+                                            }
+                                            if (k == system.numberOfSolutions)
+                                            {
+                                                *((__m256i*)system.solutions[system.numberOfSolutions].computorPublicKey) = *((__m256i*)request->destinationPublicKey);
+                                                *((__m256i*)system.solutions[system.numberOfSolutions++].nonce) = *((__m256i*) & ((unsigned char*)request)[sizeof(Message)]);
+                                            }
+
+                                            RELEASE(solutionsLock);
+                                        }
+                                    }
+                                }
+                            }
+                            break;
+                            }
+                        }
+                    }
+
+                    break;
+                }
+            }
+        }
+    }
+}
+
+static void processSpecialCommand(Peer* peer, Processor* processor, RequestResponseHeader* header)
+{
+    SpecialCommand* request = (SpecialCommand*)((char*)processor->buffer + sizeof(RequestResponseHeader));
+    if (header->size() >= sizeof(RequestResponseHeader) + sizeof(SpecialCommand) + SIGNATURE_SIZE
+        && (request->everIncreasingNonceAndCommandType & 0xFFFFFFFFFFFFFF) > system.latestOperatorNonce)
+    {
+        unsigned char digest[32];
+        KangarooTwelve((unsigned char*)request, header->size() - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
+        if (verify(operatorPublicKey, digest, ((const unsigned char*)processor->buffer + (header->size() - SIGNATURE_SIZE))))
+        {
+            system.latestOperatorNonce = request->everIncreasingNonceAndCommandType & 0xFFFFFFFFFFFFFF;
+
+            switch (request->everIncreasingNonceAndCommandType >> 56)
+            {
+            case SPECIAL_COMMAND_SHUT_DOWN:
+            {
+                state = 1;
+            }
+            break;
+
+            case SPECIAL_COMMAND_GET_PROPOSAL_AND_BALLOT_REQUEST:
+            {
+                SpecialCommandGetProposalAndBallotRequest* request = (SpecialCommandGetProposalAndBallotRequest*)((char*)processor->buffer + sizeof(RequestResponseHeader));
+                if (request->computorIndex < NUMBER_OF_COMPUTORS)
+                {
+                    SpecialCommandGetProposalAndBallotResponse response;
+
+                    response.everIncreasingNonceAndCommandType = (request->everIncreasingNonceAndCommandType & 0xFFFFFFFFFFFFFF) | (SPECIAL_COMMAND_GET_PROPOSAL_AND_BALLOT_RESPONSE << 56);
+                    response.computorIndex = request->computorIndex;
+                    *((short*)response.padding) = 0;
+                    bs->CopyMem(&response.proposal, &system.proposals[request->computorIndex], sizeof(ComputorProposal));
+                    bs->CopyMem(&response.ballot, &system.ballots[request->computorIndex], sizeof(ComputorBallot));
+
+                    enqueueResponse(peer, true, SPECIAL_COMMAND_GET_PROPOSAL_AND_BALLOT_RESPONSE, &response, sizeof(response));
+                }
+            }
+            break;
+
+            case SPECIAL_COMMAND_SET_PROPOSAL_AND_BALLOT_REQUEST:
+            {
+                SpecialCommandSetProposalAndBallotRequest* request = (SpecialCommandSetProposalAndBallotRequest*)((char*)processor->buffer + sizeof(RequestResponseHeader));
+                if (request->computorIndex < NUMBER_OF_COMPUTORS)
+                {
+                    bs->CopyMem(&system.proposals[request->computorIndex], &request->proposal, sizeof(ComputorProposal));
+                    bs->CopyMem(&system.ballots[request->computorIndex], &request->ballot, sizeof(ComputorBallot));
+
+                    SpecialCommandSetProposalAndBallotResponse response;
+
+                    response.everIncreasingNonceAndCommandType = (request->everIncreasingNonceAndCommandType & 0xFFFFFFFFFFFFFF) | (SPECIAL_COMMAND_SET_PROPOSAL_AND_BALLOT_RESPONSE << 56);
+                    response.computorIndex = request->computorIndex;
+                    *((short*)response.padding) = 0;
+
+                    enqueueResponse(peer, true, SPECIAL_COMMAND_SET_PROPOSAL_AND_BALLOT_RESPONSE, &response, sizeof(response));
+                }
+            }
+            break;
+            }
+        }
+    }
+}
+
 static void requestProcessor(void* ProcedureArgument)
 {
     enableAVX();
@@ -6096,172 +6327,7 @@ static void requestProcessor(void* ProcedureArgument)
                 {
                 case BROADCAST_MESSAGE:
                 {
-                    Message* request = (Message*)((char*)processor->buffer + sizeof(RequestResponseHeader));
-                    if (header->size() <= sizeof(RequestResponseHeader) + sizeof(Message) + MAX_MESSAGE_PAYLOAD_SIZE + SIGNATURE_SIZE
-                        && header->size() >= sizeof(RequestResponseHeader) + sizeof(Message) + SIGNATURE_SIZE)
-                    {
-                        const unsigned int messageSize = header->size() - sizeof(RequestResponseHeader);
-
-                        bool ok;
-                        if (EQUAL(*((__m256i*)request->sourcePublicKey), ZERO))
-                        {
-                            ok = true;
-                        }
-                        else
-                        {
-                            unsigned char digest[32];
-                            KangarooTwelve((unsigned char*)request, messageSize - SIGNATURE_SIZE, digest, sizeof(digest));
-                            ok = verify(request->sourcePublicKey, digest, (((const unsigned char*)request) + (messageSize - SIGNATURE_SIZE)));
-                        }
-                        if (ok)
-                        {
-                            if (header->isDejavuZero())
-                            {
-                                const int spectrumIndex = ::spectrumIndex(request->sourcePublicKey);
-                                if (spectrumIndex >= 0 && energy(spectrumIndex) >= MESSAGE_DISSEMINATION_THRESHOLD)
-                                {
-                                    enqueueResponse(NULL, header);
-                                }
-                            }
-
-                            for (unsigned int i = 0; i < sizeof(computorSeeds) / sizeof(computorSeeds[0]); i++)
-                            {
-                                if (EQUAL(*((__m256i*)request->destinationPublicKey), *((__m256i*)computorPublicKeys[i])))
-                                {
-                                    const unsigned int messagePayloadSize = messageSize - sizeof(Message) - SIGNATURE_SIZE;
-                                    if (messagePayloadSize)
-                                    {
-                                        unsigned char sharedKeyAndGammingNonce[64];
-
-                                        if (EQUAL(*((__m256i*)request->sourcePublicKey), ZERO))
-                                        {
-                                            bs->SetMem(sharedKeyAndGammingNonce, 32, 0);
-                                        }
-                                        else
-                                        {
-                                            if (!getSharedKey(computorPrivateKeys[i], request->sourcePublicKey, sharedKeyAndGammingNonce))
-                                            {
-                                                ok = false;
-                                            }
-                                        }
-
-                                        if (ok)
-                                        {
-                                            bs->CopyMem(&sharedKeyAndGammingNonce[32], request->gammingNonce, 32);
-                                            unsigned char gammingKey[32];
-                                            KangarooTwelve64To32(sharedKeyAndGammingNonce, gammingKey);
-                                            bs->SetMem(sharedKeyAndGammingNonce, 32, 0); // Zero the shared key in case stack content could be leaked later
-                                            unsigned char gamma[MAX_MESSAGE_PAYLOAD_SIZE];
-                                            KangarooTwelve(gammingKey, sizeof(gammingKey), gamma, messagePayloadSize);
-                                            for (unsigned int j = 0; j < messagePayloadSize; j++)
-                                            {
-                                                ((unsigned char*)request)[sizeof(Message) + j] ^= gamma[j];
-                                            }
-
-                                            switch (gammingKey[0])
-                                            {
-                                            case MESSAGE_TYPE_SOLUTION:
-                                            {
-                                                if (messagePayloadSize >= 32)
-                                                {
-                                                    unsigned int k;
-                                                    for (k = 0; k < system.numberOfSolutions; k++)
-                                                    {
-                                                        if (EQUAL(*((__m256i*)&((unsigned char*)request)[sizeof(Message)]), *((__m256i*)system.solutions[k].nonce))
-                                                            && EQUAL(*((__m256i*)request->destinationPublicKey), *((__m256i*)system.solutions[k].computorPublicKey)))
-                                                        {
-                                                            break;
-                                                        }
-                                                    }
-                                                    if (k == system.numberOfSolutions)
-                                                    {
-                                                        random(request->destinationPublicKey, &((unsigned char*)request)[sizeof(Message)], (unsigned char*)validationNeuronLinks[processorNumber], sizeof(validationNeuronLinks[0]));
-                                                        for (k = 0; k < NUMBER_OF_NEURONS; k++)
-                                                        {
-                                                            validationNeuronLinks[processorNumber][k][0] %= NUMBER_OF_NEURONS;
-                                                            validationNeuronLinks[processorNumber][k][1] %= NUMBER_OF_NEURONS;
-                                                        }
-
-                                                        bs->SetMem(validationNeuronValues[processorNumber], sizeof(validationNeuronValues[0]), 0xFF);
-
-                                                        unsigned int limiter = sizeof(miningData) / sizeof(miningData[0]);
-                                                        int outputLength = 0;
-                                                        while (outputLength < (sizeof(miningData) << 3))
-                                                        {
-                                                            const unsigned int prevValue0 = validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 1];
-                                                            const unsigned int prevValue1 = validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 2];
-
-                                                            for (k = 0; k < NUMBER_OF_NEURONS; k++)
-                                                            {
-                                                                validationNeuronValues[processorNumber][k] = ~(validationNeuronValues[processorNumber][validationNeuronLinks[processorNumber][k][0]] & validationNeuronValues[processorNumber][validationNeuronLinks[processorNumber][k][1]]);
-                                                            }
-
-                                                            if (validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 1] != prevValue0
-                                                                && validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 2] == prevValue1)
-                                                            {
-                                                                if (!((miningData[outputLength >> 6] >> (outputLength & 63)) & 1))
-                                                                {
-                                                                    break;
-                                                                }
-
-                                                                outputLength++;
-                                                            }
-                                                            else
-                                                            {
-                                                                if (validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 2] != prevValue1
-                                                                    && validationNeuronValues[processorNumber][NUMBER_OF_NEURONS - 1] == prevValue0)
-                                                                {
-                                                                    if ((miningData[outputLength >> 6] >> (outputLength & 63)) & 1)
-                                                                    {
-                                                                        break;
-                                                                    }
-
-                                                                    outputLength++;
-                                                                }
-                                                                else
-                                                                {
-                                                                    if (!(--limiter))
-                                                                    {
-                                                                        break;
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-
-                                                        if (outputLength >= SOLUTION_THRESHOLD
-                                                            && system.numberOfSolutions < MAX_NUMBER_OF_SOLUTIONS)
-                                                        {
-                                                            ACQUIRE(solutionsLock);
-
-                                                            for (k = 0; k < system.numberOfSolutions; k++)
-                                                            {
-                                                                if (EQUAL(*((__m256i*)&((unsigned char*)request)[sizeof(Message)]), *((__m256i*)system.solutions[k].nonce))
-                                                                    && EQUAL(*((__m256i*)request->destinationPublicKey), *((__m256i*)system.solutions[k].computorPublicKey)))
-                                                                {
-                                                                    break;
-                                                                }
-                                                            }
-                                                            if (k == system.numberOfSolutions)
-                                                            {
-                                                                *((__m256i*)system.solutions[system.numberOfSolutions].computorPublicKey) = *((__m256i*)request->destinationPublicKey);
-                                                                *((__m256i*)system.solutions[system.numberOfSolutions++].nonce) = *((__m256i*)&((unsigned char*)request)[sizeof(Message)]);
-                                                            }
-
-                                                            RELEASE(solutionsLock);
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            break;
-                                            }
-                                        }
-                                    }
-
-                                    break;
-                                }
-                            }
-                        }
-                    }
+                    broadcastMessage(processorNumber, processor, header);
                 }
                 break;
 
@@ -6727,63 +6793,7 @@ static void requestProcessor(void* ProcedureArgument)
 
                 case PROCESS_SPECIAL_COMMAND:
                 {
-                    SpecialCommand* request = (SpecialCommand*)((char*)processor->buffer + sizeof(RequestResponseHeader));
-                    if (header->size() >= sizeof(RequestResponseHeader) + sizeof(SpecialCommand) + SIGNATURE_SIZE
-                        && (request->everIncreasingNonceAndCommandType & 0xFFFFFFFFFFFFFF) > system.latestOperatorNonce)
-                    {
-                        unsigned char digest[32];
-                        KangarooTwelve((unsigned char*)request, header->size() - sizeof(RequestResponseHeader) - SIGNATURE_SIZE, digest, sizeof(digest));
-                        if (verify(operatorPublicKey, digest, ((const unsigned char*)processor->buffer + (header->size() - SIGNATURE_SIZE))))
-                        {
-                            system.latestOperatorNonce = request->everIncreasingNonceAndCommandType & 0xFFFFFFFFFFFFFF;
-
-                            switch (request->everIncreasingNonceAndCommandType >> 56)
-                            {
-                            case SPECIAL_COMMAND_SHUT_DOWN:
-                            {
-                                state = 1;
-                            }
-                            break;
-
-                            case SPECIAL_COMMAND_GET_PROPOSAL_AND_BALLOT_REQUEST:
-                            {
-                                SpecialCommandGetProposalAndBallotRequest* request = (SpecialCommandGetProposalAndBallotRequest*)((char*)processor->buffer + sizeof(RequestResponseHeader));
-                                if (request->computorIndex < NUMBER_OF_COMPUTORS)
-                                {
-                                    SpecialCommandGetProposalAndBallotResponse response;
-
-                                    response.everIncreasingNonceAndCommandType = (request->everIncreasingNonceAndCommandType & 0xFFFFFFFFFFFFFF) | (SPECIAL_COMMAND_GET_PROPOSAL_AND_BALLOT_RESPONSE << 56);
-                                    response.computorIndex = request->computorIndex;
-                                    *((short*)response.padding) = 0;
-                                    bs->CopyMem(&response.proposal, &system.proposals[request->computorIndex], sizeof(ComputorProposal));
-                                    bs->CopyMem(&response.ballot, &system.ballots[request->computorIndex], sizeof(ComputorBallot));
-
-                                    enqueueResponse(peer, true, SPECIAL_COMMAND_GET_PROPOSAL_AND_BALLOT_RESPONSE, &response, sizeof(response));
-                                }
-                            }
-                            break;
-
-                            case SPECIAL_COMMAND_SET_PROPOSAL_AND_BALLOT_REQUEST:
-                            {
-                                SpecialCommandSetProposalAndBallotRequest* request = (SpecialCommandSetProposalAndBallotRequest*)((char*)processor->buffer + sizeof(RequestResponseHeader));
-                                if (request->computorIndex < NUMBER_OF_COMPUTORS)
-                                {
-                                    bs->CopyMem(&system.proposals[request->computorIndex], &request->proposal, sizeof(ComputorProposal));
-                                    bs->CopyMem(&system.ballots[request->computorIndex], &request->ballot, sizeof(ComputorBallot));
-
-                                    SpecialCommandSetProposalAndBallotResponse response;
-
-                                    response.everIncreasingNonceAndCommandType = (request->everIncreasingNonceAndCommandType & 0xFFFFFFFFFFFFFF) | (SPECIAL_COMMAND_SET_PROPOSAL_AND_BALLOT_RESPONSE << 56);
-                                    response.computorIndex = request->computorIndex;
-                                    *((short*)response.padding) = 0;
-
-                                    enqueueResponse(peer, true, SPECIAL_COMMAND_SET_PROPOSAL_AND_BALLOT_RESPONSE, &response, sizeof(response));
-                                }
-                            }
-                            break;
-                            }
-                        }
-                    }
+                    processSpecialCommand(peer, processor, header);
                 }
                 break;
                 }
