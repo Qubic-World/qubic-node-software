@@ -21,7 +21,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 144
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -6219,6 +6219,83 @@ static void broadcastMessage(unsigned long long processorNumber, Processor* proc
     }
 }
 
+static void requestEntity(Peer* peer, Processor* processor, RequestResponseHeader* header)
+{
+    struct
+    {
+        RequestResponseHeader header;
+        RespondedEntity respondedEntity;
+    } packet;
+
+    packet.header.setSize(sizeof(packet));
+    packet.header.setProtocol();
+    packet.header.randomizeDejavu();
+    packet.header.setType(RESPOND_ENTITY);
+
+    RequestedEntity* request = (RequestedEntity*)((char*)processor->buffer + sizeof(RequestResponseHeader));
+    *((__m256i*)packet.respondedEntity.entity.publicKey) = *((__m256i*)request->publicKey);
+    packet.respondedEntity.spectrumIndex = spectrumIndex(packet.respondedEntity.entity.publicKey);
+    packet.respondedEntity.tick = system.tick;
+    if (packet.respondedEntity.spectrumIndex < 0)
+    {
+        packet.respondedEntity.entity.incomingAmount = 0;
+        packet.respondedEntity.entity.outgoingAmount = 0;
+        packet.respondedEntity.entity.numberOfIncomingTransfers = 0;
+        packet.respondedEntity.entity.numberOfOutgoingTransfers = 0;
+        packet.respondedEntity.entity.latestIncomingTransferTick = 0;
+        packet.respondedEntity.entity.latestOutgoingTransferTick = 0;
+
+        bs->SetMem(packet.respondedEntity.siblings, sizeof(packet.respondedEntity.siblings), 0);
+    }
+    else
+    {
+        bs->CopyMem(&packet.respondedEntity.entity, &spectrum[packet.respondedEntity.spectrumIndex], sizeof(Entity));
+
+        int sibling = packet.respondedEntity.spectrumIndex;
+        unsigned int spectrumDigestInputOffset = 0;
+        for (unsigned int j = 0; j < SPECTRUM_DEPTH; j++)
+        {
+            *((__m256i*)packet.respondedEntity.siblings[j]) = spectrumDigests[spectrumDigestInputOffset + (sibling ^ 1)];
+            spectrumDigestInputOffset += (SPECTRUM_CAPACITY >> j);
+            sibling >>= 1;
+        }
+    }
+
+    enqueueResponse(peer, &packet.header);
+}
+
+static void requestContractIPO(Peer* peer, Processor* processor, RequestResponseHeader* header)
+{
+    struct
+    {
+        RequestResponseHeader header;
+        RespondContractIPO respondContractIPO;
+    } packet;
+
+    packet.header.setSize(sizeof(packet));
+    packet.header.setProtocol();
+    packet.header.randomizeDejavu();
+    packet.header.setType(RESPOND_CONTRACT_IPO);
+
+    RequestContractIPO* request = (RequestContractIPO*)((char*)processor->buffer + sizeof(RequestResponseHeader));
+    packet.respondContractIPO.contractIndex = request->contractIndex;
+    packet.respondContractIPO.tick = system.tick;
+    if (request->contractIndex < NUMBER_OF_EXECUTED_CONTRACTS
+        || request->contractIndex >= NUMBER_OF_CONTRACTS)
+    {
+        bs->SetMem(packet.respondContractIPO.publicKeys, sizeof(packet.respondContractIPO.publicKeys), 0);
+        bs->SetMem(packet.respondContractIPO.prices, sizeof(packet.respondContractIPO.prices), 0);
+    }
+    else
+    {
+        IPO* ipo = (IPO*)contractStates[request->contractIndex];
+        bs->CopyMem(packet.respondContractIPO.publicKeys, ipo->publicKeys, sizeof(packet.respondContractIPO.publicKeys));
+        bs->CopyMem(packet.respondContractIPO.prices, ipo->prices, sizeof(packet.respondContractIPO.prices));
+    }
+
+    enqueueResponse(peer, &packet.header);
+}
+
 static void processSpecialCommand(Peer* peer, Processor* processor, RequestResponseHeader* header)
 {
     SpecialCommand* request = (SpecialCommand*)((char*)processor->buffer + sizeof(RequestResponseHeader));
@@ -6714,80 +6791,13 @@ static void requestProcessor(void* ProcedureArgument)
 
                 case REQUEST_ENTITY:
                 {
-                    struct
-                    {
-                        RequestResponseHeader header;
-                        RespondedEntity respondedEntity;
-                    } packet;
-
-                    packet.header.setSize(sizeof(packet));
-                    packet.header.setProtocol();
-                    packet.header.randomizeDejavu();
-                    packet.header.setType(RESPOND_ENTITY);
-
-                    RequestedEntity* request = (RequestedEntity*)((char*)processor->buffer + sizeof(RequestResponseHeader));
-                    *((__m256i*)packet.respondedEntity.entity.publicKey) = *((__m256i*)request->publicKey);
-                    packet.respondedEntity.spectrumIndex = spectrumIndex(packet.respondedEntity.entity.publicKey);
-                    packet.respondedEntity.tick = system.tick;
-                    if (packet.respondedEntity.spectrumIndex < 0)
-                    {
-                        packet.respondedEntity.entity.incomingAmount = 0;
-                        packet.respondedEntity.entity.outgoingAmount = 0;
-                        packet.respondedEntity.entity.numberOfIncomingTransfers = 0;
-                        packet.respondedEntity.entity.numberOfOutgoingTransfers = 0;
-                        packet.respondedEntity.entity.latestIncomingTransferTick = 0;
-                        packet.respondedEntity.entity.latestOutgoingTransferTick = 0;
-
-                        bs->SetMem(packet.respondedEntity.siblings, sizeof(packet.respondedEntity.siblings), 0);
-                    }
-                    else
-                    {
-                        bs->CopyMem(&packet.respondedEntity.entity, &spectrum[packet.respondedEntity.spectrumIndex], sizeof(Entity));
-
-                        int sibling = packet.respondedEntity.spectrumIndex;
-                        unsigned int spectrumDigestInputOffset = 0;
-                        for (unsigned int j = 0; j < SPECTRUM_DEPTH; j++)
-                        {
-                            *((__m256i*)packet.respondedEntity.siblings[j]) = spectrumDigests[spectrumDigestInputOffset + (sibling ^ 1)];
-                            spectrumDigestInputOffset += (SPECTRUM_CAPACITY >> j);
-                            sibling >>= 1;
-                        }
-                    }
-
-                    enqueueResponse(peer, &packet.header);
+                    requestEntity(peer, processor, header);
                 }
                 break;
 
                 case REQUEST_CONTRACT_IPO:
                 {
-                    struct
-                    {
-                        RequestResponseHeader header;
-                        RespondContractIPO respondContractIPO;
-                    } packet;
-
-                    packet.header.setSize(sizeof(packet));
-                    packet.header.setProtocol();
-                    packet.header.randomizeDejavu();
-                    packet.header.setType(RESPOND_CONTRACT_IPO);
-
-                    RequestContractIPO* request = (RequestContractIPO*)((char*)processor->buffer + sizeof(RequestResponseHeader));
-                    packet.respondContractIPO.contractIndex = request->contractIndex;
-                    packet.respondContractIPO.tick = system.tick;
-                    if (request->contractIndex < NUMBER_OF_EXECUTED_CONTRACTS
-                        || request->contractIndex >= NUMBER_OF_CONTRACTS)
-                    {
-                        bs->SetMem(packet.respondContractIPO.publicKeys, sizeof(packet.respondContractIPO.publicKeys), 0);
-                        bs->SetMem(packet.respondContractIPO.prices, sizeof(packet.respondContractIPO.prices), 0);
-                    }
-                    else
-                    {
-                        IPO* ipo = (IPO*)contractStates[request->contractIndex];
-                        bs->CopyMem(packet.respondContractIPO.publicKeys, ipo->publicKeys, sizeof(packet.respondContractIPO.publicKeys));
-                        bs->CopyMem(packet.respondContractIPO.prices, ipo->prices, sizeof(packet.respondContractIPO.prices));
-                    }
-
-                    enqueueResponse(peer, &packet.header);
+                    requestContractIPO(peer, processor, header);
                 }
                 break;
 
