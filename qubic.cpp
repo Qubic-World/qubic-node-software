@@ -15,11 +15,13 @@ static const unsigned char knownPublicPeers[][4] = {
 
 ////////// Public Settings \\\\\\\\\\
 
+#define PREFERABLE_NUMBER_OF_TRANSACTIONS_PER_TICK 128 // Must be <= 1024
+
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 143
-#define VERSION_C 2
+#define VERSION_B 144
+#define VERSION_C 0
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -4788,6 +4790,8 @@ static bool verify(const unsigned char* publicKey, const unsigned char* messageD
 
 ////////// Qubic \\\\\\\\\\
 
+#define ASSETS_CAPACITY 0x1000000ULL // Must be 2^N
+#define ASSETS_DEPTH 24 // Is derived from ASSETS_CAPACITY (=N)
 #define BUFFER_SIZE 4194304
 #define CONTRACT_STATES_DEPTH 10 // Is derived from MAX_NUMBER_OF_CONTRACTS (=N)
 #define TARGET_TICK_DURATION 5000
@@ -4816,7 +4820,7 @@ static bool verify(const unsigned char* publicKey, const unsigned char* messageD
 #define NUMBER_OF_OUTGOING_CONNECTIONS 4
 #define NUMBER_OF_INCOMING_CONNECTIONS 60
 #define NUMBER_OF_NEURONS 4194304
-#define NUMBER_OF_TRANSACTIONS_PER_TICK 64 // Must be 2^N
+#define NUMBER_OF_TRANSACTIONS_PER_TICK 1024 // Must be 2^N
 #define PEER_REFRESHING_PERIOD 10000
 #define PORT 21841
 #define QUORUM (NUMBER_OF_COMPUTORS * 2 / 3 + 1)
@@ -4825,10 +4829,12 @@ static bool verify(const unsigned char* publicKey, const unsigned char* messageD
 #define RESPONSE_QUEUE_BUFFER_SIZE 1073741824
 #define RESPONSE_QUEUE_LENGTH 65536 // Must be 65536
 #define SIGNATURE_SIZE 64
-#define SOLUTION_THRESHOLD 19
+#define SOLUTION_THRESHOLD 21
 #define SPECTRUM_CAPACITY 0x1000000ULL // Must be 2^N
 #define SPECTRUM_DEPTH 24 // Is derived from SPECTRUM_CAPACITY (=N)
-#define WRITING_CHUNK_SIZE 1048576 // Must be 2^N
+#define WRITING_CHUNK_SIZE 1048576
+#define SPECTRUM_WRITING_CHUNK_SIZE 1048576
+#define ASSETS_WRITING_CHUNK_SIZE 786432
 #define SYSTEM_DATA_SAVING_PERIOD 300000
 #define TICK_TRANSACTIONS_PUBLICATION_OFFSET 2 // Must be only 2
 #define MIN_MINING_SOLUTIONS_PUBLICATION_OFFSET 3 // Must be 3+
@@ -5046,9 +5052,6 @@ typedef struct
     unsigned char month;
     unsigned char year;
 
-    unsigned char initSpectrumDigest[32];
-    unsigned char initUniverseDigest[32];
-    unsigned char initComputerDigest[32];
     unsigned char prevSpectrumDigest[32];
     unsigned char prevUniverseDigest[32];
     unsigned char prevComputerDigest[32];
@@ -5071,9 +5074,6 @@ typedef struct
     unsigned char day;
     unsigned char month;
     unsigned char year;
-    unsigned char initSpectrumDigest[32];
-    unsigned char initUniverseDigest[32];
-    unsigned char initComputerDigest[32];
     unsigned char prevSpectrumDigest[32];
     unsigned char prevUniverseDigest[32];
     unsigned char prevComputerDigest[32];
@@ -5332,16 +5332,16 @@ static struct System
     ComputorProposal proposals[NUMBER_OF_COMPUTORS];
     ComputorBallot ballots[NUMBER_OF_COMPUTORS];
 
+    unsigned int numberOfSolutions;
     struct Solution
     {
         unsigned char computorPublicKey[32];
         unsigned char nonce[32];
     } solutions[MAX_NUMBER_OF_SOLUTIONS];
-    unsigned int numberOfSolutions;
-    int solutionPublicationTicks[MAX_NUMBER_OF_SOLUTIONS];
 
     __m256i futureComputors[NUMBER_OF_COMPUTORS];
 } system;
+static int solutionPublicationTicks[MAX_NUMBER_OF_SOLUTIONS];
 static unsigned long long faultyComputorFlags[(NUMBER_OF_COMPUTORS + 63) / 64];
 static unsigned int tickPhase = 0, tickNumberOfComputors = 0, tickTotalNumberOfComputors = 0, futureTickTotalNumberOfComputors = 0;
 static unsigned int nextTickTransactionsSemaphore = 0, numberOfNextTickTransactions = 0, numberOfKnownNextTickTransactions = 0;
@@ -5361,8 +5361,8 @@ static unsigned long long nextTickTransactionOffset = FIRST_TICK_TRANSACTION_OFF
 static __m256i uniqueNextTickTransactionDigests[NUMBER_OF_COMPUTORS];
 static unsigned int uniqueNextTickTransactionDigestCounters[NUMBER_OF_COMPUTORS];
 
-static Entity* initSpectrum = NULL;
-static __m256i* initSpectrumDigests = NULL;
+static Entity* initSpectrum = NULL; // TODO: Remove
+static __m256i* initSpectrumDigests = NULL; // TODO: Remove
 static volatile char spectrumLock = 0;
 static Entity* spectrum = NULL;
 static unsigned int numberOfEntities = 0;
@@ -5376,6 +5376,8 @@ static __m256i* spectrumDigests = NULL;
 
 static volatile char universeLock = 0;
 static __m256i minerSolutionsDigest;
+static Asset* assets = NULL;
+static __m256i* assetDigests = NULL;
 
 struct contract0State
 {
@@ -5851,8 +5853,25 @@ static unsigned long long contractStateSize(unsigned int contractIndex)
 
 static void getUniverseDigest(__m256i* digest)
 {
-    //////
-    *digest = minerSolutionsDigest;
+    unsigned int digestIndex;
+    for (digestIndex = 0; digestIndex < ASSETS_CAPACITY; digestIndex++)
+    {
+        KangarooTwelve((unsigned char*)&assets[digestIndex], sizeof(Asset), (unsigned char*)&assetDigests[digestIndex], 32);
+    }
+    unsigned int previousLevelBeginning = 0;
+    unsigned int numberOfLeafs = ASSETS_CAPACITY;
+    while (numberOfLeafs > 1)
+    {
+        for (unsigned int i = 0; i < numberOfLeafs; i += 2)
+        {
+            KangarooTwelve64To32((unsigned char*)&assetDigests[previousLevelBeginning + i], (unsigned char*)&assetDigests[digestIndex++]);
+        }
+
+        previousLevelBeginning += numberOfLeafs;
+        numberOfLeafs >>= 1;
+    }
+
+    *digest = _mm256_xor_si256(minerSolutionsDigest, assetDigests[(ASSETS_CAPACITY * 2 - 1) - 1]);
 }
 
 static void getComputerDigest(__m256i* digest)
@@ -5884,7 +5903,6 @@ static void getComputerDigest(__m256i* digest)
     }
 
     *digest = contractStateDigests[(MAX_NUMBER_OF_CONTRACTS * 2 - 1) - 1];
-    /**/*digest = ZERO; // TODO
 }
 
 static void closePeer(Peer* peer)
@@ -6345,9 +6363,6 @@ static void requestProcessor(void* ProcedureArgument)
                             if (ticks[offset].epoch == system.epoch)
                             {
                                 if (*((unsigned long long*)&request->tick.millisecond) != *((unsigned long long*)&ticks[offset].millisecond)
-                                    || !EQUAL(*((__m256i*)request->tick.initSpectrumDigest), *((__m256i*)ticks[offset].initSpectrumDigest))
-                                    || !EQUAL(*((__m256i*)request->tick.initUniverseDigest), *((__m256i*)ticks[offset].initUniverseDigest))
-                                    || !EQUAL(*((__m256i*)request->tick.initComputerDigest), *((__m256i*)ticks[offset].initComputerDigest))
                                     || !EQUAL(*((__m256i*)request->tick.prevSpectrumDigest), *((__m256i*)ticks[offset].prevSpectrumDigest))
                                     || !EQUAL(*((__m256i*)request->tick.prevUniverseDigest), *((__m256i*)ticks[offset].prevUniverseDigest))
                                     || !EQUAL(*((__m256i*)request->tick.prevComputerDigest), *((__m256i*)ticks[offset].prevComputerDigest))
@@ -6907,9 +6922,6 @@ static void tickerProcessor(void*)
     unsigned long long processorNumber;
     mpServicesProtocol->WhoAmI(mpServicesProtocol, &processorNumber);
 
-    *((__m256i*)etalonTick.initSpectrumDigest) = initSpectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1];
-    *((__m256i*)etalonTick.initUniverseDigest) = ZERO;
-    *((__m256i*)etalonTick.initComputerDigest) = ZERO;
     unsigned int latestProcessedTick = 0;
     while (!state)
     {
@@ -7163,7 +7175,7 @@ static void tickerProcessor(void*)
                                                                             if (EQUAL(*((__m256i*)(((unsigned char*)transaction) + sizeof(Transaction))), *((__m256i*)system.solutions[j].nonce))
                                                                                 && EQUAL(*((__m256i*)transaction->sourcePublicKey), *((__m256i*)system.solutions[j].computorPublicKey)))
                                                                             {
-                                                                                system.solutionPublicationTicks[j] = -1;
+                                                                                solutionPublicationTicks[j] = -1;
 
                                                                                 break;
                                                                             }
@@ -7173,7 +7185,7 @@ static void tickerProcessor(void*)
                                                                         {
                                                                             *((__m256i*)system.solutions[system.numberOfSolutions].computorPublicKey) = *((__m256i*)transaction->sourcePublicKey);
                                                                             *((__m256i*)system.solutions[system.numberOfSolutions].nonce) = *((__m256i*)(((unsigned char*)transaction) + sizeof(Transaction)));
-                                                                            system.solutionPublicationTicks[system.numberOfSolutions++] = -1;
+                                                                            solutionPublicationTicks[system.numberOfSolutions++] = -1;
                                                                         }
 
                                                                         RELEASE(solutionsLock);
@@ -7305,7 +7317,7 @@ static void tickerProcessor(void*)
                                         entityPendingTransactionIndices[numberOfEntityPendingTransactionIndices] = numberOfEntityPendingTransactionIndices;
                                     }
                                     unsigned int j = 0;
-                                    while (j < NUMBER_OF_TRANSACTIONS_PER_TICK && numberOfEntityPendingTransactionIndices)
+                                    while (j < PREFERABLE_NUMBER_OF_TRANSACTIONS_PER_TICK && numberOfEntityPendingTransactionIndices)
                                     {
                                         const unsigned int index = random(numberOfEntityPendingTransactionIndices);
 
@@ -7361,10 +7373,10 @@ static void tickerProcessor(void*)
                             unsigned int j;
                             for (j = 0; j < system.numberOfSolutions; j++)
                             {
-                                if (system.solutionPublicationTicks[j] > 0
+                                if (solutionPublicationTicks[j] > 0
                                     && EQUAL(*((__m256i*)system.solutions[j].computorPublicKey), *((__m256i*)computorPublicKeys[i])))
                                 {
-                                    if (system.solutionPublicationTicks[j] <= (int)system.tick)
+                                    if (solutionPublicationTicks[j] <= (int)system.tick)
                                     {
                                         solutionIndexToPublish = j;
                                     }
@@ -7376,7 +7388,7 @@ static void tickerProcessor(void*)
                             {
                                 for (j = 0; j < system.numberOfSolutions; j++)
                                 {
-                                    if (!system.solutionPublicationTicks[j]
+                                    if (!solutionPublicationTicks[j]
                                         && EQUAL(*((__m256i*)system.solutions[j].computorPublicKey), *((__m256i*)computorPublicKeys[i])))
                                     {
                                         solutionIndexToPublish = j;
@@ -7399,7 +7411,7 @@ static void tickerProcessor(void*)
                                 payload.transaction.amount = 0;
                                 unsigned int random;
                                 _rdrand32_step(&random);
-                                system.solutionPublicationTicks[solutionIndexToPublish] = payload.transaction.tick = system.tick + MIN_MINING_SOLUTIONS_PUBLICATION_OFFSET + random % MIN_MINING_SOLUTIONS_PUBLICATION_OFFSET;
+                                solutionPublicationTicks[solutionIndexToPublish] = payload.transaction.tick = system.tick + MIN_MINING_SOLUTIONS_PUBLICATION_OFFSET + random % MIN_MINING_SOLUTIONS_PUBLICATION_OFFSET;
                                 payload.transaction.inputType = 0;
                                 payload.transaction.inputSize = sizeof(payload.nonce);
                                 *((__m256i*)payload.nonce) = *((__m256i*)system.solutions[solutionIndexToPublish].nonce);
@@ -7548,7 +7560,6 @@ static void tickerProcessor(void*)
                     {
                         tickData[system.tick + 1 - system.initialTick].epoch = 0;
                         nextTickData.epoch = 0;
-                        testFlags |= 8192;
                     }
                 }
 
@@ -7713,8 +7724,6 @@ static void tickerProcessor(void*)
 
                             numberOfNextTickTransactions = 0;
                             numberOfKnownNextTickTransactions = 0;
-
-                            testFlags |= 4096;
                         }
                     }
 
@@ -7784,9 +7793,6 @@ static void tickerProcessor(void*)
                         __m256i etalonTickEssenceDigest;
 
                         *((unsigned long long*) & tickEssence.millisecond) = *((unsigned long long*) & etalonTick.millisecond);
-                        *((__m256i*)tickEssence.initSpectrumDigest) = *((__m256i*)etalonTick.initSpectrumDigest);
-                        *((__m256i*)tickEssence.initUniverseDigest) = *((__m256i*)etalonTick.initUniverseDigest);
-                        *((__m256i*)tickEssence.initComputerDigest) = *((__m256i*)etalonTick.initComputerDigest);
                         *((__m256i*)tickEssence.prevSpectrumDigest) = *((__m256i*)etalonTick.prevSpectrumDigest);
                         *((__m256i*)tickEssence.prevUniverseDigest) = *((__m256i*)etalonTick.prevUniverseDigest);
                         *((__m256i*)tickEssence.prevComputerDigest) = *((__m256i*)etalonTick.prevComputerDigest);
@@ -7821,9 +7827,6 @@ static void tickerProcessor(void*)
                                         if (EQUAL(*((__m256i*)tick->saltedComputerDigest), *((__m256i*)saltedDigest)))
                                         {
                                             *((unsigned long long*) & tickEssence.millisecond) = *((unsigned long long*) & tick->millisecond);
-                                            *((__m256i*)tickEssence.initSpectrumDigest) = *((__m256i*)tick->initSpectrumDigest);
-                                            *((__m256i*)tickEssence.initUniverseDigest) = *((__m256i*)tick->initUniverseDigest);
-                                            *((__m256i*)tickEssence.initComputerDigest) = *((__m256i*)tick->initComputerDigest);
                                             *((__m256i*)tickEssence.prevSpectrumDigest) = *((__m256i*)tick->prevSpectrumDigest);
                                             *((__m256i*)tickEssence.prevUniverseDigest) = *((__m256i*)tick->prevUniverseDigest);
                                             *((__m256i*)tickEssence.prevComputerDigest) = *((__m256i*)tick->prevComputerDigest);
@@ -7837,13 +7840,10 @@ static void tickerProcessor(void*)
                                             else
                                             {
                                                 if (*((unsigned long long*) & tick->millisecond) != *((unsigned long long*) & etalonTick.millisecond)) testFlags |= 16;
-                                                if (!EQUAL(*((__m256i*)tick->initSpectrumDigest), *((__m256i*)etalonTick.initSpectrumDigest))) testFlags |= 32;
-                                                if (!EQUAL(*((__m256i*)tick->initUniverseDigest), *((__m256i*)etalonTick.initUniverseDigest))) testFlags |= 64;
-                                                if (!EQUAL(*((__m256i*)tick->initComputerDigest), *((__m256i*)etalonTick.initComputerDigest))) testFlags |= 128;
-                                                if (!EQUAL(*((__m256i*)tick->prevSpectrumDigest), *((__m256i*)etalonTick.prevSpectrumDigest))) testFlags |= 256;
-                                                if (!EQUAL(*((__m256i*)tick->prevUniverseDigest), *((__m256i*)etalonTick.prevUniverseDigest))) testFlags |= 512;
-                                                if (!EQUAL(*((__m256i*)tick->prevComputerDigest), *((__m256i*)etalonTick.prevComputerDigest))) testFlags |= 1024;
-                                                if (!EQUAL(*((__m256i*)tick->transactionDigest), *((__m256i*)etalonTick.transactionDigest))) testFlags |= 2048;
+                                                if (!EQUAL(*((__m256i*)tick->prevSpectrumDigest), *((__m256i*)etalonTick.prevSpectrumDigest))) testFlags |= 32;
+                                                if (!EQUAL(*((__m256i*)tick->prevUniverseDigest), *((__m256i*)etalonTick.prevUniverseDigest))) testFlags |= 64;
+                                                if (!EQUAL(*((__m256i*)tick->prevComputerDigest), *((__m256i*)etalonTick.prevComputerDigest))) testFlags |= 128;
+                                                if (!EQUAL(*((__m256i*)tick->transactionDigest), *((__m256i*)etalonTick.transactionDigest))) testFlags |= 256;
                                             }
                                         }
                                         else
@@ -7916,6 +7916,41 @@ static void tickerProcessor(void*)
                                     if ((dayIndex == 738570 + system.epoch * 7 && etalonTick.hour >= 12)
                                         || dayIndex > 738570 + system.epoch * 7)
                                     {
+                                        for (unsigned int contractIndex = NUMBER_OF_EXECUTED_CONTRACTS; contractIndex < NUMBER_OF_CONTRACTS; contractIndex++)
+                                        {
+                                            unsigned char releasedPublicKeys[NUMBER_OF_COMPUTORS][32];
+                                            long long releasedAmounts[NUMBER_OF_COMPUTORS];
+                                            unsigned int numberOfReleasedEntities = 0;
+                                            IPO* ipo = (IPO*)contractStates[contractIndex];
+                                            for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+                                            {
+                                                unsigned int j;
+                                                for (j = 0; j < numberOfReleasedEntities; j++)
+                                                {
+                                                    if (EQUAL(*((__m256i*)ipo->publicKeys[i]), *((__m256i*)releasedPublicKeys[j])))
+                                                    {
+                                                        break;
+                                                    }
+                                                }
+                                                if (j == numberOfReleasedEntities)
+                                                {
+                                                    *((__m256i*)releasedPublicKeys[numberOfReleasedEntities]) = *((__m256i*)ipo->publicKeys[i]);
+                                                    releasedAmounts[numberOfReleasedEntities++] = ipo->prices[i];
+                                                }
+                                                else
+                                                {
+                                                    releasedAmounts[j] += ipo->prices[i];
+                                                }
+
+                                                *((__m256i*)ipo->publicKeys[i]) = ZERO;
+                                                ipo->prices[i] = 0;
+                                            }
+                                            for (unsigned int i = 0; i < numberOfReleasedEntities; i++)
+                                            {
+                                                increaseEnergy(releasedPublicKeys[i], releasedAmounts[i]);
+                                            }
+                                        }
+
                                         system.initialMillisecond = etalonTick.millisecond;
                                         system.initialSecond = etalonTick.second;
                                         system.initialMinute = etalonTick.minute;
@@ -8144,10 +8179,10 @@ static void saveSpectrum()
         unsigned long long writtenSize = 0;
         while (writtenSize < SPECTRUM_CAPACITY * sizeof(Entity))
         {
-            unsigned long long size = WRITING_CHUNK_SIZE;
+            unsigned long long size = SPECTRUM_WRITING_CHUNK_SIZE;
             status = dataFile->Write(dataFile, &size, &spectrum[writtenSize / sizeof(Entity)]);
             if (status
-                || size != WRITING_CHUNK_SIZE)
+                || size != SPECTRUM_WRITING_CHUNK_SIZE)
             {
                 logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status, __LINE__);
 
@@ -8183,13 +8218,29 @@ static void saveUniverse()
     {
         ACQUIRE(universeLock);
 
-        dataFile->Close(dataFile);
+        unsigned long long writtenSize = 0;
+        while (writtenSize < ASSETS_CAPACITY * sizeof(Asset))
+        {
+            unsigned long long size = ASSETS_WRITING_CHUNK_SIZE;
+            status = dataFile->Write(dataFile, &size, &assets[writtenSize / sizeof(Asset)]);
+            if (status
+                || size != ASSETS_WRITING_CHUNK_SIZE)
+            {
+                logStatus(L"EFI_FILE_PROTOCOL.Write() fails", status, __LINE__);
 
-        setNumber(message, 0, TRUE);
-        appendText(message, L" bytes of the universe data are saved (");
-        appendNumber(message, (__rdtsc() - beginningTick) * 1000000 / frequency, TRUE);
-        appendText(message, L" microseconds).");
-        log(message);
+                break;
+            }
+            writtenSize += size;
+        }
+        dataFile->Close(dataFile);
+        if (writtenSize == ASSETS_CAPACITY * sizeof(Asset))
+        {
+            setNumber(message, writtenSize, TRUE);
+            appendText(message, L" bytes of the universe data are saved (");
+            appendNumber(message, (__rdtsc() - beginningTick) * 1000000 / frequency, TRUE);
+            appendText(message, L" microseconds).");
+            log(message);
+        }
 
         RELEASE(universeLock);
     }
@@ -8549,6 +8600,14 @@ static bool initialize()
         }
         bs->SetMem(spectrumChangeFlags, sizeof(spectrumChangeFlags), 0);
 
+        if ((status = bs->AllocatePool(EfiRuntimeServicesData, ASSETS_CAPACITY * sizeof(Asset), (void**)&assets))
+            || (status = bs->AllocatePool(EfiRuntimeServicesData, (ASSETS_CAPACITY * 2 - 1) * 32ULL, (void**)&assetDigests)))
+        {
+            logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status, __LINE__);
+
+            return false;
+        }
+
         for (unsigned int contractIndex = 0; contractIndex < NUMBER_OF_CONTRACTS; contractIndex++)
         {
             unsigned long long size = contractStateSize(contractIndex);
@@ -8593,16 +8652,16 @@ static bool initialize()
 
                 if (!size)
                 {
-                    system.epoch = 63;
+                    system.epoch = 64;
                     system.initialHour = 12;
                     system.initialDay = 13;
                     system.initialMonth = 4;
                     system.initialYear = 22;
                 }
 
-                if (system.epoch == 63)
+                if (system.epoch == 64)
                 {
-                    system.initialTick = system.tick = 6350000;
+                    system.initialTick = system.tick = 6400000;
                 }
                 else
                 {
@@ -8619,10 +8678,7 @@ static bool initialize()
                 etalonTick.month = system.initialMonth;
                 etalonTick.year = system.initialYear;
 
-                if (system.tick >= system.latestCreatedTick)
-                {
-                    bs->SetMem(system.solutionPublicationTicks, sizeof(system.solutionPublicationTicks), 0);
-                }
+                bs->SetMem(solutionPublicationTicks, sizeof(solutionPublicationTicks), 0);
             }
         }
 
@@ -8720,7 +8776,21 @@ static bool initialize()
         }
         else
         {
+            unsigned long long size = ASSETS_CAPACITY * sizeof(Asset);
+            status = dataFile->Read(dataFile, &size, assets);
             dataFile->Close(dataFile);
+            if (status)
+            {
+                logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status, __LINE__);
+
+                return false;
+            }
+            if (size != ASSETS_CAPACITY * sizeof(Asset))
+            {
+                logStatus(L"EFI_FILE_PROTOCOL.Read() reads invalid number of bytes", size, __LINE__);
+
+                return false;
+            }
 
             setText(message, L"Universe digest = ");
             __m256i digest;
@@ -8743,7 +8813,7 @@ static bool initialize()
         }
         else
         {
-            for (unsigned int contractIndex = 0; contractIndex < NUMBER_OF_CONTRACTS; contractIndex++)
+            for (unsigned int contractIndex = 0; contractIndex < NUMBER_OF_EXECUTED_CONTRACTS; contractIndex++)
             {
                 unsigned long long size = contractStateSize(contractIndex);
                 status = dataFile->Read(dataFile, &size, contractStates[contractIndex]);
@@ -8757,18 +8827,23 @@ static bool initialize()
                 }
                 else
                 {
-                    /*if (size != contractStateSize(contractIndex))
+                    if (size != contractStateSize(contractIndex))
                     {
                         logStatus(L"EFI_FILE_PROTOCOL.Read() reads invalid number of bytes", size, __LINE__);
 
                         dataFile->Close(dataFile);
 
                         return false;
-                    }*/
+                    }
                 }
             }
 
             dataFile->Close(dataFile);
+
+            for (unsigned int contractIndex = NUMBER_OF_EXECUTED_CONTRACTS; contractIndex < NUMBER_OF_CONTRACTS; contractIndex++)
+            {
+                bs->SetMem(contractStates[contractIndex], contractStateSize(contractIndex), 0);
+            }
 
             setText(message, L"Computer digest = ");
             __m256i digest;
@@ -8786,7 +8861,7 @@ static bool initialize()
 
         unsigned char randomSeed[32];
         bs->SetMem(randomSeed, 32, 0);
-        randomSeed[0] = 126;
+        randomSeed[0] = 74;
         randomSeed[1] = 27;
         randomSeed[2] = 26;
         randomSeed[3] = 27;
@@ -8887,6 +8962,15 @@ static void deinitialize()
     if (initSpectrum)
     {
         bs->FreePool(initSpectrum);
+    }
+
+    if (assetDigests)
+    {
+        bs->FreePool(assetDigests);
+    }
+    if (assets)
+    {
+        bs->FreePool(assets);
     }
 
     for (unsigned int contractIndex = 0; contractIndex < NUMBER_OF_CONTRACTS; contractIndex++)
@@ -9272,11 +9356,11 @@ static void processKeyPresses()
             unsigned int numberOfPublishedSolutions = 0, numberOfRecordedSolutions = 0;
             for (unsigned int i = 0; i < system.numberOfSolutions; i++)
             {
-                if (system.solutionPublicationTicks[i])
+                if (solutionPublicationTicks[i])
                 {
                     numberOfPublishedSolutions++;
 
-                    if (system.solutionPublicationTicks[i] < 0)
+                    if (solutionPublicationTicks[i] < 0)
                     {
                         numberOfRecordedSolutions++;
                     }
