@@ -20,8 +20,8 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 144
-#define VERSION_C 2
+#define VERSION_B 145
+#define VERSION_C 0
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -5378,6 +5378,7 @@ static volatile char universeLock = 0;
 static __m256i minerSolutionsDigest;
 static Asset* assets = NULL;
 static __m256i* assetDigests = NULL;
+static unsigned long long* assetChangeFlags = NULL;
 
 struct contract0State
 {
@@ -5385,8 +5386,9 @@ struct contract0State
 };
 static volatile char computerLock = 0;
 static unsigned char* contractStates[NUMBER_OF_CONTRACTS];
-static void* curContractState = NULL;
 static __m256i contractStateDigests[MAX_NUMBER_OF_CONTRACTS * 2 - 1];
+static unsigned long long* contractStateChangeFlags = NULL;
+static void* curContractState = NULL;
 
 static volatile char tickLocks[NUMBER_OF_COMPUTORS];
 static bool targetNextTickDataDigestIsKnown = false;
@@ -5856,7 +5858,10 @@ static void getUniverseDigest(__m256i* digest)
     unsigned int digestIndex;
     for (digestIndex = 0; digestIndex < ASSETS_CAPACITY; digestIndex++)
     {
-        KangarooTwelve((unsigned char*)&assets[digestIndex], sizeof(Asset), (unsigned char*)&assetDigests[digestIndex], 32);
+        if (assetChangeFlags[digestIndex >> 6] & (1ULL << (digestIndex & 63)))
+        {
+            KangarooTwelve((unsigned char*)&assets[digestIndex], sizeof(Asset), (unsigned char*)&assetDigests[digestIndex], 32);
+        }
     }
     unsigned int previousLevelBeginning = 0;
     unsigned int numberOfLeafs = ASSETS_CAPACITY;
@@ -5864,12 +5869,18 @@ static void getUniverseDigest(__m256i* digest)
     {
         for (unsigned int i = 0; i < numberOfLeafs; i += 2)
         {
-            KangarooTwelve64To32((unsigned char*)&assetDigests[previousLevelBeginning + i], (unsigned char*)&assetDigests[digestIndex++]);
+            if (assetChangeFlags[i >> 6] & (3ULL << (i & 63)))
+            {
+                KangarooTwelve64To32((unsigned char*)&assetDigests[previousLevelBeginning + i], (unsigned char*)&assetDigests[digestIndex]);
+                assetChangeFlags[i >> 6] &= ~(3ULL << (i & 63));
+                assetChangeFlags[i >> 7] |= (1ULL << ((i >> 1) & 63));
+            }
+            digestIndex++;
         }
-
         previousLevelBeginning += numberOfLeafs;
         numberOfLeafs >>= 1;
     }
+    assetChangeFlags[0] = 0;
 
     *digest = _mm256_xor_si256(minerSolutionsDigest, assetDigests[(ASSETS_CAPACITY * 2 - 1) - 1]);
 }
@@ -5879,14 +5890,17 @@ static void getComputerDigest(__m256i* digest)
     unsigned int digestIndex;
     for (digestIndex = 0; digestIndex < MAX_NUMBER_OF_CONTRACTS; digestIndex++)
     {
-        const unsigned long long size = contractStateSize(digestIndex);
-        if (!size)
+        if (contractStateChangeFlags[digestIndex >> 6] & (1ULL << (digestIndex & 63)))
         {
-            contractStateDigests[digestIndex] = ZERO;
-        }
-        else
-        {
-            KangarooTwelve((unsigned char*)contractStates[digestIndex], size, (unsigned char*)&contractStateDigests[digestIndex], 32);
+            const unsigned long long size = contractStateSize(digestIndex);
+            if (!size)
+            {
+                contractStateDigests[digestIndex] = ZERO;
+            }
+            else
+            {
+                KangarooTwelve((unsigned char*)contractStates[digestIndex], size, (unsigned char*)&contractStateDigests[digestIndex], 32);
+            }
         }
     }
     unsigned int previousLevelBeginning = 0;
@@ -5895,12 +5909,18 @@ static void getComputerDigest(__m256i* digest)
     {
         for (unsigned int i = 0; i < numberOfLeafs; i += 2)
         {
-            KangarooTwelve64To32((unsigned char*)&contractStateDigests[previousLevelBeginning + i], (unsigned char*)&contractStateDigests[digestIndex++]);
+            if (contractStateChangeFlags[i >> 6] & (3ULL << (i & 63)))
+            {
+                KangarooTwelve64To32((unsigned char*)&contractStateDigests[previousLevelBeginning + i], (unsigned char*)&contractStateDigests[digestIndex]);
+                contractStateChangeFlags[i >> 6] &= ~(3ULL << (i & 63));
+                contractStateChangeFlags[i >> 7] |= (1ULL << ((i >> 1) & 63));
+            }
+            digestIndex++;
         }
-
         previousLevelBeginning += numberOfLeafs;
         numberOfLeafs >>= 1;
     }
+    contractStateChangeFlags[0] = 0;
 
     *digest = contractStateDigests[(MAX_NUMBER_OF_CONTRACTS * 2 - 1) - 1];
 }
@@ -7009,7 +7029,7 @@ static void tickerProcessor(void*)
                                         {
                                             unsigned char maskedDestinationPublicKey[32];
                                             *((__m256i*)maskedDestinationPublicKey) = *((__m256i*)transaction->destinationPublicKey);
-                                            *((unsigned int*)maskedDestinationPublicKey) &= ~MAX_NUMBER_OF_CONTRACTS;
+                                            *((unsigned int*)maskedDestinationPublicKey) &= ~(MAX_NUMBER_OF_CONTRACTS - 1);
                                             const unsigned int contractIndex = *((unsigned int*)transaction->destinationPublicKey);
                                             if (EQUAL(*((__m256i*)maskedDestinationPublicKey), ZERO)
                                                 && contractIndex < NUMBER_OF_CONTRACTS)
@@ -7089,6 +7109,8 @@ static void tickerProcessor(void*)
                                                                                 *((__m256i*)ipo->publicKeys[j]) = tmpPublicKey;
                                                                                 ipo->prices[j] = tmpPrice;
                                                                             }
+
+                                                                            contractStateChangeFlags[contractIndex >> 6] |= (1ULL << (contractIndex & 63));
                                                                         }
                                                                     }
                                                                     for (unsigned int i = 0; i < numberOfReleasedEntities; i++)
@@ -8621,12 +8643,14 @@ static bool initialize()
         bs->SetMem(spectrumChangeFlags, sizeof(spectrumChangeFlags), 0);
 
         if ((status = bs->AllocatePool(EfiRuntimeServicesData, ASSETS_CAPACITY * sizeof(Asset), (void**)&assets))
-            || (status = bs->AllocatePool(EfiRuntimeServicesData, (ASSETS_CAPACITY * 2 - 1) * 32ULL, (void**)&assetDigests)))
+            || (status = bs->AllocatePool(EfiRuntimeServicesData, (ASSETS_CAPACITY * 2 - 1) * 32ULL, (void**)&assetDigests))
+            || (status = bs->AllocatePool(EfiRuntimeServicesData, ASSETS_CAPACITY / 8, (void**)&assetChangeFlags)))
         {
             logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status, __LINE__);
 
             return false;
         }
+        bs->SetMem(assetChangeFlags, ASSETS_CAPACITY / 8, 0xFF);
 
         for (unsigned int contractIndex = 0; contractIndex < NUMBER_OF_CONTRACTS; contractIndex++)
         {
@@ -8638,12 +8662,14 @@ static bool initialize()
                 return false;
             }
         }
-        if (status = bs->AllocatePool(EfiRuntimeServicesData, MAX_CONTRACT_STATE_SIZE, (void**)&curContractState))
+        if ((status = bs->AllocatePool(EfiRuntimeServicesData, MAX_NUMBER_OF_CONTRACTS / 8, (void**)&contractStateChangeFlags))
+            || (status = bs->AllocatePool(EfiRuntimeServicesData, MAX_CONTRACT_STATE_SIZE, (void**)&curContractState)))
         {
             logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status, __LINE__);
 
             return false;
         }
+        bs->SetMem(contractStateChangeFlags, MAX_NUMBER_OF_CONTRACTS / 8, 0xFF);
 
         EFI_FILE_PROTOCOL* dataFile;
 
@@ -8984,6 +9010,10 @@ static void deinitialize()
         bs->FreePool(initSpectrum);
     }
 
+    if (assetChangeFlags)
+    {
+        bs->FreePool(assetChangeFlags);
+    }
     if (assetDigests)
     {
         bs->FreePool(assetDigests);
@@ -8993,16 +9023,20 @@ static void deinitialize()
         bs->FreePool(assets);
     }
 
+    if (curContractState)
+    {
+        bs->FreePool(curContractState);
+    }
+    if (contractStateChangeFlags)
+    {
+        bs->FreePool(contractStateChangeFlags);
+    }
     for (unsigned int contractIndex = 0; contractIndex < NUMBER_OF_CONTRACTS; contractIndex++)
     {
         if (contractStates[contractIndex])
         {
             bs->FreePool(contractStates[contractIndex]);
         }
-    }
-    if (curContractState)
-    {
-        bs->FreePool(curContractState);
     }
 
     if (entityPendingTransactionDigests)
@@ -9871,7 +9905,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             {
                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
                                                 if (requestResponseHeader->size() < sizeof(RequestResponseHeader)
-                                                    || (requestResponseHeader->protocol() && (requestResponseHeader->protocol() < VERSION_B || requestResponseHeader->protocol() > VERSION_B + 1)))
+                                                    || (requestResponseHeader->protocol() && (requestResponseHeader->protocol() < VERSION_B - 1 || requestResponseHeader->protocol() > VERSION_B + 1)))
                                                 {
                                                     setText(message, L"Forgetting ");
                                                     appendNumber(message, peers[i].address[0], FALSE);
