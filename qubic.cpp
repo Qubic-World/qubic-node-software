@@ -15,13 +15,13 @@ static const unsigned char knownPublicPeers[][4] = {
 
 ////////// Public Settings \\\\\\\\\\
 
-#define PREFERABLE_NUMBER_OF_TRANSACTIONS_PER_TICK 32 // Must be <= 1024
+#define PREFERABLE_NUMBER_OF_TRANSACTIONS_PER_TICK 64 // Must be <= 1024
 
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 145
-#define VERSION_C 1
+#define VERSION_B 146
+#define VERSION_C 0
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -4820,7 +4820,7 @@ static bool verify(const unsigned char* publicKey, const unsigned char* messageD
 #define NUMBER_OF_OUTGOING_CONNECTIONS 4
 #define NUMBER_OF_INCOMING_CONNECTIONS 60
 #define NUMBER_OF_NEURONS 4194304
-#define NUMBER_OF_TRANSACTIONS_PER_TICK 64 // Must be 2^N
+#define NUMBER_OF_TRANSACTIONS_PER_TICK 1024 // Must be 2^N
 #define PEER_REFRESHING_PERIOD 10000
 #define PORT 21841
 #define QUORUM (NUMBER_OF_COMPUTORS * 2 / 3 + 1)
@@ -4829,7 +4829,7 @@ static bool verify(const unsigned char* publicKey, const unsigned char* messageD
 #define RESPONSE_QUEUE_BUFFER_SIZE 1073741824
 #define RESPONSE_QUEUE_LENGTH 65536 // Must be 65536
 #define SIGNATURE_SIZE 64
-#define SOLUTION_THRESHOLD 21
+#define SOLUTION_THRESHOLD 22
 #define SPECTRUM_CAPACITY 0x1000000ULL // Must be 2^N
 #define SPECTRUM_DEPTH 24 // Is derived from SPECTRUM_CAPACITY (=N)
 #define WRITING_CHUNK_SIZE 1048576
@@ -5284,7 +5284,7 @@ struct SpecialCommandSetProposalAndBallotResponse
 {
     unsigned long long everIncreasingNonceAndCommandType;
     unsigned short computorIndex;
-    unsigned char padding[2];
+    unsigned char padding[6];
 };
 
 static const unsigned short revenuePoints[1 + 1024] = { 0, 710, 1125, 1420, 1648, 1835, 1993, 2129, 2250, 2358, 2455, 2545, 2627, 2702, 2773, 2839, 2901, 2960, 3015, 3068, 3118, 3165, 3211, 3254, 3296, 3336, 3375, 3412, 3448, 3483, 3516, 3549, 3580, 3611, 3641, 3670, 3698, 3725, 3751, 3777, 3803, 3827, 3851, 3875, 3898, 3921, 3943, 3964, 3985, 4006, 4026, 4046, 4066, 4085, 4104, 4122, 4140, 4158, 4175, 4193, 4210, 4226, 4243, 4259, 4275, 4290, 4306, 4321, 4336, 4350, 4365, 4379, 4393, 4407, 4421, 4435, 4448, 4461, 4474, 4487, 4500, 4512, 4525, 4537, 4549, 4561, 4573, 4585, 4596, 4608, 4619, 4630, 4641, 4652, 4663, 4674, 4685, 4695, 4705, 4716, 4726, 4736, 4746, 4756, 4766, 4775, 4785, 4795, 4804, 4813, 4823, 4832, 4841, 4850, 4859, 4868, 4876, 4885, 4894, 4902, 4911, 4919, 4928, 4936, 4944, 4952, 4960, 4968, 4976, 4984, 4992, 5000, 5008, 5015, 5023, 5031, 5038, 5046, 5053, 5060, 5068, 5075, 5082, 5089, 5096, 5103, 5110, 5117, 5124, 5131, 5138, 5144, 5151, 5158, 5164, 5171, 5178, 5184, 5191, 5197, 5203, 5210, 5216, 5222, 5228, 5235, 5241, 5247, 5253, 5259, 5265, 5271, 5277, 5283, 5289, 5295, 5300, 5306, 5312, 5318, 5323, 5329, 5335, 5340, 5346, 5351, 5357, 5362, 5368, 5373, 5378, 5384, 5389, 5394, 5400, 5405, 5410, 5415, 5420, 5425, 5431, 5436, 5441, 5446, 5451, 5456, 5461, 5466, 5471, 5475, 5480, 5485, 5490, 5495, 5500, 5504, 5509, 5514, 5518, 5523, 5528, 5532, 5537, 5542, 5546, 5551, 5555, 5560, 5564, 5569, 5573, 5577, 5582, 5586, 5591, 5595, 5599, 5604, 5608, 5612, 5616, 5621, 5625, 5629, 5633, 5637, 5642, 5646, 5650, 5654, 5658, 5662, 5666, 5670, 5674, 5678, 5682, 5686, 5690, 5694, 5698, 5702, 5706, 5710, 5714, 5718, 5721, 5725, 5729, 5733, 5737, 5740, 5744, 5748, 5752, 5755, 5759, 5763, 5766, 5770, 5774, 5777, 5781, 5785, 5788, 5792, 5795, 5799, 5802, 5806, 5809, 5813, 5816, 5820, 5823, 5827, 5830, 5834, 5837, 5841, 5844, 5847, 5851, 5854, 5858, 5861, 5864, 5868, 5871, 5874, 5878, 5881, 5884, 5887, 5891, 5894, 5897, 5900, 5904, 5907, 5910, 5913, 5916, 5919, 5923, 5926, 5929, 5932, 5935, 5938, 5941, 5944, 5948, 5951, 5954, 5957, 5960, 5963, 5966, 5969, 5972, 5975, 5978, 5981, 5984, 5987, 5990, 5993, 5996, 5999, 6001, 6004, 6007, 6010, 6013, 6016, 6019, 6022, 6025, 6027, 6030, 6033, 6036, 6039, 6041, 6044, 6047, 6050, 6053, 6055, 6058, 6061, 6064, 6066, 6069, 6072, 6075, 6077, 6080, 6083, 6085, 6088, 6091, 6093, 6096, 6099, 6101, 6104, 6107, 6109, 6112, 6115, 6117, 6120, 6122, 6125, 6128, 6130, 6133, 6135, 6138, 6140, 6143, 6145, 6148, 6151, 6153, 6156, 6158, 6161, 6163, 6166, 6168, 6170, 6173, 6175, 6178, 6180, 6183, 6185, 6188, 6190, 6193, 6195, 6197, 6200, 6202, 6205, 6207, 6209, 6212, 6214, 6216, 6219, 6221, 6224, 6226, 6228, 6231, 6233, 6235, 6238, 6240, 6242, 6244, 6247, 6249, 6251, 6254, 6256, 6258, 6260, 6263, 6265, 6267, 6269, 6272, 6274, 6276, 6278, 6281, 6283, 6285, 6287, 6289, 6292, 6294, 6296, 6298, 6300, 6303, 6305, 6307, 6309, 6311, 6313, 6316, 6318, 6320, 6322, 6324, 6326, 6328, 6330, 6333, 6335, 6337, 6339, 6341, 6343, 6345, 6347, 6349, 6351, 6353, 6356, 6358, 6360, 6362, 6364, 6366, 6368, 6370, 6372, 6374, 6376, 6378, 6380, 6382, 6384, 6386, 6388, 6390, 6392, 6394, 6396, 6398, 6400, 6402, 6404, 6406, 6408, 6410, 6412, 6414, 6416, 6418, 6420, 6421, 6423, 6425, 6427, 6429, 6431, 6433, 6435, 6437, 6439, 6441, 6443, 6444, 6446, 6448, 6450, 6452, 6454, 6456, 6458, 6459, 6461, 6463, 6465, 6467, 6469, 6471, 6472, 6474, 6476, 6478, 6480, 6482, 6483, 6485, 6487, 6489, 6491, 6493, 6494, 6496, 6498, 6500, 6502, 6503, 6505, 6507, 6509, 6510, 6512, 6514, 6516, 6518, 6519, 6521, 6523, 6525, 6526, 6528, 6530, 6532, 6533, 6535, 6537, 6538, 6540, 6542, 6544, 6545, 6547, 6549, 6550, 6552, 6554, 6556, 6557, 6559, 6561, 6562, 6564, 6566, 6567, 6569, 6571, 6572, 6574, 6576, 6577, 6579, 6581, 6582, 6584, 6586, 6587, 6589, 6591, 6592, 6594, 6596, 6597, 6599, 6600, 6602, 6604, 6605, 6607, 6609, 6610, 6612, 6613, 6615, 6617, 6618, 6620, 6621, 6623, 6625, 6626, 6628, 6629, 6631, 6632, 6634, 6636, 6637, 6639, 6640, 6642, 6643, 6645, 6647, 6648, 6650, 6651, 6653, 6654, 6656, 6657, 6659, 6660, 6662, 6663, 6665, 6667, 6668, 6670, 6671, 6673, 6674, 6676, 6677, 6679, 6680, 6682, 6683, 6685, 6686, 6688, 6689, 6691, 6692, 6694, 6695, 6697, 6698, 6699, 6701, 6702, 6704, 6705, 6707, 6708, 6710, 6711, 6713, 6714, 6716, 6717, 6718, 6720, 6721, 6723, 6724, 6726, 6727, 6729, 6730, 6731, 6733, 6734, 6736, 6737, 6739, 6740, 6741, 6743, 6744, 6746, 6747, 6748, 6750, 6751, 6753, 6754, 6755, 6757, 6758, 6760, 6761, 6762, 6764, 6765, 6767, 6768, 6769, 6771, 6772, 6773, 6775, 6776, 6778, 6779, 6780, 6782, 6783, 6784, 6786, 6787, 6788, 6790, 6791, 6793, 6794, 6795, 6797, 6798, 6799, 6801, 6802, 6803, 6805, 6806, 6807, 6809, 6810, 6811, 6813, 6814, 6815, 6816, 6818, 6819, 6820, 6822, 6823, 6824, 6826, 6827, 6828, 6830, 6831, 6832, 6833, 6835, 6836, 6837, 6839, 6840, 6841, 6842, 6844, 6845, 6846, 6848, 6849, 6850, 6851, 6853, 6854, 6855, 6856, 6858, 6859, 6860, 6862, 6863, 6864, 6865, 6867, 6868, 6869, 6870, 6872, 6873, 6874, 6875, 6877, 6878, 6879, 6880, 6882, 6883, 6884, 6885, 6886, 6888, 6889, 6890, 6891, 6893, 6894, 6895, 6896, 6897, 6899, 6900, 6901, 6902, 6904, 6905, 6906, 6907, 6908, 6910, 6911, 6912, 6913, 6914, 6916, 6917, 6918, 6919, 6920, 6921, 6923, 6924, 6925, 6926, 6927, 6929, 6930, 6931, 6932, 6933, 6934, 6936, 6937, 6938, 6939, 6940, 6941, 6943, 6944, 6945, 6946, 6947, 6948, 6950, 6951, 6952, 6953, 6954, 6955, 6957, 6958, 6959, 6960, 6961, 6962, 6963, 6965, 6966, 6967, 6968, 6969, 6970, 6971, 6972, 6974, 6975, 6976, 6977, 6978, 6979, 6980, 6981, 6983, 6984, 6985, 6986, 6987, 6988, 6989, 6990, 6991, 6993, 6994, 6995, 6996, 6997, 6998, 6999, 7000, 7001, 7003, 7004, 7005, 7006, 7007, 7008, 7009, 7010, 7011, 7012, 7013, 7015, 7016, 7017, 7018, 7019, 7020, 7021, 7022, 7023, 7024, 7025, 7026, 7027, 7029, 7030, 7031, 7032, 7033, 7034, 7035, 7036, 7037, 7038, 7039, 7040, 7041, 7042, 7043, 7044, 7046, 7047, 7048, 7049, 7050, 7051, 7052, 7053, 7054, 7055, 7056, 7057, 7058, 7059, 7060, 7061, 7062, 7063, 7064, 7065, 7066, 7067, 7068, 7069, 7070, 7071, 7073, 7074, 7075, 7076, 7077, 7078, 7079, 7080, 7081, 7082, 7083, 7084, 7085, 7086, 7087, 7088, 7089, 7090, 7091, 7092, 7093, 7094, 7095, 7096, 7097, 7098, 7099 };
@@ -5379,8 +5379,9 @@ static __m256i minerSolutionsDigest;
 static Asset* assets = NULL;
 static __m256i* assetDigests = NULL;
 static unsigned long long* assetChangeFlags = NULL;
+static char CONTRACT_ASSET_UNIT_OF_MEASUREMENT[7] = { 0, 0, 0, 0, 0, 0, 0 };
 
-struct contract0State
+struct Contract0State
 {
     long long contractFeeReserves[MAX_NUMBER_OF_CONTRACTS];
 };
@@ -5395,6 +5396,10 @@ static bool targetNextTickDataDigestIsKnown = false;
 static unsigned int testFlags = 0;
 static __m256i targetNextTickDataDigest;
 static unsigned long long tickTicks[11];
+
+static unsigned char releasedPublicKeys[NUMBER_OF_COMPUTORS][32];
+static long long releasedAmounts[NUMBER_OF_COMPUTORS];
+static unsigned int numberOfReleasedEntities;
 
 static unsigned long long* dejavu0 = NULL;
 static unsigned long long* dejavu1 = NULL;
@@ -5758,6 +5763,136 @@ static bool decreaseEnergy(const int index, long long amount)
     return false;
 }
 
+static void issueAsset(unsigned char* issuerPublicKey, char name[7], char numberOfDecimalPlaces, char unitOfMeasurement[7], long long numberOfUnits,
+    int* issuanceIndex, int* ownershipIndex, int* possessionIndex)
+{
+    *issuanceIndex = (*((unsigned int*)issuerPublicKey)) & (ASSETS_CAPACITY - 1);
+
+    ACQUIRE(universeLock);
+
+iteration:
+    if (assets[*issuanceIndex].varStruct.issuance.type == EMPTY)
+    {
+        *((__m256i*)assets[*issuanceIndex].varStruct.issuance.publicKey) = *((__m256i*)issuerPublicKey);
+        assets[*issuanceIndex].varStruct.issuance.type = ISSUANCE;
+        bs->CopyMem(assets[*issuanceIndex].varStruct.issuance.name, name, sizeof(assets[*issuanceIndex].varStruct.issuance.name));
+        assets[*issuanceIndex].varStruct.issuance.numberOfDecimalPlaces = numberOfDecimalPlaces;
+        bs->CopyMem(assets[*issuanceIndex].varStruct.issuance.unitOfMeasurement, unitOfMeasurement, sizeof(assets[*issuanceIndex].varStruct.issuance.unitOfMeasurement));
+
+        *ownershipIndex = *issuanceIndex;
+    iteration2:
+        if (assets[*ownershipIndex].varStruct.ownership.type == EMPTY)
+        {
+            *((__m256i*)assets[*ownershipIndex].varStruct.ownership.publicKey) = *((__m256i*)issuerPublicKey);
+            assets[*ownershipIndex].varStruct.ownership.type = OWNERSHIP;
+            assets[*ownershipIndex].varStruct.ownership.managingContractIndex = QX_CONTRACT_INDEX;
+            assets[*ownershipIndex].varStruct.ownership.issuanceIndex = *issuanceIndex;
+            assets[*ownershipIndex].varStruct.ownership.numberOfUnits = numberOfUnits;
+
+            *possessionIndex = *ownershipIndex;
+        iteration3:
+            if (assets[*possessionIndex].varStruct.possession.type == EMPTY)
+            {
+                *((__m256i*)assets[*possessionIndex].varStruct.possession.publicKey) = *((__m256i*)issuerPublicKey);
+                assets[*possessionIndex].varStruct.possession.type = POSSESSION;
+                assets[*possessionIndex].varStruct.possession.managingContractIndex = QX_CONTRACT_INDEX;
+                assets[*possessionIndex].varStruct.possession.ownershipIndex = *ownershipIndex;
+                assets[*possessionIndex].varStruct.possession.numberOfUnits = numberOfUnits;
+
+                assetChangeFlags[*issuanceIndex >> 6] |= (1ULL << (*issuanceIndex & 63));
+                assetChangeFlags[*ownershipIndex >> 6] |= (1ULL << (*ownershipIndex & 63));
+                assetChangeFlags[*possessionIndex >> 6] |= (1ULL << (*possessionIndex & 63));
+
+                RELEASE(universeLock);
+            }
+            else
+            {
+                *possessionIndex = (*possessionIndex + 1) & (ASSETS_CAPACITY - 1);
+
+                goto iteration3;
+            }
+        }
+        else
+        {
+            *ownershipIndex = (*ownershipIndex + 1) & (ASSETS_CAPACITY - 1);
+
+            goto iteration2;
+        }
+    }
+    else
+    {
+        *issuanceIndex = (*issuanceIndex + 1) & (ASSETS_CAPACITY - 1);
+
+        goto iteration;
+    }
+}
+
+static bool transferAssetOwnershipAndPossession(int sourceOwnershipIndex, int sourcePossessionIndex, unsigned char* destinationPublicKey, long long numberOfUnits,
+    int* destinationOwnershipIndex, int* destinationPossessionIndex)
+{
+    if (numberOfUnits <= 0)
+    {
+        return false;
+    }
+
+    ACQUIRE(universeLock);
+
+    if (assets[sourceOwnershipIndex].varStruct.ownership.type != OWNERSHIP || assets[sourceOwnershipIndex].varStruct.ownership.numberOfUnits > numberOfUnits
+        || assets[sourcePossessionIndex].varStruct.possession.type != POSSESSION || assets[sourcePossessionIndex].varStruct.possession.numberOfUnits > numberOfUnits)
+    {
+        RELEASE(universeLock);
+
+        return false;
+    }
+
+    *destinationOwnershipIndex = (*((unsigned int*)destinationPublicKey)) & (ASSETS_CAPACITY - 1);
+iteration:
+    if (assets[*destinationOwnershipIndex].varStruct.ownership.type == EMPTY)
+    {
+        *destinationPossessionIndex = *destinationOwnershipIndex;
+
+    iteration2:
+        if (assets[*destinationPossessionIndex].varStruct.possession.type == EMPTY)
+        {
+            assets[sourceOwnershipIndex].varStruct.ownership.numberOfUnits -= numberOfUnits;
+            assets[sourcePossessionIndex].varStruct.possession.numberOfUnits -= numberOfUnits;
+
+            *((__m256i*)assets[*destinationOwnershipIndex].varStruct.ownership.publicKey) = *((__m256i*)destinationPublicKey);
+            assets[*destinationOwnershipIndex].varStruct.ownership.type = OWNERSHIP;
+            assets[*destinationOwnershipIndex].varStruct.ownership.managingContractIndex = assets[sourceOwnershipIndex].varStruct.ownership.managingContractIndex;
+            assets[*destinationOwnershipIndex].varStruct.ownership.issuanceIndex = assets[sourceOwnershipIndex].varStruct.ownership.issuanceIndex;
+            assets[*destinationOwnershipIndex].varStruct.ownership.numberOfUnits = numberOfUnits;
+
+            *((__m256i*)assets[*destinationPossessionIndex].varStruct.possession.publicKey) = *((__m256i*)destinationPublicKey);
+            assets[*destinationPossessionIndex].varStruct.possession.type = POSSESSION;
+            assets[*destinationPossessionIndex].varStruct.possession.managingContractIndex = assets[sourcePossessionIndex].varStruct.possession.managingContractIndex;
+            assets[*destinationPossessionIndex].varStruct.possession.ownershipIndex = *destinationOwnershipIndex;
+            assets[*destinationPossessionIndex].varStruct.possession.numberOfUnits = numberOfUnits;
+
+            assetChangeFlags[sourceOwnershipIndex >> 6] |= (1ULL << (sourceOwnershipIndex & 63));
+            assetChangeFlags[sourcePossessionIndex >> 6] |= (1ULL << (sourcePossessionIndex & 63));
+            assetChangeFlags[*destinationOwnershipIndex >> 6] |= (1ULL << (*destinationOwnershipIndex & 63));
+            assetChangeFlags[*destinationPossessionIndex >> 6] |= (1ULL << (*destinationPossessionIndex & 63));
+
+            RELEASE(universeLock);
+
+            return true;
+        }
+        else
+        {
+            *destinationPossessionIndex = (*destinationPossessionIndex + 1) & (ASSETS_CAPACITY - 1);
+
+            goto iteration2;
+        }
+    }
+    else
+    {
+        *destinationOwnershipIndex = (*destinationOwnershipIndex + 1) & (ASSETS_CAPACITY - 1);
+
+        goto iteration;
+    }
+}
+
 inline static unsigned int random(const unsigned int range)
 {
     unsigned int value;
@@ -5842,7 +5977,7 @@ static unsigned long long contractStateSize(unsigned int contractIndex)
 {
     if (!contractIndex)
     {
-        return sizeof(contract0State);
+        return sizeof(Contract0State);
     }
     if (contractIndex >= NUMBER_OF_CONTRACTS)
     {
@@ -5992,7 +6127,7 @@ static void pushToAny(RequestResponseHeader* requestResponseHeader)
     }
     if (numberOfSuitablePeers)
     {
-        push(&peers[random(numberOfSuitablePeers)], requestResponseHeader);
+        push(&peers[suitablePeerIndices[random(numberOfSuitablePeers)]], requestResponseHeader);
     }
 }
 
@@ -6012,8 +6147,7 @@ static void pushToSeveral(RequestResponseHeader* requestResponseHeader)
     while (numberOfRemainingSuitablePeers-- && numberOfSuitablePeers)
     {
         const unsigned short index = random(numberOfSuitablePeers);
-        push(&peers[index], requestResponseHeader);
-
+        push(&peers[suitablePeerIndices[index]], requestResponseHeader);
         suitablePeerIndices[index] = suitablePeerIndices[--numberOfSuitablePeers];
     }
 }
@@ -6645,7 +6779,7 @@ static void requestProcessor(void* ProcedureArgument)
                 case BROADCAST_TRANSACTION:
                 {
                     Transaction* request = (Transaction*)((char*)processor->buffer + sizeof(RequestResponseHeader));
-                    if (request->amount >= 0 && request->amount <= MAX_AMOUNT
+                    if (request->amount >= 0 && request->amount <= /*MAX_AMOUNT*/0
                         && request->inputSize <= MAX_INPUT_SIZE)
                     {
                         const unsigned int transactionSize = sizeof(Transaction) + request->inputSize + SIGNATURE_SIZE;
@@ -7023,9 +7157,7 @@ static void processTick(unsigned long long processorNumber)
                                                 const long long amount = contractIPOBid->price * contractIPOBid->quantity;
                                                 if (decreaseEnergy(spectrumIndex, amount))
                                                 {
-                                                    unsigned char releasedPublicKeys[NUMBER_OF_COMPUTORS][32];
-                                                    long long releasedAmounts[NUMBER_OF_COMPUTORS];
-                                                    unsigned int numberOfReleasedEntities = 0;
+                                                    numberOfReleasedEntities = 0;
                                                     IPO* ipo = (IPO*)contractStates[contractIndex];
                                                     for (unsigned int i = 0; i < contractIPOBid->quantity; i++)
                                                     {
@@ -7094,10 +7226,6 @@ static void processTick(unsigned long long processorNumber)
                                             }
                                         }
                                     }
-                                    else
-                                    {
-                                        // TODO
-                                    }
                                 }
                                 break;
                                 }
@@ -7111,8 +7239,8 @@ static void processTick(unsigned long long processorNumber)
                                         && !transaction->inputType)
                                     {
                                         unsigned char data[32 + 32];
-                                        *((__m256i*) & data[0]) = *((__m256i*)transaction->sourcePublicKey);
-                                        *((__m256i*) & data[32]) = *((__m256i*)(((unsigned char*)transaction) + sizeof(Transaction)));
+                                        *((__m256i*)&data[0]) = *((__m256i*)transaction->sourcePublicKey);
+                                        *((__m256i*)&data[32]) = *((__m256i*)(((unsigned char*)transaction) + sizeof(Transaction)));
                                         unsigned int flagIndex;
                                         KangarooTwelve(data, sizeof(data), (unsigned char*)&flagIndex, sizeof(flagIndex));
                                         if (!(minerSolutionFlags[flagIndex >> 6] & (1ULL << (flagIndex & 63))))
@@ -7443,39 +7571,51 @@ static void processTick(unsigned long long processorNumber)
 
 static void endEpoch()
 {
+    Contract0State* contract0State = (Contract0State*)contractStates[0];
     for (unsigned int contractIndex = NUMBER_OF_EXECUTED_CONTRACTS; contractIndex < NUMBER_OF_CONTRACTS; contractIndex++)
     {
-        unsigned char releasedPublicKeys[NUMBER_OF_COMPUTORS][32];
-        long long releasedAmounts[NUMBER_OF_COMPUTORS];
-        unsigned int numberOfReleasedEntities = 0;
         IPO* ipo = (IPO*)contractStates[contractIndex];
+        const long long finalPrice = ipo->prices[NUMBER_OF_COMPUTORS - 1];
+        int issuanceIndex, ownershipIndex, possessionIndex;
+        if (finalPrice)
+        {
+            issueAsset((unsigned char*)&ZERO, contractAssetNames[contractIndex], 0, CONTRACT_ASSET_UNIT_OF_MEASUREMENT, NUMBER_OF_COMPUTORS, &issuanceIndex, &ownershipIndex, &possessionIndex);
+        }
+        numberOfReleasedEntities = 0;
         for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
         {
-            unsigned int j;
-            for (j = 0; j < numberOfReleasedEntities; j++)
+            if (ipo->prices[i] > finalPrice)
             {
-                if (EQUAL(*((__m256i*)ipo->publicKeys[i]), *((__m256i*)releasedPublicKeys[j])))
+                unsigned int j;
+                for (j = 0; j < numberOfReleasedEntities; j++)
                 {
-                    break;
+                    if (EQUAL(*((__m256i*)ipo->publicKeys[i]), *((__m256i*)releasedPublicKeys[j])))
+                    {
+                        break;
+                    }
+                }
+                if (j == numberOfReleasedEntities)
+                {
+                    *((__m256i*)releasedPublicKeys[numberOfReleasedEntities]) = *((__m256i*)ipo->publicKeys[i]);
+                    releasedAmounts[numberOfReleasedEntities++] = ipo->prices[i] - finalPrice;
+                }
+                else
+                {
+                    releasedAmounts[j] += (ipo->prices[i] - finalPrice);
                 }
             }
-            if (j == numberOfReleasedEntities)
+            if (finalPrice)
             {
-                *((__m256i*)releasedPublicKeys[numberOfReleasedEntities]) = *((__m256i*)ipo->publicKeys[i]);
-                releasedAmounts[numberOfReleasedEntities++] = ipo->prices[i];
+                int destinationOwnershipIndex, destinationPossessionIndex;
+                transferAssetOwnershipAndPossession(ownershipIndex, possessionIndex, ipo->publicKeys[i], 1, &destinationOwnershipIndex, &destinationPossessionIndex);
             }
-            else
-            {
-                releasedAmounts[j] += ipo->prices[i];
-            }
-
-            *((__m256i*)ipo->publicKeys[i]) = ZERO;
-            ipo->prices[i] = 0;
         }
         for (unsigned int i = 0; i < numberOfReleasedEntities; i++)
         {
             increaseEnergy(releasedPublicKeys[i], releasedAmounts[i]);
         }
+
+        contract0State->contractFeeReserves[contractIndex] = finalPrice * NUMBER_OF_COMPUTORS;
     }
 
     system.initialMillisecond = etalonTick.millisecond;
@@ -7637,7 +7777,8 @@ static void tickerProcessor(void*)
                     latestProcessedTick = system.tick;
                 }
 
-                if (futureTickTotalNumberOfComputors > NUMBER_OF_COMPUTORS - QUORUM)
+                if (!targetNextTickDataDigestIsKnown
+                    && futureTickTotalNumberOfComputors > NUMBER_OF_COMPUTORS - QUORUM)
                 {
                     const unsigned int baseOffset = (system.tick + 1 - system.initialTick) * NUMBER_OF_COMPUTORS;
                     unsigned int numberOfEmptyNextTickTransactionDigest = 0;
@@ -8714,16 +8855,16 @@ static bool initialize()
 
                 if (!size)
                 {
-                    system.epoch = 64;
+                    system.epoch = 65;
                     system.initialHour = 12;
                     system.initialDay = 13;
                     system.initialMonth = 4;
                     system.initialYear = 22;
                 }
 
-                if (system.epoch == 64)
+                if (system.epoch == 65)
                 {
-                    system.initialTick = system.tick = 6450000;
+                    system.initialTick = system.tick = 6550000;
                 }
                 else
                 {
@@ -8772,6 +8913,34 @@ static bool initialize()
                 logStatus(L"EFI_FILE_PROTOCOL.Read() reads invalid number of bytes", size, __LINE__);
 
                 return false;
+            }
+
+            { // Restore qus lost last epoch because of a bug (this protocol violation is allowed by a computor proposal)
+                unsigned char publicKey[32];
+                getPublicKeyFromIdentity((unsigned char*)"BZBQFLLBNCXEMGLOBHUVFTLUPLVCPQUASSILFABOFFBCADQSSUPNWLZBQEXK", publicKey);
+                unsigned int index = (*((unsigned int*)publicKey)) & (SPECTRUM_CAPACITY - 1);
+            iteration:
+                if (EQUAL(*((__m256i*)initSpectrum[index].publicKey), *((__m256i*)publicKey)))
+                {
+                    initSpectrum[index].incomingAmount += 1473;
+                    initSpectrum[index].numberOfIncomingTransfers++;
+                    initSpectrum[index].latestIncomingTransferTick = system.tick;
+                }
+                else
+                {
+                    if (EQUAL(*((__m256i*)initSpectrum[index].publicKey), ZERO))
+                    {
+                        *((__m256i*)initSpectrum[index].publicKey) = *((__m256i*)publicKey);
+                        initSpectrum[index].incomingAmount = 1473;
+                        initSpectrum[index].numberOfIncomingTransfers = 1;
+                        initSpectrum[index].latestIncomingTransferTick = system.tick;
+                    }
+                    else
+                    {
+                        index = (index + 1) & (SPECTRUM_CAPACITY - 1);
+                        goto iteration;
+                    }
+                }
             }
 
             bs->CopyMem(spectrum, initSpectrum, SPECTRUM_CAPACITY * sizeof(Entity));
@@ -8925,7 +9094,7 @@ static bool initialize()
         bs->SetMem(randomSeed, 32, 0);
         randomSeed[0] = 74;
         randomSeed[1] = 27;
-        randomSeed[2] = 26;
+        randomSeed[2] = 39;
         randomSeed[3] = 27;
         randomSeed[4] = 126;
         randomSeed[5] = 26;
