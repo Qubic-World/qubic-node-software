@@ -20,8 +20,8 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 146
-#define VERSION_C 0
+#define VERSION_B 148
+#define VERSION_C 1
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -5447,6 +5447,7 @@ static volatile long long numberOfTransmittedBytes = 0, prevNumberOfTransmittedB
 static volatile char publicPeersLock = 0;
 static unsigned int numberOfPublicPeers = 0;
 static PublicPeer publicPeers[MAX_NUMBER_OF_PUBLIC_PEERS];
+static unsigned int allSuitablePeers, perfectSuitablePeers;
 
 static unsigned long long miningData[65536];
 static unsigned int validationNeuronLinks[MAX_NUMBER_OF_PROCESSORS][NUMBER_OF_NEURONS][2];
@@ -6135,12 +6136,17 @@ static void pushToSeveral(RequestResponseHeader* requestResponseHeader)
 {
     unsigned short suitablePeerIndices[NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS];
     unsigned short numberOfSuitablePeers = 0;
+    perfectSuitablePeers = allSuitablePeers = 0;
     for (unsigned int i = 0; i < NUMBER_OF_OUTGOING_CONNECTIONS + NUMBER_OF_INCOMING_CONNECTIONS; i++)
     {
-        if (peers[i].tcp4Protocol && peers[i].isConnectedAccepted && peers[i].exchangedPublicPeers && !peers[i].isClosing
-            && !peers[i].dataToTransmitSize)
+        if (peers[i].tcp4Protocol && peers[i].isConnectedAccepted && peers[i].exchangedPublicPeers && !peers[i].isClosing)
         {
-            suitablePeerIndices[numberOfSuitablePeers++] = i;
+            allSuitablePeers++;
+            if (!peers[i].dataToTransmitSize)
+            {
+                perfectSuitablePeers++;
+                suitablePeerIndices[numberOfSuitablePeers++] = i;
+            }
         }
     }
     unsigned short numberOfRemainingSuitablePeers = DISSEMINATION_MULTIPLIER;
@@ -9358,7 +9364,16 @@ static void logInfo()
     appendText(message, L" -");
     appendNumber(message, numberOfTransmittedBytes - prevNumberOfTransmittedBytes, TRUE);
     appendText(message, L" ..."); appendNumber(message, numberOfWaitingBytes, TRUE);
-    appendText(message, L").");
+    appendText(message, L"). Peer robustness = ");
+    if (allSuitablePeers)
+    {
+        appendNumber(message, perfectSuitablePeers * 100 / allSuitablePeers, FALSE);
+        appendText(message, L"%.");
+    }
+    else
+    {
+        appendText(message, L"n/a.");
+    }
     log(message);
     prevNumberOfProcessedRequests = numberOfProcessedRequests;
     prevNumberOfDiscardedRequests = numberOfDiscardedRequests;
@@ -9767,7 +9782,7 @@ static void processKeyPresses()
 
         case 0x13:
         {
-            // TODO
+            system.latestCreatedTick--;
         }
         break;
 
