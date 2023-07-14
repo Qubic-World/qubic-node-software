@@ -15,13 +15,13 @@ static const unsigned char knownPublicPeers[][4] = {
 
 ////////// Public Settings \\\\\\\\\\
 
-#define PREFERABLE_NUMBER_OF_TRANSACTIONS_PER_TICK 64 // Must be <= 1024
+#define PREFERABLE_NUMBER_OF_TRANSACTIONS_PER_TICK 32 // Must be <= 1024
 
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 148
-#define VERSION_C 2
+#define VERSION_B 149
+#define VERSION_C 0
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -6898,10 +6898,10 @@ static void requestProcessor(void* ProcedureArgument)
                         {
                             const unsigned short index = random(numberOfTickTransactions);
 
-                            if (!(request->transactionFlags[index >> 3] & (1 << (index & 7)))
-                                && tickTransactionOffsets[request->tick - system.initialTick][index])
+                            if (!(request->transactionFlags[tickTransactionIndices[index] >> 3] & (1 << (tickTransactionIndices[index] & 7)))
+                                && tickTransactionOffsets[request->tick - system.initialTick][tickTransactionIndices[index]])
                             {
-                                const Transaction* transaction = (Transaction*)&tickTransactions[tickTransactionOffsets[request->tick - system.initialTick][index]];
+                                const Transaction* transaction = (Transaction*)&tickTransactions[tickTransactionOffsets[request->tick - system.initialTick][tickTransactionIndices[index]]];
                                 enqueueResponse(peer, true, BROADCAST_TRANSACTION, (void*)transaction, sizeof(Transaction) + transaction->inputSize + SIGNATURE_SIZE);
                             }
 
