@@ -19,7 +19,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 150
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -7820,6 +7820,7 @@ static void tickerProcessor(void*)
                     {
                         targetNextTickDataDigest = uniqueNextTickTransactionDigests[mostPopularUniqueNextTickTransactionDigestIndex];
                         targetNextTickDataDigestIsKnown = true;
+                        testFlags |= 1024;
                     }
                     else
                     {
@@ -7828,6 +7829,7 @@ static void tickerProcessor(void*)
                         {
                             targetNextTickDataDigest = ZERO;
                             targetNextTickDataDigestIsKnown = true;
+                            testFlags |= 2048;
                         }
                     }
                 }
@@ -7880,6 +7882,7 @@ static void tickerProcessor(void*)
                         {
                             targetNextTickDataDigest = uniqueNextTickTransactionDigests[mostPopularUniqueNextTickTransactionDigestIndex];
                             targetNextTickDataDigestIsKnown = true;
+                            testFlags |= 4096;
                         }
                         else
                         {
@@ -7888,6 +7891,7 @@ static void tickerProcessor(void*)
                             {
                                 targetNextTickDataDigest = ZERO;
                                 targetNextTickDataDigestIsKnown = true;
+                                testFlags |= 8192;
                             }
                         }
                     }
@@ -7965,7 +7969,7 @@ static void tickerProcessor(void*)
                     }
                     ::tickNumberOfComputors = 0;
                     ::tickTotalNumberOfComputors = tickTotalNumberOfComputors;
-                    if (testFlags & 1) testFlags |= 1024;
+                    if (testFlags & 1) testFlags |= 512;
                 }
                 else
                 {
@@ -8227,6 +8231,7 @@ static void tickerProcessor(void*)
                                 {
                                     targetNextTickDataDigest = ZERO;
                                     targetNextTickDataDigestIsKnown = true;
+                                    testFlags |= 16384;
                                 }
                             }
                             forceNextTick = false;
@@ -8863,7 +8868,7 @@ static bool initialize()
 
                 if (system.epoch == 65)
                 {
-                    system.initialTick = system.tick = 6570000;
+                    system.initialTick = system.tick = 6580000;
                 }
                 else
                 {
@@ -8914,7 +8919,7 @@ static bool initialize()
                 return false;
             }
 
-            { // Restore qus lost last epoch because of a bug (this protocol violation is allowed by a computor proposal)
+            /*{ // Restore qus lost last epoch because of a bug (this protocol violation is allowed by a computor proposal)
                 unsigned char publicKey[32];
                 getPublicKeyFromIdentity((unsigned char*)"BZBQFLLBNCXEMGLOBHUVFTLUPLVCPQUASSILFABOFFBCADQSSUPNWLZBQEXK", publicKey);
                 unsigned int index = (*((unsigned int*)publicKey)) & (SPECTRUM_CAPACITY - 1);
@@ -8930,7 +8935,7 @@ static bool initialize()
                     index = (index + 1) & (SPECTRUM_CAPACITY - 1);
                     goto iteration;
                 }
-            }
+            }*/
 
             bs->CopyMem(spectrum, initSpectrum, SPECTRUM_CAPACITY * sizeof(Entity));
 
