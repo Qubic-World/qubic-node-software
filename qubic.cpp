@@ -15,12 +15,10 @@ static const unsigned char knownPublicPeers[][4] = {
 
 ////////// Public Settings \\\\\\\\\\
 
-#define PREFERABLE_NUMBER_OF_TRANSACTIONS_PER_TICK 32 // Must be <= 1024
-
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 149
+#define VERSION_B 150
 #define VERSION_C 0
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
@@ -7458,7 +7456,7 @@ static void processTick(unsigned long long processorNumber)
                         entityPendingTransactionIndices[numberOfEntityPendingTransactionIndices] = numberOfEntityPendingTransactionIndices;
                     }
                     unsigned int j = 0;
-                    while (j < PREFERABLE_NUMBER_OF_TRANSACTIONS_PER_TICK && numberOfEntityPendingTransactionIndices)
+                    while (j < NUMBER_OF_TRANSACTIONS_PER_TICK && numberOfEntityPendingTransactionIndices)
                     {
                         const unsigned int index = random(numberOfEntityPendingTransactionIndices);
 
@@ -7967,6 +7965,7 @@ static void tickerProcessor(void*)
                     }
                     ::tickNumberOfComputors = 0;
                     ::tickTotalNumberOfComputors = tickTotalNumberOfComputors;
+                    if (testFlags & 1) testFlags |= 1024;
                 }
                 else
                 {
@@ -8323,6 +8322,8 @@ static void tickerProcessor(void*)
                                     }
 
                                     system.tick++;
+
+                                    testFlags = 0;
 
                                     tickPhase = 0;
 
@@ -8862,7 +8863,7 @@ static bool initialize()
 
                 if (system.epoch == 65)
                 {
-                    system.initialTick = system.tick = 6550000;
+                    system.initialTick = system.tick = 6570000;
                 }
                 else
                 {
@@ -8920,24 +8921,14 @@ static bool initialize()
             iteration:
                 if (EQUAL(*((__m256i*)initSpectrum[index].publicKey), *((__m256i*)publicKey)))
                 {
-                    initSpectrum[index].incomingAmount += 1473;
-                    initSpectrum[index].numberOfIncomingTransfers++;
+                    initSpectrum[index].incomingAmount -= 1473;
+                    initSpectrum[index].numberOfIncomingTransfers--;
                     initSpectrum[index].latestIncomingTransferTick = system.tick;
                 }
                 else
                 {
-                    if (EQUAL(*((__m256i*)initSpectrum[index].publicKey), ZERO))
-                    {
-                        *((__m256i*)initSpectrum[index].publicKey) = *((__m256i*)publicKey);
-                        initSpectrum[index].incomingAmount = 1473;
-                        initSpectrum[index].numberOfIncomingTransfers = 1;
-                        initSpectrum[index].latestIncomingTransferTick = system.tick;
-                    }
-                    else
-                    {
-                        index = (index + 1) & (SPECTRUM_CAPACITY - 1);
-                        goto iteration;
-                    }
+                    index = (index + 1) & (SPECTRUM_CAPACITY - 1);
+                    goto iteration;
                 }
             }
 
@@ -9042,7 +9033,7 @@ static bool initialize()
         }
         else
         {
-            for (unsigned int contractIndex = 0; contractIndex < NUMBER_OF_EXECUTED_CONTRACTS; contractIndex++)
+            for (unsigned int contractIndex = 0; contractIndex < NUMBER_OF_CONTRACTS; contractIndex++)
             {
                 unsigned long long size = contractStateSize(contractIndex);
                 status = dataFile->Read(dataFile, &size, contractStates[contractIndex]);
@@ -9068,11 +9059,6 @@ static bool initialize()
             }
 
             dataFile->Close(dataFile);
-
-            for (unsigned int contractIndex = NUMBER_OF_EXECUTED_CONTRACTS; contractIndex < NUMBER_OF_CONTRACTS; contractIndex++)
-            {
-                bs->SetMem(contractStates[contractIndex], contractStateSize(contractIndex), 0);
-            }
 
             setText(message, L"Computer digest = ");
             __m256i digest;
@@ -10088,7 +10074,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             {
                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
                                                 if (requestResponseHeader->size() < sizeof(RequestResponseHeader)
-                                                    || (requestResponseHeader->protocol() && (requestResponseHeader->protocol() < VERSION_B - 1 || requestResponseHeader->protocol() > VERSION_B + 1)))
+                                                    || (requestResponseHeader->protocol() && (requestResponseHeader->protocol() < VERSION_B - 2 || requestResponseHeader->protocol() > VERSION_B + 1)))
                                                 {
                                                     setText(message, L"Forgetting ");
                                                     appendNumber(message, peers[i].address[0], FALSE);
