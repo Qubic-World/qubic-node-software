@@ -18,8 +18,8 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 150
-#define VERSION_C 1
+#define VERSION_B 151
+#define VERSION_C 0
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -5391,7 +5391,7 @@ static void* curContractState = NULL;
 
 static volatile char tickLocks[NUMBER_OF_COMPUTORS];
 static bool targetNextTickDataDigestIsKnown = false;
-static unsigned int testFlags = 0;
+static unsigned int testFlags = 0, testCounter = 0, testCounter2 = 0;
 static __m256i targetNextTickDataDigest;
 static unsigned long long tickTicks[11];
 
@@ -6737,6 +6737,7 @@ static void requestProcessor(void* ProcedureArgument)
                                         if (EQUAL(*((__m256i*)digest), targetNextTickDataDigest))
                                         {
                                             bs->CopyMem(&tickData[request->tickData.tick - system.initialTick], &request->tickData, sizeof(TickData));
+                                            testCounter++;
                                         }
                                     }
                                 }
@@ -6764,6 +6765,7 @@ static void requestProcessor(void* ProcedureArgument)
                                     else
                                     {
                                         bs->CopyMem(&tickData[request->tickData.tick - system.initialTick], &request->tickData, sizeof(TickData));
+                                        testCounter2++;
                                     }
                                 }
                             }
@@ -8329,6 +8331,8 @@ static void tickerProcessor(void*)
                                     system.tick++;
 
                                     testFlags = 0;
+                                    testCounter = 0;
+                                    testCounter2 = 0;
 
                                     tickPhase = 0;
 
@@ -8868,7 +8872,7 @@ static bool initialize()
 
                 if (system.epoch == 65)
                 {
-                    system.initialTick = system.tick = 6580000;
+                    system.initialTick = system.tick = 6590000;
                 }
                 else
                 {
@@ -8918,24 +8922,6 @@ static bool initialize()
 
                 return false;
             }
-
-            /*{ // Restore qus lost last epoch because of a bug (this protocol violation is allowed by a computor proposal)
-                unsigned char publicKey[32];
-                getPublicKeyFromIdentity((unsigned char*)"BZBQFLLBNCXEMGLOBHUVFTLUPLVCPQUASSILFABOFFBCADQSSUPNWLZBQEXK", publicKey);
-                unsigned int index = (*((unsigned int*)publicKey)) & (SPECTRUM_CAPACITY - 1);
-            iteration:
-                if (EQUAL(*((__m256i*)initSpectrum[index].publicKey), *((__m256i*)publicKey)))
-                {
-                    initSpectrum[index].incomingAmount -= 1473;
-                    initSpectrum[index].numberOfIncomingTransfers--;
-                    initSpectrum[index].latestIncomingTransferTick = system.tick;
-                }
-                else
-                {
-                    index = (index + 1) & (SPECTRUM_CAPACITY - 1);
-                    goto iteration;
-                }
-            }*/
 
             bs->CopyMem(spectrum, initSpectrum, SPECTRUM_CAPACITY * sizeof(Entity));
 
@@ -9603,6 +9589,12 @@ static void processKeyPresses()
             log(message);
 
             log(isMain ? L"MAIN   *   MAIN   *   MAIN   *   MAIN   *   MAIN" : L"aux   *   aux   *   aux   *   aux   *   aux");
+
+            setText(message, L">>>>>>>>>> ");
+            appendNumber(message, testCounter, TRUE);
+            appendText(message, L" / ");
+            appendNumber(message, testCounter2, TRUE);
+            log(message);
         }
         break;
 
@@ -10079,7 +10071,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             {
                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
                                                 if (requestResponseHeader->size() < sizeof(RequestResponseHeader)
-                                                    || (requestResponseHeader->protocol() && (requestResponseHeader->protocol() < VERSION_B - 2 || requestResponseHeader->protocol() > VERSION_B + 1)))
+                                                    || (requestResponseHeader->protocol() && (requestResponseHeader->protocol() < VERSION_B - 3 || requestResponseHeader->protocol() > VERSION_B + 1)))
                                                 {
                                                     setText(message, L"Forgetting ");
                                                     appendNumber(message, peers[i].address[0], FALSE);
