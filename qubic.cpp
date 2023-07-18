@@ -18,7 +18,7 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 151
+#define VERSION_B 152
 #define VERSION_C 0
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
@@ -4818,7 +4818,7 @@ static bool verify(const unsigned char* publicKey, const unsigned char* messageD
 #define NUMBER_OF_OUTGOING_CONNECTIONS 4
 #define NUMBER_OF_INCOMING_CONNECTIONS 60
 #define NUMBER_OF_NEURONS 4194304
-#define NUMBER_OF_TRANSACTIONS_PER_TICK 1024 // Must be 2^N
+#define NUMBER_OF_TRANSACTIONS_PER_TICK 64 // Must be 2^N
 #define PEER_REFRESHING_PERIOD 10000
 #define PORT 21841
 #define QUORUM (NUMBER_OF_COMPUTORS * 2 / 3 + 1)
@@ -6765,7 +6765,7 @@ static void requestProcessor(void* ProcedureArgument)
                                     else
                                     {
                                         bs->CopyMem(&tickData[request->tickData.tick - system.initialTick], &request->tickData, sizeof(TickData));
-                                        testCounter2++;
+                                        if (request->tickData.tick == system.tick + 1) testCounter2++;
                                     }
                                 }
                             }
@@ -6777,7 +6777,7 @@ static void requestProcessor(void* ProcedureArgument)
                 case BROADCAST_TRANSACTION:
                 {
                     Transaction* request = (Transaction*)((char*)processor->buffer + sizeof(RequestResponseHeader));
-                    if (request->amount >= 0 && request->amount <= /*MAX_AMOUNT*/0
+                    if (request->amount >= 0 && request->amount <= MAX_AMOUNT
                         && request->inputSize <= MAX_INPUT_SIZE)
                     {
                         const unsigned int transactionSize = sizeof(Transaction) + request->inputSize + SIGNATURE_SIZE;
@@ -7641,7 +7641,7 @@ static void endEpoch()
 
     for (unsigned int computorIndex = 0; computorIndex < NUMBER_OF_COMPUTORS; computorIndex++)
     {
-        const unsigned int revenue = tickCounters[computorIndex] ? ((ISSUANCE_RATE / NUMBER_OF_COMPUTORS) * ((unsigned long long)nonEmptyTickCounters[computorIndex]) / tickCounters[computorIndex]) : 0;
+        const unsigned int revenue = (ISSUANCE_RATE / NUMBER_OF_COMPUTORS);// tickCounters[computorIndex] ? ((ISSUANCE_RATE / NUMBER_OF_COMPUTORS) * ((unsigned long long)nonEmptyTickCounters[computorIndex]) / tickCounters[computorIndex]) : 0;
         increaseEnergy(broadcastedComputors.broadcastComputors.computors.publicKeys[computorIndex], revenue);
         arbitratorRevenue -= revenue;
     }
@@ -7945,6 +7945,7 @@ static void tickerProcessor(void*)
                         }
                         else
                         {
+                            testFlags |= 1048576;
                             KangarooTwelve((unsigned char*)&nextTickData, sizeof(TickData), etalonTick.expectedNextTickTransactionDigest, 32);
                             tickDataSuits = EQUAL(*((__m256i*)etalonTick.expectedNextTickTransactionDigest), targetNextTickDataDigest);
                             if (!tickDataSuits)
@@ -8101,11 +8102,13 @@ static void tickerProcessor(void*)
                         {
                             if (!targetNextTickDataDigestIsKnown)
                             {
+                                testFlags |= 1048576*2;
                                 KangarooTwelve((unsigned char*)&nextTickData, sizeof(TickData), etalonTick.expectedNextTickTransactionDigest, 32);
                             }
                         }
                         else
                         {
+                            testFlags |= 1048576*4;
                             *((__m256i*)etalonTick.expectedNextTickTransactionDigest) = ZERO;
                         }
 
@@ -8260,6 +8263,7 @@ static void tickerProcessor(void*)
                                     }
                                     else
                                     {
+                                        testFlags |= 1048576*8;
                                         KangarooTwelve((unsigned char*)&nextTickData, sizeof(TickData), etalonTick.expectedNextTickTransactionDigest, 32);
                                         tickDataSuits = EQUAL(*((__m256i*)etalonTick.expectedNextTickTransactionDigest), targetNextTickDataDigest);
                                     }
@@ -8872,7 +8876,7 @@ static bool initialize()
 
                 if (system.epoch == 65)
                 {
-                    system.initialTick = system.tick = 6590000;
+                    system.initialTick = system.tick = 6597000;
                 }
                 else
                 {
@@ -10071,7 +10075,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             {
                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
                                                 if (requestResponseHeader->size() < sizeof(RequestResponseHeader)
-                                                    || (requestResponseHeader->protocol() && (requestResponseHeader->protocol() < VERSION_B - 3 || requestResponseHeader->protocol() > VERSION_B + 1)))
+                                                    || (requestResponseHeader->protocol() && (requestResponseHeader->protocol() < VERSION_B - 4 || requestResponseHeader->protocol() > VERSION_B + 1)))
                                                 {
                                                     setText(message, L"Forgetting ");
                                                     appendNumber(message, peers[i].address[0], FALSE);
