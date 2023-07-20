@@ -18,7 +18,7 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 152
+#define VERSION_B 153
 #define VERSION_C 0
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
@@ -4818,7 +4818,7 @@ static bool verify(const unsigned char* publicKey, const unsigned char* messageD
 #define NUMBER_OF_OUTGOING_CONNECTIONS 4
 #define NUMBER_OF_INCOMING_CONNECTIONS 60
 #define NUMBER_OF_NEURONS 4194304
-#define NUMBER_OF_TRANSACTIONS_PER_TICK 64 // Must be 2^N
+#define NUMBER_OF_TRANSACTIONS_PER_TICK 1024 // Must be 2^N
 #define PEER_REFRESHING_PERIOD 10000
 #define PORT 21841
 #define QUORUM (NUMBER_OF_COMPUTORS * 2 / 3 + 1)
@@ -4827,7 +4827,7 @@ static bool verify(const unsigned char* publicKey, const unsigned char* messageD
 #define RESPONSE_QUEUE_BUFFER_SIZE 1073741824
 #define RESPONSE_QUEUE_LENGTH 65536 // Must be 65536
 #define SIGNATURE_SIZE 64
-#define SOLUTION_THRESHOLD 22
+#define SOLUTION_THRESHOLD 21
 #define SPECTRUM_CAPACITY 0x1000000ULL // Must be 2^N
 #define SPECTRUM_DEPTH 24 // Is derived from SPECTRUM_CAPACITY (=N)
 #define WRITING_CHUNK_SIZE 1048576
@@ -5835,8 +5835,8 @@ static bool transferAssetOwnershipAndPossession(int sourceOwnershipIndex, int so
 
     ACQUIRE(universeLock);
 
-    if (assets[sourceOwnershipIndex].varStruct.ownership.type != OWNERSHIP || assets[sourceOwnershipIndex].varStruct.ownership.numberOfUnits > numberOfUnits
-        || assets[sourcePossessionIndex].varStruct.possession.type != POSSESSION || assets[sourcePossessionIndex].varStruct.possession.numberOfUnits > numberOfUnits)
+    if (assets[sourceOwnershipIndex].varStruct.ownership.type != OWNERSHIP || assets[sourceOwnershipIndex].varStruct.ownership.numberOfUnits < numberOfUnits
+        || assets[sourcePossessionIndex].varStruct.possession.type != POSSESSION || assets[sourcePossessionIndex].varStruct.possession.numberOfUnits < numberOfUnits)
     {
         RELEASE(universeLock);
 
@@ -7626,22 +7626,35 @@ static void endEpoch()
 
     long long arbitratorRevenue = ISSUANCE_RATE;
 
-    unsigned int tickCounters[NUMBER_OF_COMPUTORS], nonEmptyTickCounters[NUMBER_OF_COMPUTORS];
-    bs->SetMem(tickCounters, sizeof(tickCounters), 0);
-    bs->SetMem(nonEmptyTickCounters, sizeof(nonEmptyTickCounters), 0);
+    unsigned long long transactionCounters[NUMBER_OF_COMPUTORS];
+    bs->SetMem(transactionCounters, sizeof(transactionCounters), 0);
     for (unsigned int tick = system.initialTick; tick <= system.tick; tick++)
     {
-        const unsigned short computorIndex = tick % NUMBER_OF_COMPUTORS;
-        tickCounters[computorIndex]++;
         if (tickData[tick - system.initialTick].epoch == system.epoch)
         {
-            nonEmptyTickCounters[computorIndex]++;
+            unsigned int numberOfTransactions = 0;
+            for (unsigned int transactionIndex = 0; transactionIndex < NUMBER_OF_TRANSACTIONS_PER_TICK; transactionIndex++)
+            {
+                if (!EQUAL(*((__m256i*)tickData[tick - system.initialTick].transactionDigests[transactionIndex]), ZERO))
+                {
+                    numberOfTransactions++;
+                }
+            }
+            transactionCounters[tick % NUMBER_OF_COMPUTORS] += revenuePoints[numberOfTransactions];
+        }
+    }
+    unsigned long long bestTransactionCounter = 1;
+    for (unsigned int computorIndex = 0; computorIndex < NUMBER_OF_COMPUTORS; computorIndex++)
+    {
+        if (transactionCounters[computorIndex] > bestTransactionCounter)
+        {
+            bestTransactionCounter = transactionCounters[computorIndex];
         }
     }
 
     for (unsigned int computorIndex = 0; computorIndex < NUMBER_OF_COMPUTORS; computorIndex++)
     {
-        const unsigned int revenue = (ISSUANCE_RATE / NUMBER_OF_COMPUTORS);// tickCounters[computorIndex] ? ((ISSUANCE_RATE / NUMBER_OF_COMPUTORS) * ((unsigned long long)nonEmptyTickCounters[computorIndex]) / tickCounters[computorIndex]) : 0;
+        const unsigned int revenue = ((ISSUANCE_RATE / NUMBER_OF_COMPUTORS) * ((unsigned long long)transactionCounters[computorIndex])) / bestTransactionCounter;
         increaseEnergy(broadcastedComputors.broadcastComputors.computors.publicKeys[computorIndex], revenue);
         arbitratorRevenue -= revenue;
     }
@@ -8867,16 +8880,16 @@ static bool initialize()
 
                 if (!size)
                 {
-                    system.epoch = 65;
+                    system.epoch = 66;
                     system.initialHour = 12;
                     system.initialDay = 13;
                     system.initialMonth = 4;
                     system.initialYear = 22;
                 }
 
-                if (system.epoch == 65)
+                if (system.epoch == 66)
                 {
-                    system.initialTick = system.tick = 6597000;
+                    system.initialTick = system.tick = 6600000;
                 }
                 else
                 {
@@ -9071,14 +9084,14 @@ static bool initialize()
 
         unsigned char randomSeed[32];
         bs->SetMem(randomSeed, 32, 0);
-        randomSeed[0] = 74;
-        randomSeed[1] = 27;
-        randomSeed[2] = 39;
-        randomSeed[3] = 27;
-        randomSeed[4] = 126;
-        randomSeed[5] = 26;
-        randomSeed[6] = 26;
-        randomSeed[7] = 27;
+        randomSeed[0] = 137;
+        randomSeed[1] = 137;
+        randomSeed[2] = 54;
+        randomSeed[3] = 54;
+        randomSeed[4] = 69;
+        randomSeed[5] = 69;
+        randomSeed[6] = 139;
+        randomSeed[7] = 139;
         random(randomSeed, randomSeed, (unsigned char*)miningData, sizeof(miningData));
 
         if (status = bs->AllocatePool(EfiRuntimeServicesData, NUMBER_OF_MINER_SOLUTION_FLAGS / 8, (void**)&minerSolutionFlags))
@@ -10075,7 +10088,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             {
                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
                                                 if (requestResponseHeader->size() < sizeof(RequestResponseHeader)
-                                                    || (requestResponseHeader->protocol() && (requestResponseHeader->protocol() < VERSION_B - 4 || requestResponseHeader->protocol() > VERSION_B + 1)))
+                                                    || (requestResponseHeader->protocol() && (requestResponseHeader->protocol() < VERSION_B || requestResponseHeader->protocol() > VERSION_B + 1)))
                                                 {
                                                     setText(message, L"Forgetting ");
                                                     appendNumber(message, peers[i].address[0], FALSE);
