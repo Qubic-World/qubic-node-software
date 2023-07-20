@@ -18,7 +18,7 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 153
+#define VERSION_B 154
 #define VERSION_C 0
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
@@ -5348,7 +5348,8 @@ static unsigned short ownComputorIndices[sizeof(computorSeeds) / sizeof(computor
 static unsigned short ownComputorIndicesMapping[sizeof(computorSeeds) / sizeof(computorSeeds[0])];
 
 static Tick* ticks = NULL;
-static TickData* tickData = NULL;
+static TickData* tickData333 = NULL;
+static volatile char tickDataLock = 0;
 static Tick etalonTick;
 static TickData nextTickData;
 static volatile char tickTransactionsLock = 0;
@@ -6728,6 +6729,7 @@ static void requestProcessor(void* ProcedureArgument)
                                     enqueueResponse(NULL, header);
                                 }
 
+                                ACQUIRE(tickDataLock);
                                 if (request->tickData.tick == system.tick + 1 && targetNextTickDataDigestIsKnown)
                                 {
                                     if (!EQUAL(targetNextTickDataDigest, ZERO))
@@ -6736,16 +6738,16 @@ static void requestProcessor(void* ProcedureArgument)
                                         KangarooTwelve((unsigned char*)&request->tickData, sizeof(TickData), digest, 32);
                                         if (EQUAL(*((__m256i*)digest), targetNextTickDataDigest))
                                         {
-                                            bs->CopyMem(&tickData[request->tickData.tick - system.initialTick], &request->tickData, sizeof(TickData));
+                                            bs->CopyMem(&tickData333[request->tickData.tick - system.initialTick], &request->tickData, sizeof(TickData));
                                             testCounter++;
                                         }
                                     }
                                 }
                                 else
                                 {
-                                    if (tickData[request->tickData.tick - system.initialTick].epoch == system.epoch)
+                                    if (tickData333[request->tickData.tick - system.initialTick].epoch == system.epoch)
                                     {
-                                        if (*((unsigned long long*) & request->tickData.millisecond) != *((unsigned long long*) & tickData[request->tickData.tick - system.initialTick].millisecond))
+                                        if (*((unsigned long long*)&request->tickData.millisecond) != *((unsigned long long*)&tickData333[request->tickData.tick - system.initialTick].millisecond))
                                         {
                                             faultyComputorFlags[request->tickData.computorIndex >> 6] |= (1ULL << (request->tickData.computorIndex & 63));
                                         }
@@ -6753,7 +6755,7 @@ static void requestProcessor(void* ProcedureArgument)
                                         {
                                             for (unsigned int i = 0; i < NUMBER_OF_TRANSACTIONS_PER_TICK; i++)
                                             {
-                                                if (!EQUAL(*((__m256i*)request->tickData.transactionDigests[i]), *((__m256i*)tickData[request->tickData.tick - system.initialTick].transactionDigests[i])))
+                                                if (!EQUAL(*((__m256i*)request->tickData.transactionDigests[i]), *((__m256i*)tickData333[request->tickData.tick - system.initialTick].transactionDigests[i])))
                                                 {
                                                     faultyComputorFlags[request->tickData.computorIndex >> 6] |= (1ULL << (request->tickData.computorIndex & 63));
 
@@ -6764,10 +6766,11 @@ static void requestProcessor(void* ProcedureArgument)
                                     }
                                     else
                                     {
-                                        bs->CopyMem(&tickData[request->tickData.tick - system.initialTick], &request->tickData, sizeof(TickData));
+                                        bs->CopyMem(&tickData333[request->tickData.tick - system.initialTick], &request->tickData, sizeof(TickData));
                                         if (request->tickData.tick == system.tick + 1) testCounter2++;
                                     }
                                 }
+                                RELEASE(tickDataLock);
                             }
                         }
                     }
@@ -6804,13 +6807,14 @@ static void requestProcessor(void* ProcedureArgument)
                                 RELEASE(entityPendingTransactionsLock);
                             }
 
+                            ACQUIRE(tickDataLock);
                             if (request->tick == system.tick + 1
-                                && tickData[request->tick - system.initialTick].epoch == system.epoch)
+                                && tickData333[request->tick - system.initialTick].epoch == system.epoch)
                             {
                                 KangarooTwelve((unsigned char*)request, transactionSize, digest, sizeof(digest));
                                 for (unsigned int i = 0; i < NUMBER_OF_TRANSACTIONS_PER_TICK; i++)
                                 {
-                                    if (EQUAL(*((__m256i*)digest), *((__m256i*)tickData[request->tick - system.initialTick].transactionDigests[i])))
+                                    if (EQUAL(*((__m256i*)digest), *((__m256i*)tickData333[request->tick - system.initialTick].transactionDigests[i])))
                                     {
                                         ACQUIRE(tickTransactionsLock);
                                         if (!tickTransactionOffsets[request->tick - system.initialTick][i])
@@ -6828,6 +6832,7 @@ static void requestProcessor(void* ProcedureArgument)
                                     }
                                 }
                             }
+                            RELEASE(tickDataLock);
                         }
                     }
                 }
@@ -6876,9 +6881,9 @@ static void requestProcessor(void* ProcedureArgument)
                 {
                     RequestTickData* request = (RequestTickData*)((char*)processor->buffer + sizeof(RequestResponseHeader));
                     if (request->requestedTickData.tick > system.initialTick && request->requestedTickData.tick < system.initialTick + MAX_NUMBER_OF_TICKS_PER_EPOCH
-                        && tickData[request->requestedTickData.tick - system.initialTick].epoch == system.epoch)
+                        && tickData333[request->requestedTickData.tick - system.initialTick].epoch == system.epoch)
                     {
-                        enqueueResponse(peer, true, BROADCAST_FUTURE_TICK_DATA, &tickData[request->requestedTickData.tick - system.initialTick], sizeof(TickData));
+                        enqueueResponse(peer, true, BROADCAST_FUTURE_TICK_DATA, &tickData333[request->requestedTickData.tick - system.initialTick], sizeof(TickData));
                     }
                 }
                 break;
@@ -7104,12 +7109,15 @@ static void processTick(unsigned long long processorNumber)
     getUniverseDigest((__m256i*)etalonTick.prevUniverseDigest);
     getComputerDigest((__m256i*)etalonTick.prevComputerDigest);
 
-    if (tickData[system.tick - system.initialTick].epoch == system.epoch)
+    ACQUIRE(tickDataLock);
+    bs->CopyMem(&nextTickData, &tickData333[system.tick - system.initialTick], sizeof(TickData));
+    RELEASE(tickDataLock);
+    if (nextTickData.epoch == system.epoch)
     {
         bs->SetMem(entityPendingTransactionIndices, sizeof(entityPendingTransactionIndices), 0);
         for (unsigned int transactionIndex = 0; transactionIndex < NUMBER_OF_TRANSACTIONS_PER_TICK; transactionIndex++)
         {
-            if (!EQUAL(*((__m256i*)tickData[system.tick - system.initialTick].transactionDigests[transactionIndex]), ZERO))
+            if (!EQUAL(*((__m256i*)nextTickData.transactionDigests[transactionIndex]), ZERO))
             {
                 if (tickTransactionOffsets[system.tick - system.initialTick][transactionIndex])
                 {
@@ -7630,18 +7638,20 @@ static void endEpoch()
     bs->SetMem(transactionCounters, sizeof(transactionCounters), 0);
     for (unsigned int tick = system.initialTick; tick <= system.tick; tick++)
     {
-        if (tickData[tick - system.initialTick].epoch == system.epoch)
+        ACQUIRE(tickDataLock);
+        if (tickData333[tick - system.initialTick].epoch == system.epoch)
         {
             unsigned int numberOfTransactions = 0;
             for (unsigned int transactionIndex = 0; transactionIndex < NUMBER_OF_TRANSACTIONS_PER_TICK; transactionIndex++)
             {
-                if (!EQUAL(*((__m256i*)tickData[tick - system.initialTick].transactionDigests[transactionIndex]), ZERO))
+                if (!EQUAL(*((__m256i*)tickData333[tick - system.initialTick].transactionDigests[transactionIndex]), ZERO))
                 {
                     numberOfTransactions++;
                 }
             }
             transactionCounters[tick % NUMBER_OF_COMPUTORS] += revenuePoints[numberOfTransactions];
         }
+        RELEASE(tickDataLock);
     }
     unsigned long long bestTransactionCounter = 1;
     for (unsigned int computorIndex = 0; computorIndex < NUMBER_OF_COMPUTORS; computorIndex++)
@@ -7912,7 +7922,9 @@ static void tickerProcessor(void*)
                     }
                 }
 
-                bs->CopyMem(&nextTickData, &tickData[system.tick + 1 - system.initialTick], sizeof(TickData));
+                ACQUIRE(tickDataLock);
+                bs->CopyMem(&nextTickData, &tickData333[system.tick + 1 - system.initialTick], sizeof(TickData));
+                RELEASE(tickDataLock);
                 if (nextTickData.epoch == system.epoch)
                 {
                     unsigned char timelockPreimage[32 + 32 + 32];
@@ -7923,7 +7935,9 @@ static void tickerProcessor(void*)
                     KangarooTwelve(timelockPreimage, sizeof(timelockPreimage), (unsigned char*)&timelock, sizeof(timelock));
                     if (!EQUAL(*((__m256i*)nextTickData.timelock), timelock))
                     {
-                        tickData[system.tick + 1 - system.initialTick].epoch = 0;
+                        ACQUIRE(tickDataLock);
+                        tickData333[system.tick + 1 - system.initialTick].epoch = 0;
+                        RELEASE(tickDataLock);
                         nextTickData.epoch = 0;
                     }
                 }
@@ -7946,7 +7960,9 @@ static void tickerProcessor(void*)
                 {
                     if (EQUAL(targetNextTickDataDigest, ZERO))
                     {
-                        tickData[system.tick + 1 - system.initialTick].epoch = 0;
+                        ACQUIRE(tickDataLock);
+                        tickData333[system.tick + 1 - system.initialTick].epoch = 0;
+                        RELEASE(tickDataLock);
                         nextTickData.epoch = 0;
                         tickDataSuits = true;
                     }
@@ -8086,7 +8102,9 @@ static void tickerProcessor(void*)
                         if (!targetNextTickDataDigestIsKnown
                             && __rdtsc() - tickTicks[sizeof(tickTicks) / sizeof(tickTicks[0]) - 1] > TARGET_TICK_DURATION * 5 * frequency / 1000)
                         {
-                            tickData[system.tick + 1 - system.initialTick].epoch = 0;
+                            ACQUIRE(tickDataLock);
+                            tickData333[system.tick + 1 - system.initialTick].epoch = 0;
+                            RELEASE(tickDataLock);
                             nextTickData.epoch = 0;
 
                             numberOfNextTickTransactions = 0;
@@ -8102,9 +8120,9 @@ static void tickerProcessor(void*)
                     {
                         requestedTickTransactions.requestedTickTransactions.tick = 0;
 
-                        if (tickData[system.tick - system.initialTick].epoch == system.epoch)
+                        if (tickData333[system.tick - system.initialTick].epoch == system.epoch)
                         {
-                            KangarooTwelve((unsigned char*)&tickData[system.tick - system.initialTick], sizeof(TickData), etalonTick.transactionDigest, 32);
+                            KangarooTwelve((unsigned char*)&tickData333[system.tick - system.initialTick], sizeof(TickData), etalonTick.transactionDigest, 32);
                         }
                         else
                         {
@@ -8264,7 +8282,9 @@ static void tickerProcessor(void*)
                                 tickDataSuits = false;
                                 if (EQUAL(targetNextTickDataDigest, ZERO))
                                 {
-                                    tickData[system.tick + 1 - system.initialTick].epoch = 0;
+                                    ACQUIRE(tickDataLock);
+                                    tickData333[system.tick + 1 - system.initialTick].epoch = 0;
+                                    RELEASE(tickDataLock);
                                     nextTickData.epoch = 0;
                                     tickDataSuits = true;
                                 }
@@ -8292,22 +8312,23 @@ static void tickerProcessor(void*)
                                     else
                                     {
                                         etalonTick.tick++;
-                                        if (tickData[system.tick - system.initialTick].epoch == system.epoch
-                                            && (tickData[system.tick - system.initialTick].year > etalonTick.year
-                                                || (tickData[system.tick - system.initialTick].year == etalonTick.year && (tickData[system.tick - system.initialTick].month > etalonTick.month
-                                                    || (tickData[system.tick - system.initialTick].month == etalonTick.month && (tickData[system.tick - system.initialTick].day > etalonTick.day
-                                                        || (tickData[system.tick - system.initialTick].day == etalonTick.day && (tickData[system.tick - system.initialTick].hour > etalonTick.hour
-                                                            || (tickData[system.tick - system.initialTick].hour == etalonTick.hour && (tickData[system.tick - system.initialTick].minute > etalonTick.minute
-                                                                || (tickData[system.tick - system.initialTick].minute == etalonTick.minute && (tickData[system.tick - system.initialTick].second > etalonTick.second
-                                                                    || (tickData[system.tick - system.initialTick].second == etalonTick.second && tickData[system.tick - system.initialTick].millisecond > etalonTick.millisecond)))))))))))))
+                                        ACQUIRE(tickDataLock);
+                                        if (tickData333[system.tick - system.initialTick].epoch == system.epoch
+                                            && (tickData333[system.tick - system.initialTick].year > etalonTick.year
+                                                || (tickData333[system.tick - system.initialTick].year == etalonTick.year && (tickData333[system.tick - system.initialTick].month > etalonTick.month
+                                                    || (tickData333[system.tick - system.initialTick].month == etalonTick.month && (tickData333[system.tick - system.initialTick].day > etalonTick.day
+                                                        || (tickData333[system.tick - system.initialTick].day == etalonTick.day && (tickData333[system.tick - system.initialTick].hour > etalonTick.hour
+                                                            || (tickData333[system.tick - system.initialTick].hour == etalonTick.hour && (tickData333[system.tick - system.initialTick].minute > etalonTick.minute
+                                                                || (tickData333[system.tick - system.initialTick].minute == etalonTick.minute && (tickData333[system.tick - system.initialTick].second > etalonTick.second
+                                                                    || (tickData333[system.tick - system.initialTick].second == etalonTick.second && tickData333[system.tick - system.initialTick].millisecond > etalonTick.millisecond)))))))))))))
                                         {
-                                            etalonTick.millisecond = tickData[system.tick - system.initialTick].millisecond;
-                                            etalonTick.second = tickData[system.tick - system.initialTick].second;
-                                            etalonTick.minute = tickData[system.tick - system.initialTick].minute;
-                                            etalonTick.hour = tickData[system.tick - system.initialTick].hour;
-                                            etalonTick.day = tickData[system.tick - system.initialTick].day;
-                                            etalonTick.month = tickData[system.tick - system.initialTick].month;
-                                            etalonTick.year = tickData[system.tick - system.initialTick].year;
+                                            etalonTick.millisecond = tickData333[system.tick - system.initialTick].millisecond;
+                                            etalonTick.second = tickData333[system.tick - system.initialTick].second;
+                                            etalonTick.minute = tickData333[system.tick - system.initialTick].minute;
+                                            etalonTick.hour = tickData333[system.tick - system.initialTick].hour;
+                                            etalonTick.day = tickData333[system.tick - system.initialTick].day;
+                                            etalonTick.month = tickData333[system.tick - system.initialTick].month;
+                                            etalonTick.year = tickData333[system.tick - system.initialTick].year;
                                         }
                                         else
                                         {
@@ -8343,6 +8364,7 @@ static void tickerProcessor(void*)
                                                 }
                                             }
                                         }
+                                        RELEASE(tickDataLock);
                                     }
 
                                     system.tick++;
@@ -8797,7 +8819,7 @@ static bool initialize()
             return false;
         }
         bs->SetMem(ticks, ((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * NUMBER_OF_COMPUTORS * sizeof(Tick), 0);
-        if ((status = bs->AllocatePool(EfiRuntimeServicesData, ((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * sizeof(TickData), (void**)&tickData))
+        if ((status = bs->AllocatePool(EfiRuntimeServicesData, ((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * sizeof(TickData), (void**)&tickData333))
             || (status = bs->AllocatePool(EfiRuntimeServicesData, FIRST_TICK_TRANSACTION_OFFSET + (((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * NUMBER_OF_TRANSACTIONS_PER_TICK * MAX_TRANSACTION_SIZE / TRANSACTION_SPARSENESS), (void**)&tickTransactions))
             || (status = bs->AllocatePool(EfiRuntimeServicesData, SPECTRUM_CAPACITY * MAX_TRANSACTION_SIZE, (void**)&entityPendingTransactions))
             || (status = bs->AllocatePool(EfiRuntimeServicesData, SPECTRUM_CAPACITY * 32ULL, (void**)&entityPendingTransactionDigests)))
@@ -8806,7 +8828,7 @@ static bool initialize()
 
             return false;
         }
-        bs->SetMem(tickData, ((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * sizeof(TickData), 0);
+        bs->SetMem(tickData333, ((unsigned long long)MAX_NUMBER_OF_TICKS_PER_EPOCH) * sizeof(TickData), 0);
         bs->SetMem(tickTransactionOffsets, sizeof(tickTransactionOffsets), 0);
         for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
         {
@@ -8889,7 +8911,7 @@ static bool initialize()
 
                 if (system.epoch == 66)
                 {
-                    system.initialTick = system.tick = 6600000;
+                    system.initialTick = system.tick = 6701000;
                 }
                 else
                 {
@@ -9228,9 +9250,9 @@ static void deinitialize()
     {
         bs->FreePool(tickTransactions);
     }
-    if (tickData)
+    if (tickData333)
     {
-        bs->FreePool(tickData);
+        bs->FreePool(tickData333);
     }
     if (ticks)
     {
@@ -9422,26 +9444,26 @@ static void logInfo()
         appendNumber(message, numberOfNextTickTransactions, TRUE);
     }
     appendText(message, L" next tick transactions are known. ");
-    if (tickData[system.tick + 1 - system.initialTick].epoch == system.epoch)
+    if (tickData333[system.tick + 1 - system.initialTick].epoch == system.epoch)
     {
         appendText(message, L"(");
-        appendNumber(message, tickData[system.tick + 1 - system.initialTick].year / 10, FALSE);
-        appendNumber(message, tickData[system.tick + 1 - system.initialTick].year % 10, FALSE);
+        appendNumber(message, tickData333[system.tick + 1 - system.initialTick].year / 10, FALSE);
+        appendNumber(message, tickData333[system.tick + 1 - system.initialTick].year % 10, FALSE);
         appendText(message, L".");
-        appendNumber(message, tickData[system.tick + 1 - system.initialTick].month / 10, FALSE);
-        appendNumber(message, tickData[system.tick + 1 - system.initialTick].month % 10, FALSE);
+        appendNumber(message, tickData333[system.tick + 1 - system.initialTick].month / 10, FALSE);
+        appendNumber(message, tickData333[system.tick + 1 - system.initialTick].month % 10, FALSE);
         appendText(message, L".");
-        appendNumber(message, tickData[system.tick + 1 - system.initialTick].day / 10, FALSE);
-        appendNumber(message, tickData[system.tick + 1 - system.initialTick].day % 10, FALSE);
+        appendNumber(message, tickData333[system.tick + 1 - system.initialTick].day / 10, FALSE);
+        appendNumber(message, tickData333[system.tick + 1 - system.initialTick].day % 10, FALSE);
         appendText(message, L" ");
-        appendNumber(message, tickData[system.tick + 1 - system.initialTick].hour / 10, FALSE);
-        appendNumber(message, tickData[system.tick + 1 - system.initialTick].hour % 10, FALSE);
+        appendNumber(message, tickData333[system.tick + 1 - system.initialTick].hour / 10, FALSE);
+        appendNumber(message, tickData333[system.tick + 1 - system.initialTick].hour % 10, FALSE);
         appendText(message, L":");
-        appendNumber(message, tickData[system.tick + 1 - system.initialTick].minute / 10, FALSE);
-        appendNumber(message, tickData[system.tick + 1 - system.initialTick].minute % 10, FALSE);
+        appendNumber(message, tickData333[system.tick + 1 - system.initialTick].minute / 10, FALSE);
+        appendNumber(message, tickData333[system.tick + 1 - system.initialTick].minute % 10, FALSE);
         appendText(message, L":");
-        appendNumber(message, tickData[system.tick + 1 - system.initialTick].second / 10, FALSE);
-        appendNumber(message, tickData[system.tick + 1 - system.initialTick].second % 10, FALSE);
+        appendNumber(message, tickData333[system.tick + 1 - system.initialTick].second / 10, FALSE);
+        appendNumber(message, tickData333[system.tick + 1 - system.initialTick].second % 10, FALSE);
         appendText(message, L".) ");
     }
     appendNumber(message, numberOfPendingTransactions, TRUE);
@@ -10088,7 +10110,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             {
                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
                                                 if (requestResponseHeader->size() < sizeof(RequestResponseHeader)
-                                                    || (requestResponseHeader->protocol() && (requestResponseHeader->protocol() < VERSION_B || requestResponseHeader->protocol() > VERSION_B + 1)))
+                                                    || (requestResponseHeader->protocol() && (requestResponseHeader->protocol() < VERSION_B - 1 || requestResponseHeader->protocol() > VERSION_B + 1)))
                                                 {
                                                     setText(message, L"Forgetting ");
                                                     appendNumber(message, peers[i].address[0], FALSE);
@@ -10363,14 +10385,14 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             }
                             futureTickRequestingIndicator = futureTickTotalNumberOfComputors;
                             
-                            if (tickData[system.tick + 1 - system.initialTick].epoch != system.epoch
+                            if (tickData333[system.tick + 1 - system.initialTick].epoch != system.epoch
                                 || targetNextTickDataDigestIsKnown)
                             {
                                 requestedTickData.header.randomizeDejavu();
                                 requestedTickData.requestTickData.requestedTickData.tick = system.tick + 1;
                                 pushToAny(&requestedTickData.header);
                             }
-                            if (tickData[system.tick + 2 - system.initialTick].epoch != system.epoch)
+                            if (tickData333[system.tick + 2 - system.initialTick].epoch != system.epoch)
                             {
                                 requestedTickData.header.randomizeDejavu();
                                 requestedTickData.requestTickData.requestedTickData.tick = system.tick + 2;
