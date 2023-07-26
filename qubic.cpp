@@ -1,3 +1,38 @@
+#include <intrin.h>
+
+////////// Smart contracts \\\\\\\\\\
+
+static void beginFunction(const unsigned int);
+static void endFunction(const unsigned int);
+static __m256i getArbitrator();
+static __m256i getComputor(unsigned short);
+static unsigned char getDay();
+static unsigned char getDayOfWeek(unsigned char, unsigned char, unsigned char);
+static unsigned short getEpoch();
+static unsigned char getHour();
+static unsigned short getMillisecond();
+static unsigned char getMinute();
+static unsigned char getMonth();
+static unsigned char getSecond();
+static unsigned int getTick();
+static unsigned char getYear();
+
+#define MAX_NUMBER_OF_CONTRACTS 1024 // Must be 2^N
+#define NUMBER_OF_CONTRACTS 2
+#define NUMBER_OF_EXECUTED_CONTRACTS 2
+
+#define QX_CONTRACT_INDEX 1
+
+char contractAssetNames[][8] = {
+    "",
+    "QX"
+};
+
+#include "qpi.h"
+#include "qubics/Qx.h"
+
+
+
 ////////// Private Settings \\\\\\\\\\
 
 // Do NOT share the data of "Private Settings" section with anybody!!!
@@ -18,8 +53,11 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 155
+#define VERSION_B 156
 #define VERSION_C 0
+
+#define EPOCH 67
+#define TICK 7100000
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -27,10 +65,6 @@ static unsigned short SYSTEM_FILE_NAME[] = L"system";
 static unsigned short SPECTRUM_FILE_NAME[] = L"spectrum.???";
 static unsigned short UNIVERSE_FILE_NAME[] = L"universe.???";
 static unsigned short COMPUTER_FILE_NAME[] = L"computer.???";
-
-#include <intrin.h>
-
-#include "qubics.h"
 
 
 
@@ -4793,7 +4827,7 @@ static bool verify(const unsigned char* publicKey, const unsigned char* messageD
 #define BUFFER_SIZE 4194304
 #define CONTRACT_STATES_DEPTH 10 // Is derived from MAX_NUMBER_OF_CONTRACTS (=N)
 #define TARGET_TICK_DURATION 5000
-#define TICK_REQUESTING_PERIOD 200
+#define TICK_REQUESTING_PERIOD 500
 #define DEJAVU_SWAP_LIMIT 1000000
 #define DISSEMINATION_MULTIPLIER 8
 #define FIRST_TICK_TRANSACTION_OFFSET sizeof(unsigned long long)
@@ -4804,7 +4838,6 @@ static bool verify(const unsigned char* publicKey, const unsigned char* messageD
 #define NUMBER_OF_MINER_SOLUTION_FLAGS 0x100000000
 #define MAX_NUMBER_OF_PROCESSORS 28
 #define MAX_NUMBER_OF_PUBLIC_PEERS 1024
-#define MAX_NUMBER_OF_CONTRACTS 1024 // Must be 2^N
 #define MAX_NUMBER_OF_SOLUTIONS 65536 // Must be 2^N
 #define MAX_TRANSACTION_SIZE 1024ULL
 #define MAX_MESSAGE_PAYLOAD_SIZE MAX_TRANSACTION_SIZE
@@ -4827,7 +4860,7 @@ static bool verify(const unsigned char* publicKey, const unsigned char* messageD
 #define RESPONSE_QUEUE_BUFFER_SIZE 1073741824
 #define RESPONSE_QUEUE_LENGTH 65536 // Must be 65536
 #define SIGNATURE_SIZE 64
-#define SOLUTION_THRESHOLD 21
+#define SOLUTION_THRESHOLD 20
 #define SPECTRUM_CAPACITY 0x1000000ULL // Must be 2^N
 #define SPECTRUM_DEPTH 24 // Is derived from SPECTRUM_CAPACITY (=N)
 #define WRITING_CHUNK_SIZE 1048576
@@ -5296,7 +5329,7 @@ static volatile bool systemMustBeSaved = false, spectrumMustBeSaved = false, uni
 
 static unsigned char operatorPublicKey[32];
 static unsigned char computorSubseeds[sizeof(computorSeeds) / sizeof(computorSeeds[0])][32], computorPrivateKeys[sizeof(computorSeeds) / sizeof(computorSeeds[0])][32], computorPublicKeys[sizeof(computorSeeds) / sizeof(computorSeeds[0])][32];
-static unsigned char arbitratorPublicKey[32];
+static __m256i arbitratorPublicKey;
 
 static struct
 {
@@ -5360,8 +5393,8 @@ static unsigned long long nextTickTransactionOffset = FIRST_TICK_TRANSACTION_OFF
 static __m256i uniqueNextTickTransactionDigests[NUMBER_OF_COMPUTORS];
 static unsigned int uniqueNextTickTransactionDigestCounters[NUMBER_OF_COMPUTORS];
 
-static Entity* initSpectrum = NULL; // TODO: Remove
-static __m256i* initSpectrumDigests = NULL; // TODO: Remove
+static void* reorgBuffer = NULL;
+
 static volatile char spectrumLock = 0;
 static Entity* spectrum = NULL;
 static unsigned int numberOfEntities = 0;
@@ -5388,7 +5421,7 @@ static volatile char computerLock = 0;
 static unsigned char* contractStates[NUMBER_OF_CONTRACTS];
 static __m256i contractStateDigests[MAX_NUMBER_OF_CONTRACTS * 2 - 1];
 static unsigned long long* contractStateChangeFlags = NULL;
-static void* curContractState = NULL;
+static unsigned long long* functionFlags = NULL;
 
 static volatile char tickLocks[NUMBER_OF_COMPUTORS];
 static bool targetNextTickDataDigestIsKnown = false;
@@ -5778,7 +5811,7 @@ iteration:
         assets[*issuanceIndex].varStruct.issuance.numberOfDecimalPlaces = numberOfDecimalPlaces;
         bs->CopyMem(assets[*issuanceIndex].varStruct.issuance.unitOfMeasurement, unitOfMeasurement, sizeof(assets[*issuanceIndex].varStruct.issuance.unitOfMeasurement));
 
-        *ownershipIndex = *issuanceIndex;
+        *ownershipIndex = (*issuanceIndex + 1) & (ASSETS_CAPACITY - 1);
     iteration2:
         if (assets[*ownershipIndex].varStruct.ownership.type == EMPTY)
         {
@@ -5788,7 +5821,7 @@ iteration:
             assets[*ownershipIndex].varStruct.ownership.issuanceIndex = *issuanceIndex;
             assets[*ownershipIndex].varStruct.ownership.numberOfUnits = numberOfUnits;
 
-            *possessionIndex = *ownershipIndex;
+            *possessionIndex = (*ownershipIndex + 1) & (ASSETS_CAPACITY - 1);
         iteration3:
             if (assets[*possessionIndex].varStruct.possession.type == EMPTY)
             {
@@ -5837,7 +5870,8 @@ static bool transferAssetOwnershipAndPossession(int sourceOwnershipIndex, int so
     ACQUIRE(universeLock);
 
     if (assets[sourceOwnershipIndex].varStruct.ownership.type != OWNERSHIP || assets[sourceOwnershipIndex].varStruct.ownership.numberOfUnits < numberOfUnits
-        || assets[sourcePossessionIndex].varStruct.possession.type != POSSESSION || assets[sourcePossessionIndex].varStruct.possession.numberOfUnits < numberOfUnits)
+        || assets[sourcePossessionIndex].varStruct.possession.type != POSSESSION || assets[sourcePossessionIndex].varStruct.possession.numberOfUnits < numberOfUnits
+        || assets[sourcePossessionIndex].varStruct.possession.ownershipIndex != sourceOwnershipIndex)
     {
         RELEASE(universeLock);
 
@@ -5846,27 +5880,41 @@ static bool transferAssetOwnershipAndPossession(int sourceOwnershipIndex, int so
 
     *destinationOwnershipIndex = (*((unsigned int*)destinationPublicKey)) & (ASSETS_CAPACITY - 1);
 iteration:
-    if (assets[*destinationOwnershipIndex].varStruct.ownership.type == EMPTY)
+    if (assets[*destinationOwnershipIndex].varStruct.ownership.type == EMPTY
+        || (assets[*destinationOwnershipIndex].varStruct.ownership.type == OWNERSHIP
+            && assets[*destinationOwnershipIndex].varStruct.ownership.managingContractIndex == assets[sourceOwnershipIndex].varStruct.ownership.managingContractIndex
+            && assets[*destinationOwnershipIndex].varStruct.ownership.issuanceIndex == assets[sourceOwnershipIndex].varStruct.ownership.issuanceIndex
+            && EQUAL(*((__m256i*)assets[*destinationOwnershipIndex].varStruct.ownership.publicKey), *((__m256i*)destinationPublicKey))))
     {
-        *destinationPossessionIndex = *destinationOwnershipIndex;
+        assets[sourceOwnershipIndex].varStruct.ownership.numberOfUnits -= numberOfUnits;
 
-    iteration2:
-        if (assets[*destinationPossessionIndex].varStruct.possession.type == EMPTY)
+        if (assets[*destinationOwnershipIndex].varStruct.ownership.type == EMPTY)
         {
-            assets[sourceOwnershipIndex].varStruct.ownership.numberOfUnits -= numberOfUnits;
-            assets[sourcePossessionIndex].varStruct.possession.numberOfUnits -= numberOfUnits;
-
             *((__m256i*)assets[*destinationOwnershipIndex].varStruct.ownership.publicKey) = *((__m256i*)destinationPublicKey);
             assets[*destinationOwnershipIndex].varStruct.ownership.type = OWNERSHIP;
             assets[*destinationOwnershipIndex].varStruct.ownership.managingContractIndex = assets[sourceOwnershipIndex].varStruct.ownership.managingContractIndex;
             assets[*destinationOwnershipIndex].varStruct.ownership.issuanceIndex = assets[sourceOwnershipIndex].varStruct.ownership.issuanceIndex;
-            assets[*destinationOwnershipIndex].varStruct.ownership.numberOfUnits = numberOfUnits;
+        }
+        assets[*destinationOwnershipIndex].varStruct.ownership.numberOfUnits += numberOfUnits;
 
-            *((__m256i*)assets[*destinationPossessionIndex].varStruct.possession.publicKey) = *((__m256i*)destinationPublicKey);
-            assets[*destinationPossessionIndex].varStruct.possession.type = POSSESSION;
-            assets[*destinationPossessionIndex].varStruct.possession.managingContractIndex = assets[sourcePossessionIndex].varStruct.possession.managingContractIndex;
-            assets[*destinationPossessionIndex].varStruct.possession.ownershipIndex = *destinationOwnershipIndex;
-            assets[*destinationPossessionIndex].varStruct.possession.numberOfUnits = numberOfUnits;
+        *destinationPossessionIndex = (*((unsigned int*)destinationPublicKey)) & (ASSETS_CAPACITY - 1);
+    iteration2:
+        if (assets[*destinationPossessionIndex].varStruct.possession.type == EMPTY
+            || (assets[*destinationPossessionIndex].varStruct.possession.type == POSSESSION
+                && assets[*destinationPossessionIndex].varStruct.possession.managingContractIndex == assets[sourcePossessionIndex].varStruct.possession.managingContractIndex
+                && assets[*destinationPossessionIndex].varStruct.possession.ownershipIndex == *destinationOwnershipIndex
+                && EQUAL(*((__m256i*)assets[*destinationPossessionIndex].varStruct.possession.publicKey), *((__m256i*)destinationPublicKey))))
+        {
+            assets[sourcePossessionIndex].varStruct.possession.numberOfUnits -= numberOfUnits;
+
+            if (assets[*destinationPossessionIndex].varStruct.possession.type == EMPTY)
+            {
+                *((__m256i*)assets[*destinationPossessionIndex].varStruct.possession.publicKey) = *((__m256i*)destinationPublicKey);
+                assets[*destinationPossessionIndex].varStruct.possession.type = POSSESSION;
+                assets[*destinationPossessionIndex].varStruct.possession.managingContractIndex = assets[sourcePossessionIndex].varStruct.possession.managingContractIndex;
+                assets[*destinationPossessionIndex].varStruct.possession.ownershipIndex = *destinationOwnershipIndex;
+            }
+            assets[*destinationPossessionIndex].varStruct.possession.numberOfUnits += numberOfUnits;
 
             assetChangeFlags[sourceOwnershipIndex >> 6] |= (1ULL << (sourceOwnershipIndex & 63));
             assetChangeFlags[sourcePossessionIndex >> 6] |= (1ULL << (sourcePossessionIndex & 63));
@@ -6600,7 +6648,7 @@ static void requestProcessor(void* ProcedureArgument)
                     {
                         unsigned char digest[32];
                         KangarooTwelve((unsigned char*)request, sizeof(BroadcastComputors) - SIGNATURE_SIZE, digest, sizeof(digest));
-                        if (verify(arbitratorPublicKey, digest, request->computors.signature))
+                        if (verify((unsigned char*)&arbitratorPublicKey, digest, request->computors.signature))
                         {
                             if (header->isDejavuZero())
                             {
@@ -7098,6 +7146,83 @@ static EFI_HANDLE getTcp4Protocol(const unsigned char* remoteAddress, const unsi
     }
 }
 
+static void beginFunction(const unsigned int functionId)
+{
+    if (functionFlags[functionId >> 6] & (1ULL << (functionId & 63)))
+    {
+        // TODO
+    }
+    else
+    {
+        functionFlags[functionId >> 6] |= (1ULL << (functionId & 63));
+    }
+}
+
+static void endFunction(const unsigned int functionId)
+{
+    functionFlags[functionId >> 6] &= ~(1ULL << (functionId & 63));
+}
+
+static __m256i getArbitrator()
+{
+    return arbitratorPublicKey;
+}
+
+static __m256i getComputor(unsigned short computorIndex)
+{
+    return *((__m256i*)broadcastedComputors.broadcastComputors.computors.publicKeys[computorIndex % NUMBER_OF_COMPUTORS]);
+}
+
+static unsigned char getDay()
+{
+    return etalonTick.day;
+}
+
+static unsigned char getDayOfWeek(unsigned char year, unsigned char month, unsigned char day)
+{
+    return dayIndex(year, month, day) % 7;
+}
+
+static unsigned short getEpoch()
+{
+    return system.epoch;
+}
+
+static unsigned char getHour()
+{
+    return etalonTick.hour;
+}
+
+static unsigned short getMillisecond()
+{
+    return etalonTick.millisecond;
+}
+
+static unsigned char getMinute()
+{
+    return etalonTick.minute;
+}
+
+static unsigned char getMonth()
+{
+    return etalonTick.month;
+}
+
+static unsigned char getSecond()
+{
+    return etalonTick.second;
+}
+
+static unsigned int getTick()
+{
+    return system.tick;
+}
+
+static unsigned char getYear()
+{
+    return etalonTick.year;
+}
+
 static void processTick(unsigned long long processorNumber)
 {
     if (tickPhase < 1)
@@ -7238,7 +7363,7 @@ static void processTick(unsigned long long processorNumber)
                             }
                             else
                             {
-                                if (EQUAL(*((__m256i*)transaction->destinationPublicKey), *((__m256i*)arbitratorPublicKey)))
+                                if (EQUAL(*((__m256i*)transaction->destinationPublicKey), arbitratorPublicKey))
                                 {
                                     if (!transaction->amount
                                         && transaction->inputSize == 32
@@ -7556,7 +7681,7 @@ static void processTick(unsigned long long processorNumber)
                     unsigned char signature[SIGNATURE_SIZE];
                 } payload;
                 *((__m256i*)payload.transaction.sourcePublicKey) = *((__m256i*)computorPublicKeys[i]);
-                *((__m256i*)payload.transaction.destinationPublicKey) = *((__m256i*)arbitratorPublicKey);
+                *((__m256i*)payload.transaction.destinationPublicKey) = arbitratorPublicKey;
                 payload.transaction.amount = 0;
                 unsigned int random;
                 _rdrand32_step(&random);
@@ -7678,62 +7803,153 @@ static void endEpoch()
         arbitratorRevenue -= revenue;
     }
 
-    increaseEnergy(arbitratorPublicKey, arbitratorRevenue);
+    increaseEnergy((unsigned char*)&arbitratorPublicKey, arbitratorRevenue);
 
-    ACQUIRE(spectrumLock);
-
-    bs->CopyMem(initSpectrum, spectrum, SPECTRUM_CAPACITY * sizeof(Entity));
-    bs->SetMem(spectrum, SPECTRUM_CAPACITY * sizeof(Entity), 0);
-    for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
     {
-        if (initSpectrum[i].incomingAmount - initSpectrum[i].outgoingAmount)
-        {
-            unsigned int index = (*((unsigned int*)initSpectrum[i].publicKey)) & (SPECTRUM_CAPACITY - 1);
+        ACQUIRE(spectrumLock);
 
-        newIndex:
-            if (EQUAL(*((__m256i*)spectrum[index].publicKey), ZERO))
+        Entity* reorgSpectrum = (Entity*)reorgBuffer;
+        bs->SetMem(reorgSpectrum, SPECTRUM_CAPACITY * sizeof(Entity), 0);
+        for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
+        {
+            if (spectrum[i].incomingAmount - spectrum[i].outgoingAmount)
             {
-                bs->CopyMem(&spectrum[index], &initSpectrum[i], sizeof(Entity));
+                unsigned int index = (*((unsigned int*)spectrum[i].publicKey)) & (SPECTRUM_CAPACITY - 1);
+
+            iteration:
+                if (EQUAL(*((__m256i*)reorgSpectrum[index].publicKey), ZERO))
+                {
+                    bs->CopyMem(&reorgSpectrum[index], &spectrum[i], sizeof(Entity));
+                }
+                else
+                {
+                    index = (index + 1) & (SPECTRUM_CAPACITY - 1);
+
+                    goto iteration;
+                }
             }
-            else
+        }
+        bs->CopyMem(spectrum, reorgSpectrum, SPECTRUM_CAPACITY * sizeof(Entity));
+
+        unsigned int digestIndex;
+        for (digestIndex = 0; digestIndex < SPECTRUM_CAPACITY; digestIndex++)
+        {
+            KangarooTwelve64To32((unsigned char*)&spectrum[digestIndex], (unsigned char*)&spectrumDigests[digestIndex]);
+        }
+        unsigned int previousLevelBeginning = 0;
+        unsigned int numberOfLeafs = SPECTRUM_CAPACITY;
+        while (numberOfLeafs > 1)
+        {
+            for (unsigned int i = 0; i < numberOfLeafs; i += 2)
             {
-                index = (index + 1) & (SPECTRUM_CAPACITY - 1);
+                KangarooTwelve64To32((unsigned char*)&spectrumDigests[previousLevelBeginning + i], (unsigned char*)&spectrumDigests[digestIndex++]);
+            }
 
-                goto newIndex;
+            previousLevelBeginning += numberOfLeafs;
+            numberOfLeafs >>= 1;
+        }
+
+        numberOfEntities = 0;
+        for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
+        {
+            if (spectrum[i].incomingAmount - spectrum[i].outgoingAmount)
+            {
+                numberOfEntities++;
             }
         }
-    }
-    bs->CopyMem(initSpectrum, spectrum, SPECTRUM_CAPACITY * sizeof(Entity));
 
-    unsigned int digestIndex;
-    for (digestIndex = 0; digestIndex < SPECTRUM_CAPACITY; digestIndex++)
-    {
-        KangarooTwelve64To32((unsigned char*)&initSpectrum[digestIndex], (unsigned char*)&initSpectrumDigests[digestIndex]);
+        RELEASE(spectrumLock);
     }
-    unsigned int previousLevelBeginning = 0;
-    unsigned int numberOfLeafs = SPECTRUM_CAPACITY;
-    while (numberOfLeafs > 1)
+
     {
-        for (unsigned int i = 0; i < numberOfLeafs; i += 2)
+        ACQUIRE(universeLock);
+
+        Asset* reorgAssets = (Asset*)reorgBuffer;
+        bs->SetMem(reorgAssets, ASSETS_CAPACITY * sizeof(Asset), 0);
+        for (unsigned int i = 0; i < ASSETS_CAPACITY; i++)
         {
-            KangarooTwelve64To32((unsigned char*)&initSpectrumDigests[previousLevelBeginning + i], (unsigned char*)&initSpectrumDigests[digestIndex++]);
+            if (assets[i].varStruct.possession.type == POSSESSION
+                && assets[i].varStruct.possession.numberOfUnits > 0)
+            {
+                const unsigned int oldOwnershipIndex = assets[i].varStruct.possession.ownershipIndex;
+                const unsigned int oldIssuanceIndex = assets[oldOwnershipIndex].varStruct.ownership.issuanceIndex;
+                unsigned char* issuerPublicKey = assets[oldIssuanceIndex].varStruct.issuance.publicKey;
+                char* name = assets[oldIssuanceIndex].varStruct.issuance.name;
+                int issuanceIndex = (*((unsigned int*)issuerPublicKey)) & (ASSETS_CAPACITY - 1);
+            iteration2:
+                if (reorgAssets[issuanceIndex].varStruct.issuance.type == EMPTY
+                    || (reorgAssets[issuanceIndex].varStruct.issuance.type == ISSUANCE
+                        && ((*((unsigned long long*)reorgAssets[issuanceIndex].varStruct.issuance.name)) & 0xFFFFFFFFFFFFFF) == ((*((unsigned long long*)name)) & 0xFFFFFFFFFFFFFF)
+                        && EQUAL(*((__m256i*)reorgAssets[issuanceIndex].varStruct.issuance.publicKey), *((__m256i*)issuerPublicKey))))
+                {
+                    if (reorgAssets[issuanceIndex].varStruct.issuance.type == EMPTY)
+                    {
+                        bs->CopyMem(&reorgAssets[issuanceIndex], &assets[oldIssuanceIndex], sizeof(Asset));
+                    }
+
+                    unsigned char* ownerPublicKey = assets[oldOwnershipIndex].varStruct.ownership.publicKey;
+                    int ownershipIndex = (*((unsigned int*)ownerPublicKey)) & (ASSETS_CAPACITY - 1);
+                iteration3:
+                    if (reorgAssets[ownershipIndex].varStruct.ownership.type == EMPTY
+                        || (reorgAssets[ownershipIndex].varStruct.ownership.type == OWNERSHIP
+                            && reorgAssets[ownershipIndex].varStruct.ownership.managingContractIndex == assets[oldOwnershipIndex].varStruct.ownership.managingContractIndex
+                            && reorgAssets[ownershipIndex].varStruct.ownership.issuanceIndex == issuanceIndex
+                            && EQUAL(*((__m256i*)reorgAssets[ownershipIndex].varStruct.ownership.publicKey), *((__m256i*)ownerPublicKey))))
+                    {
+                        if (reorgAssets[ownershipIndex].varStruct.ownership.type == EMPTY)
+                        {
+                            *((__m256i*)reorgAssets[ownershipIndex].varStruct.ownership.publicKey) = *((__m256i*)ownerPublicKey);
+                            reorgAssets[ownershipIndex].varStruct.ownership.type = OWNERSHIP;
+                            reorgAssets[ownershipIndex].varStruct.ownership.managingContractIndex = assets[oldOwnershipIndex].varStruct.ownership.managingContractIndex;
+                            reorgAssets[ownershipIndex].varStruct.ownership.issuanceIndex = issuanceIndex;
+                        }
+                        reorgAssets[ownershipIndex].varStruct.ownership.numberOfUnits += assets[i].varStruct.possession.numberOfUnits;
+
+                        int possessionIndex = (*((unsigned int*)assets[i].varStruct.possession.publicKey)) & (ASSETS_CAPACITY - 1);
+                    iteration4:
+                        if (reorgAssets[possessionIndex].varStruct.possession.type == EMPTY
+                            || (reorgAssets[possessionIndex].varStruct.possession.type == POSSESSION
+                                && reorgAssets[possessionIndex].varStruct.possession.managingContractIndex == assets[i].varStruct.possession.managingContractIndex
+                                && reorgAssets[possessionIndex].varStruct.possession.ownershipIndex == ownershipIndex
+                                && EQUAL(*((__m256i*)reorgAssets[possessionIndex].varStruct.possession.publicKey), *((__m256i*)assets[i].varStruct.possession.publicKey))))
+                        {
+                            if (reorgAssets[possessionIndex].varStruct.possession.type == EMPTY)
+                            {
+                                *((__m256i*)reorgAssets[possessionIndex].varStruct.possession.publicKey) = *((__m256i*)assets[i].varStruct.possession.publicKey);
+                                reorgAssets[possessionIndex].varStruct.possession.type = POSSESSION;
+                                reorgAssets[possessionIndex].varStruct.possession.managingContractIndex = assets[i].varStruct.possession.managingContractIndex;
+                                reorgAssets[possessionIndex].varStruct.possession.ownershipIndex = ownershipIndex;
+                            }
+                            reorgAssets[possessionIndex].varStruct.possession.numberOfUnits += assets[i].varStruct.possession.numberOfUnits;
+                        }
+                        else
+                        {
+                            possessionIndex = (possessionIndex + 1) & (ASSETS_CAPACITY - 1);
+
+                            goto iteration4;
+                        }
+                    }
+                    else
+                    {
+                        ownershipIndex = (ownershipIndex + 1) & (ASSETS_CAPACITY - 1);
+
+                        goto iteration3;
+                    }
+                }
+                else
+                {
+                    issuanceIndex = (issuanceIndex + 1) & (ASSETS_CAPACITY - 1);
+
+                    goto iteration2;
+                }
+            }
         }
+        bs->CopyMem(assets, reorgAssets, ASSETS_CAPACITY * sizeof(Asset));
 
-        previousLevelBeginning += numberOfLeafs;
-        numberOfLeafs >>= 1;
+        bs->SetMem(assetChangeFlags, ASSETS_CAPACITY / 8, 0xFF);
+
+        RELEASE(universeLock);
     }
-    bs->CopyMem(spectrumDigests, initSpectrumDigests, (SPECTRUM_CAPACITY * 2 - 1) * 32ULL);
-
-    numberOfEntities = 0;
-    for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
-    {
-        if (initSpectrum[i].incomingAmount - initSpectrum[i].outgoingAmount)
-        {
-            numberOfEntities++;
-        }
-    }
-
-    RELEASE(spectrumLock);
 
     system.epoch++;
     system.initialTick = system.tick;
@@ -7794,11 +8010,7 @@ static void tickerProcessor(void*)
                 ::futureTickTotalNumberOfComputors = futureTickTotalNumberOfComputors;
             }
 
-            if (system.tick - system.initialTick >= MAX_NUMBER_OF_TICKS_PER_EPOCH - 1)
-            {
-                log(L"There are too many ticks this epoch!");
-            }
-            else
+            if (system.tick - system.initialTick < MAX_NUMBER_OF_TICKS_PER_EPOCH - 1)
             {
                 if (system.tick > latestProcessedTick)
                 {
@@ -8658,7 +8870,7 @@ static bool initialize()
         getPublicKey(computorPrivateKeys[i], computorPublicKeys[i]);
     }
 
-    getPublicKeyFromIdentity((const unsigned char*)ARBITRATOR, arbitratorPublicKey);
+    getPublicKeyFromIdentity((const unsigned char*)ARBITRATOR, (unsigned char*)&arbitratorPublicKey);
 
     int cpuInfo[4];
     __cpuid(cpuInfo, 0x15);
@@ -8844,9 +9056,14 @@ static bool initialize()
             ((Transaction*)&entityPendingTransactions[i * MAX_TRANSACTION_SIZE])->tick = 0;
         }
 
-        if ((status = bs->AllocatePool(EfiRuntimeServicesData, SPECTRUM_CAPACITY * sizeof(Entity), (void**)&initSpectrum))
-            || (status = bs->AllocatePool(EfiRuntimeServicesData, SPECTRUM_CAPACITY * sizeof(Entity), (void**)&spectrum))
-            || (status = bs->AllocatePool(EfiRuntimeServicesData, (SPECTRUM_CAPACITY * 2 - 1) * 32ULL, (void**)&initSpectrumDigests))
+        if (status = bs->AllocatePool(EfiRuntimeServicesData, SPECTRUM_CAPACITY * sizeof(Entity) >= ASSETS_CAPACITY * sizeof(Asset) ? SPECTRUM_CAPACITY * sizeof(Entity) : ASSETS_CAPACITY * sizeof(Asset), (void**)&reorgBuffer))
+        {
+            logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status, __LINE__);
+
+            return false;
+        }
+
+        if ((status = bs->AllocatePool(EfiRuntimeServicesData, SPECTRUM_CAPACITY * sizeof(Entity), (void**)&spectrum))
             || (status = bs->AllocatePool(EfiRuntimeServicesData, (SPECTRUM_CAPACITY * 2 - 1) * 32ULL, (void**)&spectrumDigests)))
         {
             logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status, __LINE__);
@@ -8876,13 +9093,14 @@ static bool initialize()
             }
         }
         if ((status = bs->AllocatePool(EfiRuntimeServicesData, MAX_NUMBER_OF_CONTRACTS / 8, (void**)&contractStateChangeFlags))
-            || (status = bs->AllocatePool(EfiRuntimeServicesData, MAX_CONTRACT_STATE_SIZE, (void**)&curContractState)))
+            || (status = bs->AllocatePool(EfiRuntimeServicesData, 536870912, (void**)&functionFlags)))
         {
             logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status, __LINE__);
 
             return false;
         }
         bs->SetMem(contractStateChangeFlags, MAX_NUMBER_OF_CONTRACTS / 8, 0xFF);
+        bs->SetMem(functionFlags, 536870912, 0);
 
         EFI_FILE_PROTOCOL* dataFile;
 
@@ -8911,16 +9129,16 @@ static bool initialize()
 
                 if (!size)
                 {
-                    system.epoch = 66;
+                    system.epoch = EPOCH;
                     system.initialHour = 12;
                     system.initialDay = 13;
                     system.initialMonth = 4;
                     system.initialYear = 22;
                 }
 
-                if (system.epoch == 66)
+                if (system.epoch == EPOCH)
                 {
-                    system.initialTick = system.tick = 6850000;
+                    system.initialTick = system.tick = TICK;
                 }
                 else
                 {
@@ -8943,7 +9161,6 @@ static bool initialize()
 
         bs->SetMem(faultyComputorFlags, sizeof(faultyComputorFlags), 0);
 
-        bs->SetMem(initSpectrum, SPECTRUM_CAPACITY * sizeof(Entity), 0);
         SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 4] = system.epoch / 100 + L'0';
         SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 3] = (system.epoch % 100) / 10 + L'0';
         SPECTRUM_FILE_NAME[sizeof(SPECTRUM_FILE_NAME) / sizeof(SPECTRUM_FILE_NAME[0]) - 2] = system.epoch % 10 + L'0';
@@ -8956,7 +9173,7 @@ static bool initialize()
         else
         {
             unsigned long long size = SPECTRUM_CAPACITY * sizeof(Entity);
-            status = dataFile->Read(dataFile, &size, initSpectrum);
+            status = dataFile->Read(dataFile, &size, spectrum);
             dataFile->Close(dataFile);
             if (status)
             {
@@ -8971,14 +9188,12 @@ static bool initialize()
                 return false;
             }
 
-            bs->CopyMem(spectrum, initSpectrum, SPECTRUM_CAPACITY * sizeof(Entity));
-
             const unsigned long long beginningTick = __rdtsc();
 
             unsigned int digestIndex;
             for (digestIndex = 0; digestIndex < SPECTRUM_CAPACITY; digestIndex++)
             {
-                KangarooTwelve64To32((unsigned char*)&initSpectrum[digestIndex], (unsigned char*)&initSpectrumDigests[digestIndex]);
+                KangarooTwelve64To32((unsigned char*)&spectrum[digestIndex], (unsigned char*)&spectrumDigests[digestIndex]);
             }
             unsigned int previousLevelBeginning = 0;
             unsigned int numberOfLeafs = SPECTRUM_CAPACITY;
@@ -8986,7 +9201,7 @@ static bool initialize()
             {
                 for (unsigned int i = 0; i < numberOfLeafs; i += 2)
                 {
-                    KangarooTwelve64To32((unsigned char*)&initSpectrumDigests[previousLevelBeginning + i], (unsigned char*)&initSpectrumDigests[digestIndex++]);
+                    KangarooTwelve64To32((unsigned char*)&spectrumDigests[previousLevelBeginning + i], (unsigned char*)&spectrumDigests[digestIndex++]);
                 }
 
                 previousLevelBeginning += numberOfLeafs;
@@ -8999,19 +9214,17 @@ static bool initialize()
             appendText(message, L" microseconds).");
             log(message);
 
-            bs->CopyMem(spectrumDigests, initSpectrumDigests, (SPECTRUM_CAPACITY * 2 - 1) * 32ULL);
-
             CHAR16 digestChars[60 + 1];
             unsigned long long totalAmount = 0;
 
-            getIdentity((unsigned char*)&initSpectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1], digestChars, true);
+            getIdentity((unsigned char*)&spectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1], digestChars, true);
 
             for (unsigned int i = 0; i < SPECTRUM_CAPACITY; i++)
             {
-                if (initSpectrum[i].incomingAmount - initSpectrum[i].outgoingAmount)
+                if (spectrum[i].incomingAmount - spectrum[i].outgoingAmount)
                 {
                     numberOfEntities++;
-                    totalAmount += initSpectrum[i].incomingAmount - initSpectrum[i].outgoingAmount;
+                    totalAmount += spectrum[i].incomingAmount - spectrum[i].outgoingAmount;
                 }
             }
 
@@ -9115,13 +9328,13 @@ static bool initialize()
 
         unsigned char randomSeed[32];
         bs->SetMem(randomSeed, 32, 0);
-        randomSeed[0] = 137;
+        randomSeed[0] = 12;
         randomSeed[1] = 137;
-        randomSeed[2] = 54;
+        randomSeed[2] = 176;
         randomSeed[3] = 54;
-        randomSeed[4] = 69;
+        randomSeed[4] = 136;
         randomSeed[5] = 69;
-        randomSeed[6] = 139;
+        randomSeed[6] = 43;
         randomSeed[7] = 139;
         random(randomSeed, randomSeed, (unsigned char*)miningData, sizeof(miningData));
 
@@ -9205,17 +9418,9 @@ static void deinitialize()
     {
         bs->FreePool(spectrumDigests);
     }
-    if (initSpectrumDigests)
-    {
-        bs->FreePool(initSpectrumDigests);
-    }
     if (spectrum)
     {
         bs->FreePool(spectrum);
-    }
-    if (initSpectrum)
-    {
-        bs->FreePool(initSpectrum);
     }
 
     if (assetChangeFlags)
@@ -9231,9 +9436,14 @@ static void deinitialize()
         bs->FreePool(assets);
     }
 
-    if (curContractState)
+    if (reorgBuffer)
     {
-        bs->FreePool(curContractState);
+        bs->FreePool(reorgBuffer);
+    }
+
+    if (functionFlags)
+    {
+        bs->FreePool(functionFlags);
     }
     if (contractStateChangeFlags)
     {
@@ -9929,7 +10139,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                     unsigned long long clockTick = 0, systemDataSavingTick = 0, loggingTick = 0, peerRefreshingTick = 0, tickRequestingTick = 0;
                     unsigned int tickRequestingIndicator = 0, futureTickRequestingIndicator = 0;
-                    unsigned long long mainLoopNumerator = 0, mainLoopDenominator = 0;
                     while (!state)
                     {
                         if (criticalSituation == 1)
@@ -9955,16 +10164,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             loggingTick = curTimeTick;
 
                             logInfo();
-
-                            if (mainLoopDenominator)
-                            {
-                                setText(message, L"Main loop duration = ");
-                                appendNumber(message, (mainLoopNumerator / mainLoopDenominator) * 1000000 / frequency, TRUE);
-                                appendText(message, L" microseconds.");
-                                log(message);
-                            }
-                            mainLoopNumerator = 0;
-                            mainLoopDenominator = 0;
 
                             if (tickerLoopDenominator)
                             {
@@ -10119,7 +10318,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             {
                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
                                                 if (requestResponseHeader->size() < sizeof(RequestResponseHeader)
-                                                    || (requestResponseHeader->protocol() && (requestResponseHeader->protocol() < VERSION_B - 1 || requestResponseHeader->protocol() > VERSION_B + 1)))
+                                                    || (requestResponseHeader->protocol() && (requestResponseHeader->protocol() < VERSION_B || requestResponseHeader->protocol() > VERSION_B + 1)))
                                                 {
                                                     setText(message, L"Forgetting ");
                                                     appendNumber(message, peers[i].address[0], FALSE);
@@ -10462,9 +10661,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                         }
 
                         processKeyPresses();
-
-                        mainLoopNumerator += __rdtsc() - curTimeTick;
-                        mainLoopDenominator++;
                     }
 
                     bs->CloseProtocol(peerChildHandle, &tcp4ProtocolGuid, ih, NULL);
