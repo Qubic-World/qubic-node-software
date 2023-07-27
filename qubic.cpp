@@ -17,19 +17,28 @@ static unsigned char getSecond();
 static unsigned int getTick();
 static unsigned char getYear();
 
-#define MAX_NUMBER_OF_CONTRACTS 1024 // Must be 2^N
-#define NUMBER_OF_CONTRACTS 2
-#define NUMBER_OF_EXECUTED_CONTRACTS 2
+#include "qpi.h"
 
 #define QX_CONTRACT_INDEX 1
+#define CONTRACT_INDEX QX_CONTRACT_INDEX
+#include "qubics/Qx.h"
 
-char contractAssetNames[][8] = {
-    "",
-    "QX"
+#define MAX_NUMBER_OF_CONTRACTS 1024 // Must be 1024
+
+struct Contract0State
+{
+    long long contractFeeReserves[MAX_NUMBER_OF_CONTRACTS];
 };
 
-#include "qpi.h"
-#include "qubics/Qx.h"
+constexpr struct ContractDescription
+{
+    char assetName[8];
+    unsigned short constructionEpoch, destructionEpoch;
+    unsigned long long stateSize;
+} contractDescriptions[] = {
+    {"", 0, 0, sizeof(Contract0State)},
+    {"QX", 67, 10000, sizeof(Qx)}
+};
 
 
 
@@ -53,11 +62,11 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 156
+#define VERSION_B 157
 #define VERSION_C 0
 
 #define EPOCH 67
-#define TICK 7100000
+#define TICK 7200000
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -5413,19 +5422,15 @@ static __m256i* assetDigests = NULL;
 static unsigned long long* assetChangeFlags = NULL;
 static char CONTRACT_ASSET_UNIT_OF_MEASUREMENT[7] = { 0, 0, 0, 0, 0, 0, 0 };
 
-struct Contract0State
-{
-    long long contractFeeReserves[MAX_NUMBER_OF_CONTRACTS];
-};
 static volatile char computerLock = 0;
-static unsigned char* contractStates[NUMBER_OF_CONTRACTS];
+static unsigned char* contractStates[sizeof(contractDescriptions) / sizeof(contractDescriptions[0])];
 static __m256i contractStateDigests[MAX_NUMBER_OF_CONTRACTS * 2 - 1];
 static unsigned long long* contractStateChangeFlags = NULL;
 static unsigned long long* functionFlags = NULL;
 
 static volatile char tickLocks[NUMBER_OF_COMPUTORS];
 static bool targetNextTickDataDigestIsKnown = false;
-static unsigned int testFlags = 0, testCounter = 0, testCounter2 = 0;
+static unsigned int testFlags = 0;
 static __m256i targetNextTickDataDigest;
 static unsigned long long tickTicks[11];
 
@@ -6020,24 +6025,6 @@ inline long long ms(unsigned char year, unsigned char month, unsigned char day, 
     return (((((long long)dayIndex(year, month, day)) * 24 + hour) * 60 + minute) * 60 + second) * 1000 + millisecond;
 }
 
-static unsigned long long contractStateSize(unsigned int contractIndex)
-{
-    if (!contractIndex)
-    {
-        return sizeof(Contract0State);
-    }
-    if (contractIndex >= NUMBER_OF_CONTRACTS)
-    {
-        return 0;
-    }
-    if (contractIndex >= NUMBER_OF_EXECUTED_CONTRACTS)
-    {
-        return sizeof(IPO);
-    }
-
-    return 0; // TODO
-}
-
 static void getUniverseDigest(__m256i* digest)
 {
     unsigned int digestIndex;
@@ -6077,7 +6064,7 @@ static void getComputerDigest(__m256i* digest)
     {
         if (contractStateChangeFlags[digestIndex >> 6] & (1ULL << (digestIndex & 63)))
         {
-            const unsigned long long size = contractStateSize(digestIndex);
+            const unsigned long long size = digestIndex < sizeof(contractDescriptions) / sizeof(contractDescriptions[0]) ? contractDescriptions[digestIndex].stateSize : 0;
             if (!size)
             {
                 contractStateDigests[digestIndex] = ZERO;
@@ -6482,8 +6469,8 @@ static void requestContractIPO(Peer* peer, Processor* processor, RequestResponse
     RequestContractIPO* request = (RequestContractIPO*)((char*)processor->buffer + sizeof(RequestResponseHeader));
     packet.respondContractIPO.contractIndex = request->contractIndex;
     packet.respondContractIPO.tick = system.tick;
-    if (request->contractIndex < NUMBER_OF_EXECUTED_CONTRACTS
-        || request->contractIndex >= NUMBER_OF_CONTRACTS)
+    if (request->contractIndex >= sizeof(contractDescriptions) / sizeof(contractDescriptions[0])
+        || system.epoch >= contractDescriptions[request->contractIndex].constructionEpoch)
     {
         bs->SetMem(packet.respondContractIPO.publicKeys, sizeof(packet.respondContractIPO.publicKeys), 0);
         bs->SetMem(packet.respondContractIPO.prices, sizeof(packet.respondContractIPO.prices), 0);
@@ -6787,7 +6774,6 @@ static void requestProcessor(void* ProcedureArgument)
                                         if (EQUAL(*((__m256i*)digest), targetNextTickDataDigest))
                                         {
                                             bs->CopyMem(&tickData[request->tickData.tick - system.initialTick], &request->tickData, sizeof(TickData));
-                                            testCounter++;
                                         }
                                     }
                                 }
@@ -6815,7 +6801,6 @@ static void requestProcessor(void* ProcedureArgument)
                                     else
                                     {
                                         bs->CopyMem(&tickData[request->tickData.tick - system.initialTick], &request->tickData, sizeof(TickData));
-                                        if (request->tickData.tick == system.tick + 1) testCounter2++;
                                     }
                                 }
                                 RELEASE(tickDataLock);
@@ -7270,13 +7255,13 @@ static void processTick(unsigned long long processorNumber)
                             *((unsigned int*)maskedDestinationPublicKey) &= ~(MAX_NUMBER_OF_CONTRACTS - 1);
                             const unsigned int contractIndex = *((unsigned int*)transaction->destinationPublicKey);
                             if (EQUAL(*((__m256i*)maskedDestinationPublicKey), ZERO)
-                                && contractIndex < NUMBER_OF_CONTRACTS)
+                                && contractIndex < sizeof(contractDescriptions) / sizeof(contractDescriptions[0]))
                             {
                                 switch (transaction->inputType)
                                 {
                                 case CONTRACT_IPO_BID:
                                 {
-                                    if (contractIndex >= NUMBER_OF_EXECUTED_CONTRACTS)
+                                    if (system.epoch < contractDescriptions[contractIndex].constructionEpoch)
                                     {
                                         if (!transaction->amount
                                             && transaction->inputSize == sizeof(ContractIPOBid))
@@ -7703,50 +7688,53 @@ static void processTick(unsigned long long processorNumber)
 static void endEpoch()
 {
     Contract0State* contract0State = (Contract0State*)contractStates[0];
-    for (unsigned int contractIndex = NUMBER_OF_EXECUTED_CONTRACTS; contractIndex < NUMBER_OF_CONTRACTS; contractIndex++)
+    for (unsigned int contractIndex = 0; contractIndex < sizeof(contractDescriptions) / sizeof(contractDescriptions[0]); contractIndex++)
     {
-        IPO* ipo = (IPO*)contractStates[contractIndex];
-        const long long finalPrice = ipo->prices[NUMBER_OF_COMPUTORS - 1];
-        int issuanceIndex, ownershipIndex, possessionIndex;
-        if (finalPrice)
+        if (system.epoch < contractDescriptions[contractIndex].constructionEpoch)
         {
-            issueAsset((unsigned char*)&ZERO, contractAssetNames[contractIndex], 0, CONTRACT_ASSET_UNIT_OF_MEASUREMENT, NUMBER_OF_COMPUTORS, &issuanceIndex, &ownershipIndex, &possessionIndex);
-        }
-        numberOfReleasedEntities = 0;
-        for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
-        {
-            if (ipo->prices[i] > finalPrice)
-            {
-                unsigned int j;
-                for (j = 0; j < numberOfReleasedEntities; j++)
-                {
-                    if (EQUAL(*((__m256i*)ipo->publicKeys[i]), *((__m256i*)releasedPublicKeys[j])))
-                    {
-                        break;
-                    }
-                }
-                if (j == numberOfReleasedEntities)
-                {
-                    *((__m256i*)releasedPublicKeys[numberOfReleasedEntities]) = *((__m256i*)ipo->publicKeys[i]);
-                    releasedAmounts[numberOfReleasedEntities++] = ipo->prices[i] - finalPrice;
-                }
-                else
-                {
-                    releasedAmounts[j] += (ipo->prices[i] - finalPrice);
-                }
-            }
+            IPO* ipo = (IPO*)contractStates[contractIndex];
+            const long long finalPrice = ipo->prices[NUMBER_OF_COMPUTORS - 1];
+            int issuanceIndex, ownershipIndex, possessionIndex;
             if (finalPrice)
             {
-                int destinationOwnershipIndex, destinationPossessionIndex;
-                transferAssetOwnershipAndPossession(ownershipIndex, possessionIndex, ipo->publicKeys[i], 1, &destinationOwnershipIndex, &destinationPossessionIndex);
+                issueAsset((unsigned char*)&ZERO, (char*)contractDescriptions[contractIndex].assetName, 0, CONTRACT_ASSET_UNIT_OF_MEASUREMENT, NUMBER_OF_COMPUTORS, &issuanceIndex, &ownershipIndex, &possessionIndex);
             }
-        }
-        for (unsigned int i = 0; i < numberOfReleasedEntities; i++)
-        {
-            increaseEnergy(releasedPublicKeys[i], releasedAmounts[i]);
-        }
+            numberOfReleasedEntities = 0;
+            for (unsigned int i = 0; i < NUMBER_OF_COMPUTORS; i++)
+            {
+                if (ipo->prices[i] > finalPrice)
+                {
+                    unsigned int j;
+                    for (j = 0; j < numberOfReleasedEntities; j++)
+                    {
+                        if (EQUAL(*((__m256i*)ipo->publicKeys[i]), *((__m256i*)releasedPublicKeys[j])))
+                        {
+                            break;
+                        }
+                    }
+                    if (j == numberOfReleasedEntities)
+                    {
+                        *((__m256i*)releasedPublicKeys[numberOfReleasedEntities]) = *((__m256i*)ipo->publicKeys[i]);
+                        releasedAmounts[numberOfReleasedEntities++] = ipo->prices[i] - finalPrice;
+                    }
+                    else
+                    {
+                        releasedAmounts[j] += (ipo->prices[i] - finalPrice);
+                    }
+                }
+                if (finalPrice)
+                {
+                    int destinationOwnershipIndex, destinationPossessionIndex;
+                    transferAssetOwnershipAndPossession(ownershipIndex, possessionIndex, ipo->publicKeys[i], 1, &destinationOwnershipIndex, &destinationPossessionIndex);
+                }
+            }
+            for (unsigned int i = 0; i < numberOfReleasedEntities; i++)
+            {
+                increaseEnergy(releasedPublicKeys[i], releasedAmounts[i]);
+            }
 
-        contract0State->contractFeeReserves[contractIndex] = finalPrice * NUMBER_OF_COMPUTORS;
+            contract0State->contractFeeReserves[contractIndex] = finalPrice * NUMBER_OF_COMPUTORS;
+        }
     }
 
     system.initialMillisecond = etalonTick.millisecond;
@@ -8591,8 +8579,6 @@ static void tickerProcessor(void*)
                                     system.tick++;
 
                                     testFlags = 0;
-                                    testCounter = 0;
-                                    testCounter2 = 0;
 
                                     tickPhase = 0;
 
@@ -8728,13 +8714,13 @@ static void saveComputer()
         ACQUIRE(computerLock);
 
         unsigned long long writtenSize = 0;
-        for (unsigned int contractIndex = 0; contractIndex < NUMBER_OF_CONTRACTS; contractIndex++)
+        for (unsigned int contractIndex = 0; contractIndex < sizeof(contractDescriptions) / sizeof(contractDescriptions[0]); contractIndex++)
         {
-            unsigned long long remainingSize = contractStateSize(contractIndex);
+            unsigned long long remainingSize = contractDescriptions[contractIndex].stateSize;
             while (remainingSize)
             {
                 unsigned long long size = remainingSize < WRITING_CHUNK_SIZE ? remainingSize : WRITING_CHUNK_SIZE;
-                status = dataFile->Write(dataFile, &size, contractStates[contractIndex] + (contractStateSize(contractIndex) - remainingSize));
+                status = dataFile->Write(dataFile, &size, contractStates[contractIndex] + (contractDescriptions[contractIndex].stateSize - remainingSize));
                 if (status
                     || size != (remainingSize < WRITING_CHUNK_SIZE ? remainingSize : WRITING_CHUNK_SIZE))
                 {
@@ -8752,9 +8738,9 @@ static void saveComputer()
         }
         dataFile->Close(dataFile);
         unsigned long long expectedWrittenSize = 0;
-        for (unsigned int contractIndex = 0; contractIndex < NUMBER_OF_CONTRACTS; contractIndex++)
+        for (unsigned int contractIndex = 0; contractIndex < sizeof(contractDescriptions) / sizeof(contractDescriptions[0]); contractIndex++)
         {
-            expectedWrittenSize += contractStateSize(contractIndex);
+            expectedWrittenSize += contractDescriptions[contractIndex].stateSize;
         }
         if (writtenSize == expectedWrittenSize)
         {
@@ -8846,7 +8832,7 @@ static bool initialize()
 
     ZERO = _mm256_setzero_si256();
 
-    for (unsigned int contractIndex = 0; contractIndex < NUMBER_OF_CONTRACTS; contractIndex++)
+    for (unsigned int contractIndex = 0; contractIndex < sizeof(contractDescriptions) / sizeof(contractDescriptions[0]); contractIndex++)
     {
         contractStates[contractIndex] = NULL;
     }
@@ -9082,9 +9068,9 @@ static bool initialize()
         }
         bs->SetMem(assetChangeFlags, ASSETS_CAPACITY / 8, 0xFF);
 
-        for (unsigned int contractIndex = 0; contractIndex < NUMBER_OF_CONTRACTS; contractIndex++)
+        for (unsigned int contractIndex = 0; contractIndex < sizeof(contractDescriptions) / sizeof(contractDescriptions[0]); contractIndex++)
         {
-            unsigned long long size = contractStateSize(contractIndex);
+            unsigned long long size = contractDescriptions[contractIndex].stateSize;
             if (status = bs->AllocatePool(EfiRuntimeServicesData, size, (void**)&contractStates[contractIndex]))
             {
                 logStatus(L"EFI_BOOT_SERVICES.AllocatePool() fails", status, __LINE__);
@@ -9285,27 +9271,34 @@ static bool initialize()
         }
         else
         {
-            for (unsigned int contractIndex = 0; contractIndex < NUMBER_OF_CONTRACTS; contractIndex++)
+            for (unsigned int contractIndex = 0; contractIndex < sizeof(contractDescriptions) / sizeof(contractDescriptions[0]); contractIndex++)
             {
-                unsigned long long size = contractStateSize(contractIndex);
-                status = dataFile->Read(dataFile, &size, contractStates[contractIndex]);
-                if (status)
+                unsigned long long size = contractDescriptions[contractIndex].stateSize;
+                if (contractDescriptions[contractIndex].constructionEpoch == system.epoch)
                 {
-                    logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status, __LINE__);
-
-                    dataFile->Close(dataFile);
-
-                    return false;
+                    bs->SetMem(contractStates[contractIndex], size, 0);
                 }
                 else
                 {
-                    if (size != contractStateSize(contractIndex))
+                    status = dataFile->Read(dataFile, &size, contractStates[contractIndex]);
+                    if (status)
                     {
-                        logStatus(L"EFI_FILE_PROTOCOL.Read() reads invalid number of bytes", size, __LINE__);
+                        logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status, __LINE__);
 
                         dataFile->Close(dataFile);
 
                         return false;
+                    }
+                    else
+                    {
+                        if (size != contractDescriptions[contractIndex].stateSize)
+                        {
+                            logStatus(L"EFI_FILE_PROTOCOL.Read() reads invalid number of bytes", size, __LINE__);
+
+                            dataFile->Close(dataFile);
+
+                            return false;
+                        }
                     }
                 }
             }
@@ -9449,7 +9442,7 @@ static void deinitialize()
     {
         bs->FreePool(contractStateChangeFlags);
     }
-    for (unsigned int contractIndex = 0; contractIndex < NUMBER_OF_CONTRACTS; contractIndex++)
+    for (unsigned int contractIndex = 0; contractIndex < sizeof(contractDescriptions) / sizeof(contractDescriptions[0]); contractIndex++)
     {
         if (contractStates[contractIndex])
         {
@@ -9847,12 +9840,6 @@ static void processKeyPresses()
             log(message);
 
             log(isMain ? L"MAIN   *   MAIN   *   MAIN   *   MAIN   *   MAIN" : L"aux   *   aux   *   aux   *   aux   *   aux");
-
-            setText(message, L">>>>>>>>>> ");
-            appendNumber(message, testCounter, TRUE);
-            appendText(message, L" / ");
-            appendNumber(message, testCounter2, TRUE);
-            log(message);
         }
         break;
 
@@ -10318,7 +10305,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             {
                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
                                                 if (requestResponseHeader->size() < sizeof(RequestResponseHeader)
-                                                    || (requestResponseHeader->protocol() && (requestResponseHeader->protocol() < VERSION_B || requestResponseHeader->protocol() > VERSION_B + 1)))
+                                                    || (requestResponseHeader->protocol() && (requestResponseHeader->protocol() < VERSION_B - 1 || requestResponseHeader->protocol() > VERSION_B + 1)))
                                                 {
                                                     setText(message, L"Forgetting ");
                                                     appendNumber(message, peers[i].address[0], FALSE);

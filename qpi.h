@@ -6796,7 +6796,7 @@ namespace QPI
 
 	//////////
 
-	#define BEGIN(function) void function(function##_input* in, function##_output* out) { constexpr unsigned int __functionId = (CONTRACT_INDEX * (4294967296ULL / MAX_NUMBER_OF_CONTRACTS)) | __LINE__; ::beginFunction(__functionId);
+	#define BEGIN(function) void function(function##_input* in, function##_output* out) { constexpr unsigned int __functionId = (CONTRACT_INDEX * (4294967296ULL / 1024)) | __LINE__; ::beginFunction(__functionId);
 
 	#define END(function) ::endFunction(__functionId); }
 
