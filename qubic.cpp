@@ -63,7 +63,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 158
-#define VERSION_C 1
+#define VERSION_C 2
 
 #define EPOCH 67
 #define TICK 7300000
@@ -5424,10 +5424,10 @@ static char CONTRACT_ASSET_UNIT_OF_MEASUREMENT[7] = { 0, 0, 0, 0, 0, 0, 0 };
 
 static volatile char computerLock = 0;
 static volatile bool beginComputation = false, endComputation = false;
-static unsigned long long mainLoopNumerator = 0, mainLoopDenominator = 0;
+static unsigned long long mainLoopNumerator = 0, mainLoopDenominator = 0, computationKickstartDelta;
 static volatile unsigned int executedContractIndex;
 static EFI_EVENT computationEvent;
-static BOOLEAN computationIsFinished;
+static BOOLEAN computationIsFinished = TRUE;
 static void (*__computation)();
 static void (*computation)(void*, void*);
 static unsigned long long computationBeginningTick;
@@ -7236,8 +7236,9 @@ static void processTick(unsigned long long processorNumber)
                 _mm_pause();
             }
             endComputation = false;
+            computationIsFinished = TRUE;
 
-            mainLoopNumerator = __rdtsc() - computationBeginningTick;
+            computationKickstartDelta = __rdtsc() - computationBeginningTick;
         }
     }
 
@@ -10182,39 +10183,9 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             }
                         }
 
-                        if (curTimeTick - loggingTick >= frequency)
-                        {
-                            loggingTick = curTimeTick;
-
-                            logInfo();
-
-                            if (mainLoopDenominator)
-                            {
-                                setText(message, L"Main loop duration = ");
-                                appendNumber(message, (mainLoopNumerator / mainLoopDenominator) * 1000000 / frequency, TRUE);
-                                appendText(message, L" microseconds.");
-                                log(message);
-                            }
-                            //mainLoopNumerator = 0;
-                            //mainLoopDenominator = 0;
-
-                            if (tickerLoopDenominator)
-                            {
-                                setText(message, L"Ticker loop duration = ");
-                                appendNumber(message, (tickerLoopNumerator / tickerLoopDenominator) * 1000000 / frequency, TRUE);
-                                appendText(message, L" microseconds. Latest created tick = ");
-                                appendNumber(message, system.latestCreatedTick, TRUE);
-                                appendText(message, L".");
-                                log(message);
-                            }
-                            tickerLoopNumerator = 0;
-                            tickerLoopDenominator = 0;
-                        }
-
                         if (beginComputation)
                         {
                             beginComputation = false;
-                            computationIsFinished = TRUE;
                             if (mpServicesProtocol->StartupThisAP(mpServicesProtocol, computationProcessor, computingProcessorNumber, computationEvent, 1000000, NULL, &computationIsFinished))
                             {
                                 beginComputation = true;
@@ -10705,8 +10676,42 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                         processKeyPresses();
 
-                        //mainLoopNumerator += __rdtsc() - curTimeTick;
-                        //mainLoopDenominator++;
+
+                        if (curTimeTick - loggingTick >= frequency)
+                        {
+                            loggingTick = curTimeTick;
+
+                            logInfo();
+
+                            if (mainLoopDenominator)
+                            {
+                                setText(message, L"Main loop duration = ");
+                                appendNumber(message, (mainLoopNumerator / mainLoopDenominator) * 1000000 / frequency, TRUE);
+                                appendText(message, L" mcs. Computation kick-start duration = ");
+                                appendNumber(message, computationKickstartDelta * 1000000 / frequency, TRUE);
+                                appendText(message, L" mcs.");
+                                log(message);
+                            }
+                            mainLoopNumerator = 0;
+                            mainLoopDenominator = 0;
+
+                            if (tickerLoopDenominator)
+                            {
+                                setText(message, L"Ticker loop duration = ");
+                                appendNumber(message, (tickerLoopNumerator / tickerLoopDenominator) * 1000000 / frequency, TRUE);
+                                appendText(message, L" microseconds. Latest created tick = ");
+                                appendNumber(message, system.latestCreatedTick, TRUE);
+                                appendText(message, L".");
+                                log(message);
+                            }
+                            tickerLoopNumerator = 0;
+                            tickerLoopDenominator = 0;
+                        }
+                        else
+                        {
+                            mainLoopNumerator += __rdtsc() - curTimeTick;
+                            mainLoopDenominator++;
+                        }
                     }
 
                     bs->CloseProtocol(peerChildHandle, &tcp4ProtocolGuid, ih, NULL);
