@@ -6796,9 +6796,21 @@ namespace QPI
 
 	//////////
 
-	#define BEGIN(function) void function(function##_input* in, function##_output* out) { constexpr unsigned int __functionId = (CONTRACT_INDEX * (4294967296ULL / 1024)) | __LINE__; ::beginFunction(__functionId);
+	#define PRIVATE(function) private: void function(function##_input* in, function##_output* out) { constexpr unsigned int __functionId = (CONTRACT_INDEX << 22) | __LINE__; ::beginFunction(__functionId);
 
-	#define END(function) ::endFunction(__functionId); }
+	#define PUBLIC(function) public: void function(function##_input* in, function##_output* out) { constexpr unsigned int __functionId = (CONTRACT_INDEX << 22) | __LINE__; ::beginFunction(__functionId);
+	
+	#define __ ::endFunction(__functionId); }
+
+	#define INITIALIZE public: void __initialize() { constexpr unsigned int __functionId = (CONTRACT_INDEX << 22) | __LINE__; ::beginFunction(__functionId);
+
+	#define BEGIN_EPOCH public: void __beginEpoch() { constexpr unsigned int __functionId = (CONTRACT_INDEX << 22) | __LINE__; ::beginFunction(__functionId);
+
+	#define END_EPOCH public: void __endEpoch() { constexpr unsigned int __functionId = (CONTRACT_INDEX << 22) | __LINE__; ::beginFunction(__functionId);
+
+	#define BEGIN_TICK public: void __beginTick() { constexpr unsigned int __functionId = (CONTRACT_INDEX << 22) | __LINE__; ::beginFunction(__functionId);
+
+	#define END_TICK public: void __endTick() { constexpr unsigned int __functionId = (CONTRACT_INDEX << 22) | __LINE__; ::beginFunction(__functionId);
 
 	#define SELF _mm256_set_epi64x(0, 0, 0, CONTRACT_INDEX)
 }
