@@ -63,7 +63,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 158
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define EPOCH 67
 #define TICK 7300000
@@ -5424,6 +5424,7 @@ static char CONTRACT_ASSET_UNIT_OF_MEASUREMENT[7] = { 0, 0, 0, 0, 0, 0, 0 };
 
 static volatile char computerLock = 0;
 static volatile bool beginComputation = false, endComputation = false;
+static unsigned long long mainLoopNumerator = 0, mainLoopDenominator = 0;
 static volatile unsigned int executedContractIndex;
 static EFI_EVENT computationEvent;
 static BOOLEAN computationIsFinished;
@@ -7227,6 +7228,7 @@ static void processTick(unsigned long long processorNumber)
         if (system.epoch >= contractDescriptions[executedContractIndex].constructionEpoch
             && system.epoch < contractDescriptions[executedContractIndex].destructionEpoch)
         {
+            computationBeginningTick = __rdtsc();
             beginComputation = true;
 
             while (!endComputation)
@@ -7234,6 +7236,8 @@ static void processTick(unsigned long long processorNumber)
                 _mm_pause();
             }
             endComputation = false;
+
+            mainLoopNumerator = __rdtsc() - computationBeginningTick;
         }
     }
 
@@ -8633,6 +8637,8 @@ static void computationProcessor(void*)
     //enableAVX();
 
     // TODO
+
+    endComputation = true;
 }
 
 static void shutdownCallback(EFI_EVENT Event, void* Context)
@@ -8642,21 +8648,6 @@ static void shutdownCallback(EFI_EVENT Event, void* Context)
 
 static void emptyCallback(EFI_EVENT Event, void* Context)
 {
-}
-
-static void computationCallback(EFI_EVENT Event, void* Context)
-{
-    unsigned long long delta = __rdtsc() - computationBeginningTick;
-
-    bs->CloseEvent(Event);
-
-    // TODO
-
-    endComputation = true;
-
-    setNumber(message, delta * 1000000 / frequency, TRUE);
-    appendText(message, L" microseconds!!!!!!!!!!");
-    log(message);
 }
 
 static void saveSpectrum()
@@ -10135,6 +10126,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                 if (numberOfProcessors == 1)
                 {
                     computingProcessorNumber = i;
+                    bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, shutdownCallback, NULL, &computationEvent);
                 }
                 else
                 {
@@ -10170,7 +10162,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                     unsigned long long clockTick = 0, systemDataSavingTick = 0, loggingTick = 0, peerRefreshingTick = 0, tickRequestingTick = 0;
                     unsigned int tickRequestingIndicator = 0, futureTickRequestingIndicator = 0;
-                    unsigned long long mainLoopNumerator = 0, mainLoopDenominator = 0;
                     while (!state)
                     {
                         if (criticalSituation == 1)
@@ -10204,8 +10195,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                 appendText(message, L" microseconds.");
                                 log(message);
                             }
-                            mainLoopNumerator = 0;
-                            mainLoopDenominator = 0;
+                            //mainLoopNumerator = 0;
+                            //mainLoopDenominator = 0;
 
                             if (tickerLoopDenominator)
                             {
@@ -10223,9 +10214,11 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                         if (beginComputation)
                         {
                             beginComputation = false;
-                            bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, computationCallback, NULL, &computationEvent);
-                            computationBeginningTick = __rdtsc();
-                            mpServicesProtocol->StartupThisAP(mpServicesProtocol, computationProcessor, computingProcessorNumber, computationEvent, 1000000, NULL, &computationIsFinished);
+                            computationIsFinished = TRUE;
+                            if (mpServicesProtocol->StartupThisAP(mpServicesProtocol, computationProcessor, computingProcessorNumber, computationEvent, 1000000, NULL, &computationIsFinished))
+                            {
+                                beginComputation = true;
+                            }
                         }
 
                         peerTcp4Protocol->Poll(peerTcp4Protocol);
@@ -10712,8 +10705,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                         processKeyPresses();
 
-                        mainLoopNumerator += __rdtsc() - curTimeTick;
-                        mainLoopDenominator++;
+                        //mainLoopNumerator += __rdtsc() - curTimeTick;
+                        //mainLoopDenominator++;
                     }
 
                     bs->CloseProtocol(peerChildHandle, &tcp4ProtocolGuid, ih, NULL);
