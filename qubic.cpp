@@ -63,7 +63,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 158
-#define VERSION_C 2
+#define VERSION_C 3
 
 #define EPOCH 67
 #define TICK 7300000
@@ -7228,7 +7228,6 @@ static void processTick(unsigned long long processorNumber)
         if (system.epoch >= contractDescriptions[executedContractIndex].constructionEpoch
             && system.epoch < contractDescriptions[executedContractIndex].destructionEpoch)
         {
-            computationBeginningTick = __rdtsc();
             beginComputation = true;
 
             while (!endComputation)
@@ -10186,6 +10185,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                         if (beginComputation)
                         {
                             beginComputation = false;
+                            computationBeginningTick = __rdtsc();
                             if (mpServicesProtocol->StartupThisAP(mpServicesProtocol, computationProcessor, computingProcessorNumber, computationEvent, 1000000, NULL, &computationIsFinished))
                             {
                                 beginComputation = true;
