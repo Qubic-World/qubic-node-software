@@ -21,7 +21,9 @@ static unsigned char getYear();
 
 #define QX_CONTRACT_INDEX 1
 #define CONTRACT_INDEX QX_CONTRACT_INDEX
+#define CONTRACT_STATE_TYPE Qx
 #include "qubics/Qx.h"
+static CONTRACT_STATE_TYPE* _Qx;
 
 #define MAX_NUMBER_OF_CONTRACTS 1024 // Must be 1024
 
@@ -39,6 +41,38 @@ constexpr struct ContractDescription
     {"", 0, 0, sizeof(Contract0State)},
     {"QX", 67, 10000, sizeof(Qx)}
 };
+
+static void (*contractSystemFunctions[sizeof(contractDescriptions) / sizeof(contractDescriptions[0])][5])(void*);
+static void (*contractUserFunctions[sizeof(contractDescriptions) / sizeof(contractDescriptions[0])][65536])(void*, void*, void*);
+
+#pragma warning(push)
+#pragma warning(disable: 4005)
+#define INITIALIZE 0
+#define BEGIN_EPOCH 1
+#define END_EPOCH 2
+#define BEGIN_TICK 3
+#define END_TICK 4
+#pragma warning(pop)
+
+#define REGISTER(contractName)\
+_##contractName = (contractName*)contractState;\
+contractSystemFunctions[contractIndex][INITIALIZE] = (void (*)(void*))contractName::__initialize;\
+contractSystemFunctions[contractIndex][BEGIN_EPOCH] = (void (*)(void*))contractName::__beginEpoch;\
+contractSystemFunctions[contractIndex][END_EPOCH] = (void (*)(void*))contractName::__endEpoch;\
+contractSystemFunctions[contractIndex][BEGIN_TICK] = (void (*)(void*))contractName::__beginTick;\
+contractSystemFunctions[contractIndex][END_TICK] = (void (*)(void*))contractName::__endTick;
+
+static void initializeContract(const unsigned int contractIndex, void* contractState)
+{
+    switch (contractIndex)
+    {
+    case QX_CONTRACT_INDEX:
+    {
+        REGISTER(Qx);
+    }
+    break;
+    }
+}
 
 
 
@@ -62,11 +96,11 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 158
-#define VERSION_C 3
+#define VERSION_B 159
+#define VERSION_C 0
 
 #define EPOCH 67
-#define TICK 7300000
+#define TICK 7400000
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -5428,8 +5462,8 @@ static unsigned long long mainLoopNumerator = 0, mainLoopDenominator = 0, comput
 static volatile unsigned int executedContractIndex;
 static EFI_EVENT computationEvent;
 static BOOLEAN computationIsFinished = TRUE;
-static void (*__computation)();
-static void (*computation)(void*, void*);
+static void (*__computation)(void*);
+static void (*computation)(void*, void*, void*);
 static unsigned long long computationBeginningTick;
 static unsigned char* contractStates[sizeof(contractDescriptions) / sizeof(contractDescriptions[0])];
 static __m256i contractStateDigests[MAX_NUMBER_OF_CONTRACTS * 2 - 1];
@@ -7154,6 +7188,8 @@ static void beginFunction(const unsigned int functionId)
 static void endFunction(const unsigned int functionId)
 {
     functionFlags[functionId >> 6] &= ~(1ULL << (functionId & 63));
+
+    contractStateChangeFlags[functionId >> (22 + 6)] |= (1ULL << ((functionId >> 22) & 63));
 }
 
 static __m256i getArbitrator()
@@ -7223,27 +7259,63 @@ static void processTick(unsigned long long processorNumber)
         tickPhase = 1;
     }
 
+    *((__m256i*)etalonTick.prevSpectrumDigest) = spectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1];
+    getUniverseDigest((__m256i*)etalonTick.prevUniverseDigest);
+    getComputerDigest((__m256i*)etalonTick.prevComputerDigest);
+
+    if (system.tick == system.initialTick)
+    {
+        for (executedContractIndex = 1; executedContractIndex < sizeof(contractDescriptions) / sizeof(contractDescriptions[0]); executedContractIndex++)
+        {
+            if (system.epoch == contractDescriptions[executedContractIndex].constructionEpoch)
+            {
+                __computation = contractSystemFunctions[executedContractIndex][INITIALIZE];
+
+                beginComputation = true;
+
+                while (!endComputation
+                    && computationIsFinished)
+                {
+                    _mm_pause();
+                }
+                endComputation = false;
+                if (!computationIsFinished)
+                {
+                    // TODO
+
+                    computationIsFinished = TRUE;
+                }
+
+                computationKickstartDelta = __rdtsc() - computationBeginningTick;
+            }
+        }
+    }
+
     for (executedContractIndex = 1; executedContractIndex < sizeof(contractDescriptions) / sizeof(contractDescriptions[0]); executedContractIndex++)
     {
         if (system.epoch >= contractDescriptions[executedContractIndex].constructionEpoch
             && system.epoch < contractDescriptions[executedContractIndex].destructionEpoch)
         {
+            __computation = contractSystemFunctions[executedContractIndex][BEGIN_TICK];
+
             beginComputation = true;
 
-            while (!endComputation)
+            while (!endComputation
+                && computationIsFinished)
             {
                 _mm_pause();
             }
             endComputation = false;
-            computationIsFinished = TRUE;
+            if (!computationIsFinished)
+            {
+                // TODO
+
+                computationIsFinished = TRUE;
+            }
 
             computationKickstartDelta = __rdtsc() - computationBeginningTick;
         }
     }
-
-    *((__m256i*)etalonTick.prevSpectrumDigest) = spectrumDigests[(SPECTRUM_CAPACITY * 2 - 1) - 1];
-    getUniverseDigest((__m256i*)etalonTick.prevUniverseDigest);
-    getComputerDigest((__m256i*)etalonTick.prevComputerDigest);
 
     ACQUIRE(tickDataLock);
     bs->CopyMem(&nextTickData, &tickData[system.tick - system.initialTick], sizeof(TickData));
@@ -7525,9 +7597,31 @@ static void processTick(unsigned long long processorNumber)
         }
     }
 
-    // TODO: Process oracle machines
+    for (executedContractIndex = sizeof(contractDescriptions) / sizeof(contractDescriptions[0]); executedContractIndex-- > 1; )
+    {
+        if (system.epoch >= contractDescriptions[executedContractIndex].constructionEpoch
+            && system.epoch < contractDescriptions[executedContractIndex].destructionEpoch)
+        {
+            __computation = contractSystemFunctions[executedContractIndex][END_TICK];
 
-    // TODO: Process smart contracts
+            beginComputation = true;
+
+            while (!endComputation
+                && computationIsFinished)
+            {
+                _mm_pause();
+            }
+            endComputation = false;
+            if (!computationIsFinished)
+            {
+                // TODO
+
+                computationIsFinished = TRUE;
+            }
+
+            computationKickstartDelta = __rdtsc() - computationBeginningTick;
+        }
+    }
 
     unsigned int digestIndex;
     for (digestIndex = 0; digestIndex < SPECTRUM_CAPACITY; digestIndex++)
@@ -8634,9 +8728,16 @@ static void tickProcessor(void*)
 
 static void computationProcessor(void*)
 {
-    //enableAVX();
+    enableAVX();
 
-    // TODO
+    if (computation == NULL)
+    {
+        __computation(contractStates[/*executedContractIndex*/1]);
+    }
+    else
+    {
+        // TODO
+    }
 
     endComputation = true;
 }
@@ -8871,6 +8972,8 @@ static bool initialize()
     {
         contractStates[contractIndex] = NULL;
     }
+    bs->SetMem(contractSystemFunctions, sizeof(contractSystemFunctions), 0);
+    bs->SetMem(contractUserFunctions, sizeof(contractUserFunctions), 0);
 
     getPublicKeyFromIdentity((const unsigned char*)OPERATOR, operatorPublicKey);
     if (EQUAL(*((__m256i*)operatorPublicKey), ZERO))
@@ -9336,6 +9439,8 @@ static bool initialize()
                         }
                     }
                 }
+
+                initializeContract(contractIndex, contractStates[contractIndex]);
             }
 
             dataFile->Close(dataFile);
@@ -10675,7 +10780,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                         }
 
                         processKeyPresses();
-
 
                         if (curTimeTick - loggingTick >= frequency)
                         {
