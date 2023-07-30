@@ -96,11 +96,11 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 160
+#define VERSION_B 161
 #define VERSION_C 0
 
 #define EPOCH 67
-#define TICK 7410000
+#define TICK 7420000
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -5464,7 +5464,6 @@ static EFI_EVENT computationEvent;
 static BOOLEAN computationIsFinished = TRUE;
 static void (*__computation)(void*);
 static void (*computation)(void*, void*, void*);
-static unsigned long long computationBeginningTick;
 static unsigned char* contractStates[sizeof(contractDescriptions) / sizeof(contractDescriptions[0])];
 static __m256i contractStateDigests[MAX_NUMBER_OF_CONTRACTS * 2 - 1];
 static unsigned long long* contractStateChangeFlags = NULL;
@@ -7265,12 +7264,14 @@ static void processTick(unsigned long long processorNumber)
 
     if (system.tick == system.initialTick)
     {
-        for (executedContractIndex = 1; executedContractIndex < sizeof(contractDescriptions) / sizeof(contractDescriptions[0]); executedContractIndex++)
+        for (unsigned int contractIndex = 1; contractIndex < sizeof(contractDescriptions) / sizeof(contractDescriptions[0]); contractIndex++)
         {
-            if (system.epoch == contractDescriptions[executedContractIndex].constructionEpoch)
+            if (system.epoch == contractDescriptions[contractIndex].constructionEpoch)
             {
-                /*__computation = contractSystemFunctions[executedContractIndex][INITIALIZE];
+                executedContractIndex = contractIndex;
+                /*__computation = contractSystemFunctions[contractIndex][INITIALIZE];
 
+                unsigned long long computationBeginningTick = __rdtsc();
                 _InterlockedCompareExchange8(&computationState, 1, 0);
                 while (_InterlockedCompareExchange8(&computationState, 0, 3) != 3
                     && computationIsFinished)
@@ -7290,16 +7291,21 @@ static void processTick(unsigned long long processorNumber)
         }
     }
 
-    for (executedContractIndex = 1; executedContractIndex < sizeof(contractDescriptions) / sizeof(contractDescriptions[0]); executedContractIndex++)
+    for (unsigned int contractIndex = 1; contractIndex < sizeof(contractDescriptions) / sizeof(contractDescriptions[0]); contractIndex++)
     {
-        if (system.epoch >= contractDescriptions[executedContractIndex].constructionEpoch
-            && system.epoch < contractDescriptions[executedContractIndex].destructionEpoch)
+        if (system.epoch >= contractDescriptions[contractIndex].constructionEpoch
+            && system.epoch < contractDescriptions[contractIndex].destructionEpoch)
         {
-            __computation = contractSystemFunctions[executedContractIndex][BEGIN_TICK];
+            executedContractIndex = contractIndex;
+            __computation = contractSystemFunctions[contractIndex][BEGIN_TICK];
 
-            _InterlockedCompareExchange8(&computationState, 1, 0);
+            unsigned long long computationBeginningTick = __rdtsc();
+            while (_InterlockedCompareExchange8(&computationState, 1, 0))
+            {
+                _mm_pause();
+            }
             while (_InterlockedCompareExchange8(&computationState, 0, 3) != 3
-                && computationIsFinished)
+                /* && computationIsFinished*/)
             {
                 _mm_pause();
             }
@@ -7595,13 +7601,15 @@ static void processTick(unsigned long long processorNumber)
         }
     }
 
-    for (executedContractIndex = sizeof(contractDescriptions) / sizeof(contractDescriptions[0]); executedContractIndex-- > 1; )
+    for (unsigned int contractIndex = sizeof(contractDescriptions) / sizeof(contractDescriptions[0]); contractIndex-- > 1; )
     {
-        if (system.epoch >= contractDescriptions[executedContractIndex].constructionEpoch
-            && system.epoch < contractDescriptions[executedContractIndex].destructionEpoch)
+        if (system.epoch >= contractDescriptions[contractIndex].constructionEpoch
+            && system.epoch < contractDescriptions[contractIndex].destructionEpoch)
         {
-            /*__computation = contractSystemFunctions[executedContractIndex][END_TICK];
+            executedContractIndex = contractIndex;
+            /*__computation = contractSystemFunctions[contractIndex][END_TICK];
 
+            unsigned long long computationBeginningTick = __rdtsc();
             _InterlockedCompareExchange8(&computationState, 1, 0);
             while (_InterlockedCompareExchange8(&computationState, 0, 3) != 3
                 && computationIsFinished)
@@ -10286,7 +10294,6 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
 
                         if (_InterlockedCompareExchange8(&computationState, 2, 1) == 1)
                         {
-                            computationBeginningTick = __rdtsc();
                             if (mpServicesProtocol->StartupThisAP(mpServicesProtocol, computationProcessor, computingProcessorNumber, computationEvent, 1000000, NULL, &computationIsFinished))
                             {
                                 _InterlockedCompareExchange8(&computationState, 1, 2);
