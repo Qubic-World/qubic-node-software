@@ -96,11 +96,11 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 159
+#define VERSION_B 160
 #define VERSION_C 0
 
 #define EPOCH 67
-#define TICK 7400000
+#define TICK 7410000
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -5457,7 +5457,7 @@ static unsigned long long* assetChangeFlags = NULL;
 static char CONTRACT_ASSET_UNIT_OF_MEASUREMENT[7] = { 0, 0, 0, 0, 0, 0, 0 };
 
 static volatile char computerLock = 0;
-static volatile bool beginComputation = false, endComputation = false;
+static volatile char computationState = 0;
 static unsigned long long mainLoopNumerator = 0, mainLoopDenominator = 0, computationKickstartDelta;
 static volatile unsigned int executedContractIndex;
 static EFI_EVENT computationEvent;
@@ -7269,16 +7269,15 @@ static void processTick(unsigned long long processorNumber)
         {
             if (system.epoch == contractDescriptions[executedContractIndex].constructionEpoch)
             {
-                __computation = contractSystemFunctions[executedContractIndex][INITIALIZE];
+                /*__computation = contractSystemFunctions[executedContractIndex][INITIALIZE];
 
-                beginComputation = true;
-
-                while (!endComputation
+                _InterlockedCompareExchange8(&computationState, 1, 0);
+                while (_InterlockedCompareExchange8(&computationState, 0, 3) != 3
                     && computationIsFinished)
                 {
                     _mm_pause();
                 }
-                endComputation = false;
+
                 if (!computationIsFinished)
                 {
                     // TODO
@@ -7286,7 +7285,7 @@ static void processTick(unsigned long long processorNumber)
                     computationIsFinished = TRUE;
                 }
 
-                computationKickstartDelta = __rdtsc() - computationBeginningTick;
+                computationKickstartDelta = __rdtsc() - computationBeginningTick;*/
             }
         }
     }
@@ -7298,14 +7297,13 @@ static void processTick(unsigned long long processorNumber)
         {
             __computation = contractSystemFunctions[executedContractIndex][BEGIN_TICK];
 
-            beginComputation = true;
-
-            while (!endComputation
+            _InterlockedCompareExchange8(&computationState, 1, 0);
+            while (_InterlockedCompareExchange8(&computationState, 0, 3) != 3
                 && computationIsFinished)
             {
                 _mm_pause();
             }
-            endComputation = false;
+
             if (!computationIsFinished)
             {
                 // TODO
@@ -7602,16 +7600,15 @@ static void processTick(unsigned long long processorNumber)
         if (system.epoch >= contractDescriptions[executedContractIndex].constructionEpoch
             && system.epoch < contractDescriptions[executedContractIndex].destructionEpoch)
         {
-            __computation = contractSystemFunctions[executedContractIndex][END_TICK];
+            /*__computation = contractSystemFunctions[executedContractIndex][END_TICK];
 
-            beginComputation = true;
-
-            while (!endComputation
+            _InterlockedCompareExchange8(&computationState, 1, 0);
+            while (_InterlockedCompareExchange8(&computationState, 0, 3) != 3
                 && computationIsFinished)
             {
                 _mm_pause();
             }
-            endComputation = false;
+
             if (!computationIsFinished)
             {
                 // TODO
@@ -7619,7 +7616,7 @@ static void processTick(unsigned long long processorNumber)
                 computationIsFinished = TRUE;
             }
 
-            computationKickstartDelta = __rdtsc() - computationBeginningTick;
+            computationKickstartDelta = __rdtsc() - computationBeginningTick;*/
         }
     }
 
@@ -8739,7 +8736,7 @@ static void computationProcessor(void*)
         // TODO
     }
 
-    endComputation = true;
+    _InterlockedCompareExchange8(&computationState, 3, 2);
 }
 
 static void shutdownCallback(EFI_EVENT Event, void* Context)
@@ -10287,13 +10284,12 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             }
                         }
 
-                        if (beginComputation)
+                        if (_InterlockedCompareExchange8(&computationState, 2, 1) == 1)
                         {
-                            beginComputation = false;
                             computationBeginningTick = __rdtsc();
                             if (mpServicesProtocol->StartupThisAP(mpServicesProtocol, computationProcessor, computingProcessorNumber, computationEvent, 1000000, NULL, &computationIsFinished))
                             {
-                                beginComputation = true;
+                                _InterlockedCompareExchange8(&computationState, 1, 2);
                             }
                         }
 

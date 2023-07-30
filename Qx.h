@@ -41,10 +41,10 @@ public:
 	_
 
 	BEGIN_TICK
-		s->_assetIssuanceFee = s->_transferFee * s->_tradeFee;
+		s->_assetIssuanceFee++;
 	_
 
 	END_TICK
-		s->_transferFee = s->_tradeFee + s->_assetIssuanceFee + 13;
+		s->_transferFee++;
 	_
 };
