@@ -1,16 +1,16 @@
 using namespace QPI;
 
-struct Qx
+struct QX
 {
 public:
-	struct transfer_input
+	struct Transfer_input
 	{
 	};
-	struct transfer_output
+	struct Transfer_output
 	{
 	};
 
-/*private*/public:
+public:
 	uint64 _earnedAmount;
 	uint64 _distributedAmount;
 	uint64 _burnedAmount;
@@ -19,7 +19,7 @@ public:
 	uint32 _transferFee; // Amount of qus
 	uint32 _tradeFee; // Number of billionths
 
-	PUBLIC(transfer)
+	PUBLIC(Transfer)
 	_
 
 	REGISTER_FUNCTIONS_FOR_USERS
@@ -41,7 +41,7 @@ public:
 	_
 
 	BEGIN_TICK
-		s->_assetIssuanceFee++;
+		s->_assetIssuanceFee += s->_transferFee * 13 + 1;
 	_
 
 	END_TICK

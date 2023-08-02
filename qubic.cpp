@@ -21,9 +21,9 @@ static unsigned char getYear();
 
 #define QX_CONTRACT_INDEX 1
 #define CONTRACT_INDEX QX_CONTRACT_INDEX
-#define CONTRACT_STATE_TYPE Qx
+#define CONTRACT_STATE_TYPE QX
 #include "qubics/Qx.h"
-static CONTRACT_STATE_TYPE* _Qx;
+static CONTRACT_STATE_TYPE* _QX;
 
 #define MAX_NUMBER_OF_CONTRACTS 1024 // Must be 1024
 
@@ -39,7 +39,7 @@ constexpr struct ContractDescription
     unsigned long long stateSize;
 } contractDescriptions[] = {
     {"", 0, 0, sizeof(Contract0State)},
-    {"QX", 67, 10000, sizeof(Qx)}
+    {"QX", 68, 10000, sizeof(QX)}
 };
 
 static void (*contractSystemFunctions[sizeof(contractDescriptions) / sizeof(contractDescriptions[0])][5])(void*);
@@ -68,7 +68,7 @@ static void initializeContract(const unsigned int contractIndex, void* contractS
     {
     case QX_CONTRACT_INDEX:
     {
-        REGISTER(Qx);
+        REGISTER(QX);
     }
     break;
     }
@@ -96,11 +96,11 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 161
+#define VERSION_B 162
 #define VERSION_C 0
 
-#define EPOCH 67
-#define TICK 7420000
+#define EPOCH 68
+#define TICK 7500000
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -5458,10 +5458,9 @@ static char CONTRACT_ASSET_UNIT_OF_MEASUREMENT[7] = { 0, 0, 0, 0, 0, 0, 0 };
 
 static volatile char computerLock = 0;
 static volatile char computationState = 0;
-static unsigned long long mainLoopNumerator = 0, mainLoopDenominator = 0, computationKickstartDelta;
+static unsigned long long mainLoopNumerator = 0, mainLoopDenominator = 0, computation1000Delta;
 static volatile unsigned int executedContractIndex;
 static EFI_EVENT computationEvent;
-static BOOLEAN computationIsFinished = TRUE;
 static void (*__computation)(void*);
 static void (*computation)(void*, void*, void*);
 static unsigned char* contractStates[sizeof(contractDescriptions) / sizeof(contractDescriptions[0])];
@@ -7264,62 +7263,56 @@ static void processTick(unsigned long long processorNumber)
 
     if (system.tick == system.initialTick)
     {
-        for (unsigned int contractIndex = 1; contractIndex < sizeof(contractDescriptions) / sizeof(contractDescriptions[0]); contractIndex++)
+        for (executedContractIndex = 1; executedContractIndex < sizeof(contractDescriptions) / sizeof(contractDescriptions[0]); executedContractIndex++)
         {
-            if (system.epoch == contractDescriptions[contractIndex].constructionEpoch)
+            if (system.epoch == contractDescriptions[executedContractIndex].constructionEpoch)
             {
-                executedContractIndex = contractIndex;
-                /*__computation = contractSystemFunctions[contractIndex][INITIALIZE];
+                __computation = contractSystemFunctions[executedContractIndex][INITIALIZE];
 
-                unsigned long long computationBeginningTick = __rdtsc();
-                _InterlockedCompareExchange8(&computationState, 1, 0);
+                computationState = 1;
+                const unsigned long long computationBeginningTick = __rdtsc();
+                unsigned long long delta;
                 while (_InterlockedCompareExchange8(&computationState, 0, 3) != 3
-                    && computationIsFinished)
+                    && (delta = __rdtsc() - computationBeginningTick) <= frequency)
                 {
                     _mm_pause();
                 }
-
-                if (!computationIsFinished)
+                if (delta > frequency)
                 {
-                    // TODO
-
-                    computationIsFinished = TRUE;
+                    computationState = 0;
                 }
 
-                computationKickstartDelta = __rdtsc() - computationBeginningTick;*/
+                computation1000Delta = delta;
             }
         }
     }
 
-    for (unsigned int contractIndex = 1; contractIndex < sizeof(contractDescriptions) / sizeof(contractDescriptions[0]); contractIndex++)
+    const unsigned long long computationBeginningTick = __rdtsc();
+    for (unsigned int counter = 0; counter < 1000; counter++)
     {
-        if (system.epoch >= contractDescriptions[contractIndex].constructionEpoch
-            && system.epoch < contractDescriptions[contractIndex].destructionEpoch)
+        for (executedContractIndex = 1; executedContractIndex < sizeof(contractDescriptions) / sizeof(contractDescriptions[0]); executedContractIndex++)
         {
-            executedContractIndex = contractIndex;
-            __computation = contractSystemFunctions[contractIndex][BEGIN_TICK];
-
-            unsigned long long computationBeginningTick = __rdtsc();
-            while (_InterlockedCompareExchange8(&computationState, 1, 0))
+            if (system.epoch >= contractDescriptions[executedContractIndex].constructionEpoch
+                && system.epoch < contractDescriptions[executedContractIndex].destructionEpoch)
             {
-                _mm_pause();
-            }
-            while (_InterlockedCompareExchange8(&computationState, 0, 3) != 3
-                /* && computationIsFinished*/)
-            {
-                _mm_pause();
-            }
+                __computation = contractSystemFunctions[executedContractIndex][BEGIN_TICK];
 
-            if (!computationIsFinished)
-            {
-                // TODO
+                computationState = 1;
+                unsigned long long delta;
+                while (_InterlockedCompareExchange8(&computationState, 0, 3) != 3
+                    /* && (delta = __rdtsc() - computationBeginningTick) <= frequency*/)
+                {
+                    _mm_pause();
+                }
+                //if (delta > frequency)
+                {
+                    computationState = 0;
+                }
 
-                computationIsFinished = TRUE;
             }
-
-            computationKickstartDelta = __rdtsc() - computationBeginningTick;
         }
     }
+    computation1000Delta = __rdtsc() - computationBeginningTick;
 
     ACQUIRE(tickDataLock);
     bs->CopyMem(&nextTickData, &tickData[system.tick - system.initialTick], sizeof(TickData));
@@ -7331,6 +7324,30 @@ static void processTick(unsigned long long processorNumber)
         {
             if (!EQUAL(*((__m256i*)nextTickData.transactionDigests[transactionIndex]), ZERO))
             {
+                for (executedContractIndex = 1; executedContractIndex < sizeof(contractDescriptions) / sizeof(contractDescriptions[0]); executedContractIndex++)
+                {
+                    if (system.epoch >= contractDescriptions[executedContractIndex].constructionEpoch
+                        && system.epoch < contractDescriptions[executedContractIndex].destructionEpoch)
+                    {
+                        __computation = contractSystemFunctions[executedContractIndex][BEGIN_TICK];
+
+                        computationState = 1;
+                        const unsigned long long computationBeginningTick = __rdtsc();
+                        unsigned long long delta;
+                        while (_InterlockedCompareExchange8(&computationState, 0, 3) != 3
+                            && (delta = __rdtsc() - computationBeginningTick) <= frequency)
+                        {
+                            _mm_pause();
+                        }
+                        if (delta > frequency)
+                        {
+                            computationState = 0;
+                        }
+
+                        //computation1000Delta = delta;
+                    }
+                }
+
                 if (tickTransactionOffsets[system.tick - system.initialTick][transactionIndex])
                 {
                     Transaction* transaction = (Transaction*)&tickTransactions[tickTransactionOffsets[system.tick - system.initialTick][transactionIndex]];
@@ -7601,30 +7618,27 @@ static void processTick(unsigned long long processorNumber)
         }
     }
 
-    for (unsigned int contractIndex = sizeof(contractDescriptions) / sizeof(contractDescriptions[0]); contractIndex-- > 1; )
+    for (executedContractIndex = sizeof(contractDescriptions) / sizeof(contractDescriptions[0]); executedContractIndex-- > 1; )
     {
-        if (system.epoch >= contractDescriptions[contractIndex].constructionEpoch
-            && system.epoch < contractDescriptions[contractIndex].destructionEpoch)
+        if (system.epoch >= contractDescriptions[executedContractIndex].constructionEpoch
+            && system.epoch < contractDescriptions[executedContractIndex].destructionEpoch)
         {
-            executedContractIndex = contractIndex;
-            /*__computation = contractSystemFunctions[contractIndex][END_TICK];
+            __computation = contractSystemFunctions[executedContractIndex][END_TICK];
 
-            unsigned long long computationBeginningTick = __rdtsc();
-            _InterlockedCompareExchange8(&computationState, 1, 0);
+            computationState = 1;
+            const unsigned long long computationBeginningTick = __rdtsc();
+            unsigned long long delta;
             while (_InterlockedCompareExchange8(&computationState, 0, 3) != 3
-                && computationIsFinished)
+                && (delta = __rdtsc() - computationBeginningTick) <= frequency)
             {
                 _mm_pause();
             }
-
-            if (!computationIsFinished)
+            if (delta > frequency)
             {
-                // TODO
-
-                computationIsFinished = TRUE;
+                computationState = 0;
             }
 
-            computationKickstartDelta = __rdtsc() - computationBeginningTick;*/
+            //computation1000Delta = delta;
         }
     }
 
@@ -8737,14 +8751,14 @@ static void computationProcessor(void*)
 
     if (computation == NULL)
     {
-        __computation(contractStates[/*executedContractIndex*/1]);
+        __computation(contractStates[executedContractIndex]);
     }
     else
     {
         // TODO
     }
 
-    _InterlockedCompareExchange8(&computationState, 3, 2);
+    computationState = 3;
 }
 
 static void shutdownCallback(EFI_EVENT Event, void* Context)
@@ -9466,10 +9480,10 @@ static bool initialize()
 
         unsigned char randomSeed[32];
         bs->SetMem(randomSeed, 32, 0);
-        randomSeed[0] = 12;
-        randomSeed[1] = 137;
-        randomSeed[2] = 176;
-        randomSeed[3] = 54;
+        randomSeed[0] = 117;
+        randomSeed[1] = 1;
+        randomSeed[2] = 103;
+        randomSeed[3] = 69;
         randomSeed[4] = 136;
         randomSeed[5] = 69;
         randomSeed[6] = 43;
@@ -10292,11 +10306,12 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             }
                         }
 
-                        if (_InterlockedCompareExchange8(&computationState, 2, 1) == 1)
+                        if (computationState == 1)
                         {
-                            if (mpServicesProtocol->StartupThisAP(mpServicesProtocol, computationProcessor, computingProcessorNumber, computationEvent, 1000000, NULL, &computationIsFinished))
+                            computationState = 2;
+                            if (mpServicesProtocol->StartupThisAP(mpServicesProtocol, computationProcessor, computingProcessorNumber, computationEvent, 1000000, NULL, NULL))
                             {
-                                _InterlockedCompareExchange8(&computationState, 1, 2);
+                                computationState = 1;
                             }
                         }
 
@@ -10440,7 +10455,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                                             {
                                                 RequestResponseHeader* requestResponseHeader = (RequestResponseHeader*)peers[i].receiveBuffer;
                                                 if (requestResponseHeader->size() < sizeof(RequestResponseHeader)
-                                                    || (requestResponseHeader->protocol() && (requestResponseHeader->protocol() < VERSION_B - 1 || requestResponseHeader->protocol() > VERSION_B + 1)))
+                                                    || (requestResponseHeader->protocol() && (requestResponseHeader->protocol() < VERSION_B || requestResponseHeader->protocol() > VERSION_B + 1)))
                                                 {
                                                     setText(message, L"Forgetting ");
                                                     appendNumber(message, peers[i].address[0], FALSE);
@@ -10794,8 +10809,8 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             {
                                 setText(message, L"Main loop duration = ");
                                 appendNumber(message, (mainLoopNumerator / mainLoopDenominator) * 1000000 / frequency, TRUE);
-                                appendText(message, L" mcs. Computation kick-start duration = ");
-                                appendNumber(message, computationKickstartDelta * 1000000 / frequency, TRUE);
+                                appendText(message, L" mcs. Execution of 1000 contracts = ");
+                                appendNumber(message, computation1000Delta * 1000000 / frequency, TRUE);
                                 appendText(message, L" mcs.");
                                 log(message);
                             }
