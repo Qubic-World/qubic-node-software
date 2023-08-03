@@ -97,7 +97,7 @@ static const unsigned char knownPublicPeers[][4] = {
 
 #define VERSION_A 1
 #define VERSION_B 162
-#define VERSION_C 0
+#define VERSION_C 1
 
 #define EPOCH 68
 #define TICK 7500000
@@ -4906,6 +4906,9 @@ static bool verify(const unsigned char* publicKey, const unsigned char* messageD
 #define SOLUTION_THRESHOLD 20
 #define SPECTRUM_CAPACITY 0x1000000ULL // Must be 2^N
 #define SPECTRUM_DEPTH 24 // Is derived from SPECTRUM_CAPACITY (=N)
+#define READING_CHUNK_SIZE 1048576
+#define SPECTRUM_READING_CHUNK_SIZE 1048576
+#define ASSETS_READING_CHUNK_SIZE 786432
 #define WRITING_CHUNK_SIZE 1048576
 #define SPECTRUM_WRITING_CHUNK_SIZE 1048576
 #define ASSETS_WRITING_CHUNK_SIZE 786432
@@ -9315,18 +9318,24 @@ static bool initialize()
         }
         else
         {
-            unsigned long long size = SPECTRUM_CAPACITY * sizeof(Entity);
-            status = dataFile->Read(dataFile, &size, spectrum);
-            dataFile->Close(dataFile);
-            if (status)
+            unsigned long long readSize = 0;
+            while (readSize < SPECTRUM_CAPACITY * sizeof(Entity))
             {
-                logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status, __LINE__);
+                unsigned long long size = SPECTRUM_READING_CHUNK_SIZE;
+                status = dataFile->Read(dataFile, &size, &spectrum[readSize / sizeof(Entity)]);
+                if (status
+                    || size != SPECTRUM_READING_CHUNK_SIZE)
+                {
+                    logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status, __LINE__);
 
-                return false;
+                    break;
+                }
+                readSize += size;
             }
-            if (size != SPECTRUM_CAPACITY * sizeof(Entity))
+            dataFile->Close(dataFile);
+            if (readSize != SPECTRUM_CAPACITY * sizeof(Entity))
             {
-                logStatus(L"EFI_FILE_PROTOCOL.Read() reads invalid number of bytes", size, __LINE__);
+                logStatus(L"EFI_FILE_PROTOCOL.Read() reads invalid number of bytes", readSize, __LINE__);
 
                 return false;
             }
@@ -9391,18 +9400,24 @@ static bool initialize()
         }
         else
         {
-            unsigned long long size = ASSETS_CAPACITY * sizeof(Asset);
-            status = dataFile->Read(dataFile, &size, assets);
-            dataFile->Close(dataFile);
-            if (status)
+            unsigned long long readSize = 0;
+            while (readSize < ASSETS_CAPACITY * sizeof(Asset))
             {
-                logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status, __LINE__);
+                unsigned long long size = ASSETS_READING_CHUNK_SIZE;
+                status = dataFile->Read(dataFile, &size, &assets[readSize / sizeof(Asset)]);
+                if (status
+                    || size != ASSETS_READING_CHUNK_SIZE)
+                {
+                    logStatus(L"EFI_FILE_PROTOCOL.Read() fails", status, __LINE__);
 
-                return false;
+                    break;
+                }
+                readSize += size;
             }
-            if (size != ASSETS_CAPACITY * sizeof(Asset))
+            dataFile->Close(dataFile);
+            if (readSize != ASSETS_CAPACITY * sizeof(Asset))
             {
-                logStatus(L"EFI_FILE_PROTOCOL.Read() reads invalid number of bytes", size, __LINE__);
+                logStatus(L"EFI_FILE_PROTOCOL.Read() reads invalid number of bytes", readSize, __LINE__);
 
                 return false;
             }
