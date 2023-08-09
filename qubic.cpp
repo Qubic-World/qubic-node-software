@@ -39,7 +39,7 @@ constexpr struct ContractDescription
     unsigned long long stateSize;
 } contractDescriptions[] = {
     {"", 0, 0, sizeof(Contract0State)},
-    {"QX", 68, 10000, sizeof(QX)}
+    {"QX", 69, 10000, sizeof(QX)}
 };
 
 static void (*contractSystemFunctions[sizeof(contractDescriptions) / sizeof(contractDescriptions[0])][5])(void*);
@@ -96,11 +96,11 @@ static const unsigned char knownPublicPeers[][4] = {
 #define AVX512 0
 
 #define VERSION_A 1
-#define VERSION_B 162
-#define VERSION_C 1
+#define VERSION_B 163
+#define VERSION_C 0
 
-#define EPOCH 68
-#define TICK 7500000
+#define EPOCH 69
+#define TICK 7600000
 
 #define ARBITRATOR "AFZPUAIYVPNUYGJRQVLUKOPPVLHAZQTGLYAAUUNBXFTVTAMSBKQBLEIEPCVJ"
 
@@ -4903,7 +4903,7 @@ static bool verify(const unsigned char* publicKey, const unsigned char* messageD
 #define RESPONSE_QUEUE_BUFFER_SIZE 1073741824
 #define RESPONSE_QUEUE_LENGTH 65536 // Must be 65536
 #define SIGNATURE_SIZE 64
-#define SOLUTION_THRESHOLD 20
+#define SOLUTION_THRESHOLD 22
 #define SPECTRUM_CAPACITY 0x1000000ULL // Must be 2^N
 #define SPECTRUM_DEPTH 24 // Is derived from SPECTRUM_CAPACITY (=N)
 #define READING_CHUNK_SIZE 1048576
@@ -6102,7 +6102,7 @@ static void getUniverseDigest(__m256i* digest)
 
 static void getComputerDigest(__m256i* digest)
 {
-    unsigned int digestIndex;
+    /*unsigned int digestIndex;
     for (digestIndex = 0; digestIndex < MAX_NUMBER_OF_CONTRACTS; digestIndex++)
     {
         if (contractStateChangeFlags[digestIndex >> 6] & (1ULL << (digestIndex & 63)))
@@ -6135,9 +6135,9 @@ static void getComputerDigest(__m256i* digest)
         previousLevelBeginning += numberOfLeafs;
         numberOfLeafs >>= 1;
     }
-    contractStateChangeFlags[0] = 0;
+    contractStateChangeFlags[0] = 0;*/
 
-    *digest = contractStateDigests[(MAX_NUMBER_OF_CONTRACTS * 2 - 1) - 1];
+    *digest = ZERO;// contractStateDigests[(MAX_NUMBER_OF_CONTRACTS * 2 - 1) - 1];
 }
 
 static void closePeer(Peer* peer)
@@ -7264,7 +7264,7 @@ static void processTick(unsigned long long processorNumber)
     getUniverseDigest((__m256i*)etalonTick.prevUniverseDigest);
     getComputerDigest((__m256i*)etalonTick.prevComputerDigest);
 
-    if (system.tick == system.initialTick)
+    /*if (system.tick == system.initialTick)
     {
         for (executedContractIndex = 1; executedContractIndex < sizeof(contractDescriptions) / sizeof(contractDescriptions[0]); executedContractIndex++)
         {
@@ -7288,10 +7288,10 @@ static void processTick(unsigned long long processorNumber)
                 computation1000Delta = delta;
             }
         }
-    }
+    }*/
 
     const unsigned long long computationBeginningTick = __rdtsc();
-    for (unsigned int counter = 0; counter < 1000; counter++)
+    /*for (unsigned int counter = 0; counter < 1000; counter++)
     {
         for (executedContractIndex = 1; executedContractIndex < sizeof(contractDescriptions) / sizeof(contractDescriptions[0]); executedContractIndex++)
         {
@@ -7303,18 +7303,18 @@ static void processTick(unsigned long long processorNumber)
                 computationState = 1;
                 unsigned long long delta;
                 while (_InterlockedCompareExchange8(&computationState, 0, 3) != 3
-                    /* && (delta = __rdtsc() - computationBeginningTick) <= frequency*/)
+                     && (delta = __rdtsc() - computationBeginningTick) <= frequency)
                 {
                     _mm_pause();
                 }
-                //if (delta > frequency)
+                if (delta > frequency)
                 {
                     computationState = 0;
                 }
 
             }
         }
-    }
+    }*/
     computation1000Delta = __rdtsc() - computationBeginningTick;
 
     ACQUIRE(tickDataLock);
@@ -7327,30 +7327,6 @@ static void processTick(unsigned long long processorNumber)
         {
             if (!EQUAL(*((__m256i*)nextTickData.transactionDigests[transactionIndex]), ZERO))
             {
-                for (executedContractIndex = 1; executedContractIndex < sizeof(contractDescriptions) / sizeof(contractDescriptions[0]); executedContractIndex++)
-                {
-                    if (system.epoch >= contractDescriptions[executedContractIndex].constructionEpoch
-                        && system.epoch < contractDescriptions[executedContractIndex].destructionEpoch)
-                    {
-                        __computation = contractSystemFunctions[executedContractIndex][BEGIN_TICK];
-
-                        computationState = 1;
-                        const unsigned long long computationBeginningTick = __rdtsc();
-                        unsigned long long delta;
-                        while (_InterlockedCompareExchange8(&computationState, 0, 3) != 3
-                            && (delta = __rdtsc() - computationBeginningTick) <= frequency)
-                        {
-                            _mm_pause();
-                        }
-                        if (delta > frequency)
-                        {
-                            computationState = 0;
-                        }
-
-                        //computation1000Delta = delta;
-                    }
-                }
-
                 if (tickTransactionOffsets[system.tick - system.initialTick][transactionIndex])
                 {
                     Transaction* transaction = (Transaction*)&tickTransactions[tickTransactionOffsets[system.tick - system.initialTick][transactionIndex]];
@@ -7621,7 +7597,7 @@ static void processTick(unsigned long long processorNumber)
         }
     }
 
-    for (executedContractIndex = sizeof(contractDescriptions) / sizeof(contractDescriptions[0]); executedContractIndex-- > 1; )
+    /*for (executedContractIndex = sizeof(contractDescriptions) / sizeof(contractDescriptions[0]); executedContractIndex-- > 1; )
     {
         if (system.epoch >= contractDescriptions[executedContractIndex].constructionEpoch
             && system.epoch < contractDescriptions[executedContractIndex].destructionEpoch)
@@ -7643,7 +7619,7 @@ static void processTick(unsigned long long processorNumber)
 
             //computation1000Delta = delta;
         }
-    }
+    }*/
 
     unsigned int digestIndex;
     for (digestIndex = 0; digestIndex < SPECTRUM_CAPACITY; digestIndex++)
@@ -9495,10 +9471,10 @@ static bool initialize()
 
         unsigned char randomSeed[32];
         bs->SetMem(randomSeed, 32, 0);
-        randomSeed[0] = 117;
-        randomSeed[1] = 1;
-        randomSeed[2] = 103;
-        randomSeed[3] = 69;
+        randomSeed[0] = 1;
+        randomSeed[1] = 0;
+        randomSeed[2] = 233;
+        randomSeed[3] = 9;
         randomSeed[4] = 136;
         randomSeed[5] = 69;
         randomSeed[6] = 43;
@@ -10262,7 +10238,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                     break;
                 }
 
-                if (numberOfProcessors == 1)
+                if (numberOfProcessors == 2)
                 {
                     computingProcessorNumber = i;
                     bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, shutdownCallback, NULL, &computationEvent);
@@ -10270,7 +10246,7 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                 else
                 {
                     bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, shutdownCallback, NULL, &processors[numberOfProcessors].event);
-                    mpServicesProtocol->StartupThisAP(mpServicesProtocol, !numberOfProcessors ? tickProcessor : requestProcessor, i, processors[numberOfProcessors].event, 0, &processors[numberOfProcessors], NULL);
+                    mpServicesProtocol->StartupThisAP(mpServicesProtocol, numberOfProcessors == 1 ? tickProcessor : requestProcessor, i, processors[numberOfProcessors].event, 0, &processors[numberOfProcessors], NULL);
                 }
                 numberOfProcessors++;
             }
@@ -10321,14 +10297,14 @@ EFI_STATUS efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE* systemTable)
                             }
                         }
 
-                        if (computationState == 1)
+                        /*if (computationState == 1)
                         {
                             computationState = 2;
                             if (mpServicesProtocol->StartupThisAP(mpServicesProtocol, computationProcessor, computingProcessorNumber, computationEvent, 1000000, NULL, NULL))
                             {
                                 computationState = 1;
                             }
-                        }
+                        }*/
 
                         peerTcp4Protocol->Poll(peerTcp4Protocol);
 
